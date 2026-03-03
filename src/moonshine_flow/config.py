@@ -14,16 +14,10 @@ from pydantic import BaseModel, Field
 LOGGER = logging.getLogger(__name__)
 
 
-class ModelSize(StrEnum):
-    """Supported Moonshine model sizes."""
-
-    TINY = "tiny"
-    BASE = "base"
-
-
 class OutputMode(StrEnum):
     """Supported output modes."""
 
+    DIRECT_TYPING = "direct_typing"
     CLIPBOARD_PASTE = "clipboard_paste"
 
 
@@ -56,22 +50,26 @@ class AudioConfig(BaseModel):
     dtype: str = "float32"
     max_record_seconds: int = 30
     release_tail_seconds: float = 0.25
-    trailing_silence_seconds: float = 0.5
+    trailing_silence_seconds: float = 1.0
     input_device: int | str | None = None
 
 
 class ModelConfig(BaseModel):
     """Model configuration."""
 
-    size: ModelSize = ModelSize.BASE
-    language: str = "auto"
     device: str = "mps"
+
+
+class SttConfig(BaseModel):
+    """Speech-to-text backend configuration."""
+
+    model: str = "moonshine:base"
 
 
 class OutputConfig(BaseModel):
     """Output injection configuration."""
 
-    mode: OutputMode = OutputMode.CLIPBOARD_PASTE
+    mode: OutputMode = OutputMode.DIRECT_TYPING
     paste_shortcut: str = "cmd+v"
 
 
@@ -107,6 +105,8 @@ class AppConfig(BaseModel):
 
     hotkey: HotkeyConfig = Field(default_factory=HotkeyConfig)
     audio: AudioConfig = Field(default_factory=AudioConfig)
+    language: str = "en"
+    stt: SttConfig = Field(default_factory=SttConfig)
     model: ModelConfig = Field(default_factory=ModelConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
     runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
@@ -148,6 +148,27 @@ def _clamp_llm_max_input_chars(value: int) -> int:
     return value
 
 
+def _normalize_top_level_language(value: str) -> str:
+    normalized = value.strip()
+    if not normalized:
+        raise ValueError("language must not be empty")
+    if normalized.lower() == "auto":
+        raise ValueError(
+            "language='auto' is no longer supported; use an explicit value like 'ja' or 'en'"
+        )
+    return normalized
+
+
+def _normalize_stt_model(value: str) -> str:
+    normalized = value.strip()
+    if not normalized:
+        raise ValueError("stt.model must not be empty")
+    from moonshine_flow.stt.factory import parse_stt_model
+
+    parse_stt_model(normalized)
+    return normalized
+
+
 def _dump_toml(data: dict[str, Any]) -> str:
     """Serialize TOML without requiring optional dependencies."""
     try:
@@ -176,6 +197,7 @@ def _dump_toml(data: dict[str, Any]) -> str:
             llm_api_key_line = f"api_key = \"{llm_api_key}\"\n"
 
         return (
+            f"language = \"{data.get('language', 'en')}\"\n\n"
             "[hotkey]\n"
             f"key = \"{data['hotkey']['key']}\"\n\n"
             "[audio]\n"
@@ -187,9 +209,10 @@ def _dump_toml(data: dict[str, Any]) -> str:
             f"trailing_silence_seconds = {data['audio']['trailing_silence_seconds']}\n"
             f"{input_device_line}\n"
             "\n"
+            "[stt]\n"
+            f"model = \"{data['stt']['model']}\"\n\n"
+            "\n"
             "[model]\n"
-            f"size = \"{data['model']['size']}\"\n"
-            f"language = \"{data['model']['language']}\"\n"
             f"device = \"{data['model']['device']}\"\n\n"
             "[output]\n"
             f"mode = \"{data['output']['mode']}\"\n"
@@ -237,6 +260,45 @@ def _migrate_legacy_llm_correction(raw: dict[str, Any]) -> None:
         )
 
 
+def _reject_legacy_model_language(raw: dict[str, Any]) -> None:
+    model_cfg = raw.get("model")
+    if not isinstance(model_cfg, dict):
+        return
+    if "language" not in model_cfg:
+        return
+    raise ValueError("model.language is no longer supported; use top-level language instead")
+
+
+def _reject_legacy_model_size(raw: dict[str, Any]) -> None:
+    model_cfg = raw.get("model")
+    if not isinstance(model_cfg, dict):
+        return
+    if "size" not in model_cfg:
+        return
+    raise ValueError("model.size is no longer supported; use stt.model instead")
+
+
+def _migrate_legacy_model_size(raw: dict[str, Any]) -> None:
+    model_cfg = raw.get("model")
+    if not isinstance(model_cfg, dict):
+        return
+    legacy_size = model_cfg.pop("size", None)
+    if legacy_size is None:
+        return
+
+    legacy_size_token = str(legacy_size).strip().lower()
+    if legacy_size_token in {"tiny", "base"}:
+        stt_cfg = raw.get("stt")
+        if not isinstance(stt_cfg, dict):
+            stt_cfg = {}
+            raw["stt"] = stt_cfg
+        if not str(stt_cfg.get("model", "")).strip():
+            stt_cfg["model"] = f"moonshine:{legacy_size_token}"
+    LOGGER.warning(
+        "model.size is deprecated and was migrated to stt.model (moonshine backend)"
+    )
+
+
 def _to_primitive(value: Any) -> Any:
     if isinstance(value, Enum):
         return value.value
@@ -278,12 +340,17 @@ def ensure_config_exists(path: Path) -> None:
     write_example_config(path)
 
 
-def load_config(path: Path | None = None) -> AppConfig:
+def load_config(path: Path | None = None, *, allow_legacy_model_size: bool = False) -> AppConfig:
     """Load configuration from TOML."""
     config_path = path or default_config_path()
     ensure_config_exists(config_path)
     raw = tomllib.loads(config_path.read_text(encoding="utf-8"))
     _migrate_legacy_llm_correction(raw)
+    _reject_legacy_model_language(raw)
+    if allow_legacy_model_size:
+        _migrate_legacy_model_size(raw)
+    else:
+        _reject_legacy_model_size(raw)
     if hasattr(AppConfig, "model_validate"):
         config = AppConfig.model_validate(raw)
     else:
@@ -303,4 +370,6 @@ def load_config(path: Path | None = None) -> AppConfig:
     config.text.llm_correction.max_input_chars = _clamp_llm_max_input_chars(
         int(config.text.llm_correction.max_input_chars),
     )
+    config.language = _normalize_top_level_language(str(config.language))
+    config.stt.model = _normalize_stt_model(str(config.stt.model))
     return config

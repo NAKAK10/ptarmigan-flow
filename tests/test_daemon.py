@@ -52,6 +52,9 @@ class _FakeTranscriber:
         self.calls.append(audio)
         return "hello"
 
+    def transcribe_stream(self, audio: np.ndarray, sample_rate: int):
+        yield self.transcribe(audio, sample_rate)
+
     def backend_summary(self) -> str:
         return "fake-backend"
 
@@ -127,7 +130,7 @@ def _build_daemon(
     config: AppConfig | None = None,
 ) -> daemon_module.MoonshineFlowDaemon:
     monkeypatch.setattr(daemon_module, "AudioRecorder", _FakeRecorder)
-    monkeypatch.setattr(daemon_module, "MoonshineTranscriber", _FakeTranscriber)
+    monkeypatch.setattr(daemon_module, "create_stt_backend", lambda *_args, **_kwargs: _FakeTranscriber())
     monkeypatch.setattr(daemon_module, "OutputInjector", _FakeInjector)
     monkeypatch.setattr(daemon_module, "HotkeyMonitor", _FakeHotkeyMonitor)
     return daemon_module.MoonshineFlowDaemon(config or AppConfig())
@@ -179,6 +182,30 @@ def test_hotkey_up_schedules_delayed_stop(monkeypatch) -> None:
 
     assert daemon.recorder.stop_calls == 1
     assert daemon._audio_queue.qsize() == 1
+
+
+def test_hotkey_up_skips_delay_for_default_realtime_model(monkeypatch) -> None:
+    _reset_fake_timer()
+    monkeypatch.setattr(daemon_module.threading, "Timer", _FakeTimer)
+    config = AppConfig()
+    config.stt.model = "voxtral:mistralai/Voxtral-Mini-4B-Realtime-2602"
+    daemon = _build_daemon(monkeypatch, config=config)
+    daemon.recorder.is_recording = True
+
+    daemon._on_hotkey_up()
+
+    assert len(_FakeTimer.instances) == 0
+    assert daemon.recorder.stop_calls == 1
+    assert daemon._audio_queue.qsize() == 1
+
+
+def test_effective_release_tail_keeps_explicit_override_for_realtime(monkeypatch) -> None:
+    config = AppConfig()
+    config.stt.model = "voxtral:mistralai/Voxtral-Mini-4B-Realtime-2602"
+    config.audio.release_tail_seconds = 0.1
+    daemon = _build_daemon(monkeypatch, config=config)
+
+    assert daemon._effective_release_tail_seconds() == 0.1
 
 
 def test_hotkey_down_cancels_pending_delayed_stop(monkeypatch) -> None:

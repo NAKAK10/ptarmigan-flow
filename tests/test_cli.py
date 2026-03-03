@@ -19,8 +19,8 @@ def test_cmd_run_requests_missing_permissions_in_launchd_context(monkeypatch) ->
     ]
 
     class FakeDaemon:
-        def __init__(self, _config, post_processor=None) -> None:
-            del post_processor
+        def __init__(self, _config, post_processor=None, **kwargs) -> None:
+            del post_processor, kwargs
             self.transcriber = SimpleNamespace(preflight_model=lambda: "moonshine-voice")
 
         def run_forever(self) -> None:
@@ -35,7 +35,10 @@ def test_cmd_run_requests_missing_permissions_in_launchd_context(monkeypatch) ->
     monkeypatch.setattr(
         cli,
         "load_config",
-        lambda _: SimpleNamespace(runtime=SimpleNamespace(log_level="INFO")),
+        lambda _: SimpleNamespace(
+            runtime=SimpleNamespace(log_level="INFO"),
+            stt=SimpleNamespace(model="moonshine:base"),
+        ),
     )
     monkeypatch.setattr(cli, "configure_logging", lambda _level: None)
     monkeypatch.setattr(cli, "_has_moonshine_backend", lambda: True)
@@ -138,6 +141,7 @@ def test_build_runtime_post_processor_chains_base_and_llm(monkeypatch) -> None:
     monkeypatch.setattr(cli, "LLMPostProcessor", _FakeLLMProcessor)
 
     config = SimpleNamespace(
+        language="ja",
         text=SimpleNamespace(
             llm_correction=SimpleNamespace(
                 mode="always",
@@ -160,6 +164,7 @@ def test_build_runtime_post_processor_chains_base_and_llm(monkeypatch) -> None:
     assert settings.provider == "ollama"
     assert settings.base_url == "http://localhost:11434"
     assert settings.enabled_tools is False
+    assert settings.language == "ja"
 
 
 def test_build_runtime_post_processor_ignores_invalid_llm_config() -> None:
@@ -219,8 +224,8 @@ def test_cmd_run_skips_permission_requests_outside_launchd(monkeypatch) -> None:
     calls = {"requests": 0, "stop": 0}
 
     class FakeDaemon:
-        def __init__(self, _config, post_processor=None) -> None:
-            del post_processor
+        def __init__(self, _config, post_processor=None, **kwargs) -> None:
+            del post_processor, kwargs
             self.transcriber = SimpleNamespace(preflight_model=lambda: "moonshine-voice")
 
         def run_forever(self) -> None:
@@ -235,7 +240,10 @@ def test_cmd_run_skips_permission_requests_outside_launchd(monkeypatch) -> None:
     monkeypatch.setattr(
         cli,
         "load_config",
-        lambda _: SimpleNamespace(runtime=SimpleNamespace(log_level="INFO")),
+        lambda _: SimpleNamespace(
+            runtime=SimpleNamespace(log_level="INFO"),
+            stt=SimpleNamespace(model="moonshine:base"),
+        ),
     )
     monkeypatch.setattr(cli, "configure_logging", lambda _level: None)
     monkeypatch.setattr(cli, "_has_moonshine_backend", lambda: True)
@@ -274,8 +282,8 @@ def test_cmd_run_skips_permission_requests_once_after_restart_marker(monkeypatch
     calls = {"requests": 0, "stop": 0}
 
     class FakeDaemon:
-        def __init__(self, _config, post_processor=None) -> None:
-            del post_processor
+        def __init__(self, _config, post_processor=None, **kwargs) -> None:
+            del post_processor, kwargs
             self.transcriber = SimpleNamespace(preflight_model=lambda: "moonshine-voice")
 
         def run_forever(self) -> None:
@@ -290,7 +298,10 @@ def test_cmd_run_skips_permission_requests_once_after_restart_marker(monkeypatch
     monkeypatch.setattr(
         cli,
         "load_config",
-        lambda _: SimpleNamespace(runtime=SimpleNamespace(log_level="INFO")),
+        lambda _: SimpleNamespace(
+            runtime=SimpleNamespace(log_level="INFO"),
+            stt=SimpleNamespace(model="moonshine:base"),
+        ),
     )
     monkeypatch.setattr(cli, "configure_logging", lambda _level: None)
     monkeypatch.setattr(cli, "_has_moonshine_backend", lambda: True)
@@ -324,6 +335,274 @@ def test_cmd_run_skips_permission_requests_once_after_restart_marker(monkeypatch
     assert calls["stop"] == 1
 
 
+def test_cmd_run_keeps_streaming_for_clipboard_output(monkeypatch) -> None:
+    fake_daemon_mod = ModuleType("moonshine_flow.daemon")
+    calls: dict[str, object] = {"enable_streaming": None, "output_mode": None}
+
+    class FakeDaemon:
+        def __init__(self, _config, post_processor=None, **kwargs) -> None:
+            del post_processor
+            calls["enable_streaming"] = kwargs.get("enable_streaming")
+            calls["output_mode"] = str(getattr(getattr(_config, "output", None), "mode", ""))
+            self.transcriber = SimpleNamespace(preflight_model=lambda: "moonshine-voice")
+
+        def run_forever(self) -> None:
+            raise KeyboardInterrupt
+
+        def stop(self) -> None:
+            return None
+
+    fake_daemon_mod.MoonshineFlowDaemon = FakeDaemon
+    monkeypatch.setitem(sys.modules, "moonshine_flow.daemon", fake_daemon_mod)
+    monkeypatch.setattr(cli, "_resolve_config_path", lambda _: Path("/tmp/config.toml"))
+    monkeypatch.setattr(
+        cli,
+        "load_config",
+        lambda _: SimpleNamespace(
+            runtime=SimpleNamespace(log_level="INFO"),
+            stt=SimpleNamespace(model="moonshine:base"),
+            output=SimpleNamespace(mode="clipboard_paste"),
+        ),
+    )
+    monkeypatch.setattr(cli, "configure_logging", lambda _level: None)
+    monkeypatch.setattr(cli, "_has_moonshine_backend", lambda: True)
+    monkeypatch.setattr(cli, "consume_restart_permission_suppression", lambda: False)
+    monkeypatch.setattr(
+        cli,
+        "check_all_permissions",
+        lambda: PermissionReport(microphone=True, accessibility=True, input_monitoring=True),
+    )
+    monkeypatch.delenv("XPC_SERVICE_NAME", raising=False)
+
+    exit_code = cli.cmd_run(argparse.Namespace(config=None))
+
+    assert exit_code == 0
+    assert calls["enable_streaming"] is True
+    assert calls["output_mode"] == "clipboard_paste"
+
+
+def test_cmd_run_keeps_streaming_for_non_clipboard_output(monkeypatch) -> None:
+    fake_daemon_mod = ModuleType("moonshine_flow.daemon")
+    calls: dict[str, object] = {"enable_streaming": None}
+
+    class FakeDaemon:
+        def __init__(self, _config, post_processor=None, **kwargs) -> None:
+            del post_processor
+            calls["enable_streaming"] = kwargs.get("enable_streaming")
+            self.transcriber = SimpleNamespace(preflight_model=lambda: "moonshine-voice")
+
+        def run_forever(self) -> None:
+            raise KeyboardInterrupt
+
+        def stop(self) -> None:
+            return None
+
+    fake_daemon_mod.MoonshineFlowDaemon = FakeDaemon
+    monkeypatch.setitem(sys.modules, "moonshine_flow.daemon", fake_daemon_mod)
+    monkeypatch.setattr(cli, "_resolve_config_path", lambda _: Path("/tmp/config.toml"))
+    monkeypatch.setattr(
+        cli,
+        "load_config",
+        lambda _: SimpleNamespace(
+            runtime=SimpleNamespace(log_level="INFO"),
+            stt=SimpleNamespace(model="moonshine:base"),
+            output=SimpleNamespace(mode="typing"),
+        ),
+    )
+    monkeypatch.setattr(cli, "configure_logging", lambda _level: None)
+    monkeypatch.setattr(cli, "_has_moonshine_backend", lambda: True)
+    monkeypatch.setattr(cli, "consume_restart_permission_suppression", lambda: False)
+    monkeypatch.setattr(
+        cli,
+        "check_all_permissions",
+        lambda: PermissionReport(microphone=True, accessibility=True, input_monitoring=True),
+    )
+    monkeypatch.delenv("XPC_SERVICE_NAME", raising=False)
+
+    exit_code = cli.cmd_run(argparse.Namespace(config=None))
+
+    assert exit_code == 0
+    assert calls["enable_streaming"] is True
+
+
+def test_cmd_run_fails_fast_when_vllm_dependency_missing(monkeypatch) -> None:
+    fake_daemon_mod = ModuleType("moonshine_flow.daemon")
+
+    class FakeDaemon:
+        def __init__(self, _config, post_processor=None, **kwargs) -> None:
+            del _config, post_processor, kwargs
+            self.transcriber = SimpleNamespace(preflight_model=lambda: "vllm-realtime")
+
+        def run_forever(self) -> None:
+            raise AssertionError("run_forever must not be called")
+
+        def stop(self) -> None:
+            return None
+
+    fake_daemon_mod.MoonshineFlowDaemon = FakeDaemon
+    monkeypatch.setitem(sys.modules, "moonshine_flow.daemon", fake_daemon_mod)
+    monkeypatch.setattr(cli, "_resolve_config_path", lambda _: Path("/tmp/config.toml"))
+    monkeypatch.setattr(
+        cli,
+        "load_config",
+        lambda _: SimpleNamespace(
+            runtime=SimpleNamespace(log_level="INFO"),
+            stt=SimpleNamespace(model="vllm:mistralai/Voxtral-Mini-4B-Realtime-2602"),
+        ),
+    )
+    dummy_result = SimpleNamespace(
+        warnings=[],
+        loaded=False,
+        rules=SimpleNamespace(exact_count=0, regex_count=0),
+        disabled_regex_count=0,
+        path=None,
+    )
+    monkeypatch.setattr(cli, "_load_corrections_with_diagnostics", lambda *_a, **_k: (dummy_result, None))
+    monkeypatch.setattr(cli, "configure_logging", lambda _level: None)
+    monkeypatch.setattr(cli, "_has_moonshine_backend", lambda: False)
+    monkeypatch.setattr(cli, "_has_vllm_backend", lambda: False)
+    monkeypatch.setattr(cli, "_has_websockets_backend", lambda: True)
+
+    exit_code = cli.cmd_run(argparse.Namespace(config=None))
+
+    assert exit_code == 3
+
+
+def test_cmd_run_fails_fast_when_mlx_dependency_missing(monkeypatch) -> None:
+    fake_daemon_mod = ModuleType("moonshine_flow.daemon")
+
+    class FakeDaemon:
+        def __init__(self, _config, post_processor=None, **kwargs) -> None:
+            del _config, post_processor, kwargs
+            self.transcriber = SimpleNamespace(preflight_model=lambda: "mlx-whisper")
+
+        def run_forever(self) -> None:
+            raise AssertionError("run_forever must not be called")
+
+        def stop(self) -> None:
+            return None
+
+    fake_daemon_mod.MoonshineFlowDaemon = FakeDaemon
+    monkeypatch.setitem(sys.modules, "moonshine_flow.daemon", fake_daemon_mod)
+    monkeypatch.setattr(cli, "_resolve_config_path", lambda _: Path("/tmp/config.toml"))
+    monkeypatch.setattr(
+        cli,
+        "load_config",
+        lambda _: SimpleNamespace(
+            runtime=SimpleNamespace(log_level="INFO"),
+            stt=SimpleNamespace(model="mlx:mlx-community/whisper-large-v3-turbo"),
+        ),
+    )
+    dummy_result = SimpleNamespace(
+        warnings=[],
+        loaded=False,
+        rules=SimpleNamespace(exact_count=0, regex_count=0),
+        disabled_regex_count=0,
+        path=None,
+    )
+    monkeypatch.setattr(cli, "_load_corrections_with_diagnostics", lambda *_a, **_k: (dummy_result, None))
+    monkeypatch.setattr(cli, "configure_logging", lambda _level: None)
+    monkeypatch.setattr(cli, "_has_mlx_backend", lambda: False)
+
+    exit_code = cli.cmd_run(argparse.Namespace(config=None))
+
+    assert exit_code == 3
+
+
+def test_cmd_run_fails_fast_when_voxtral_dependency_missing(monkeypatch) -> None:
+    fake_daemon_mod = ModuleType("moonshine_flow.daemon")
+
+    class FakeDaemon:
+        def __init__(self, _config, post_processor=None, **kwargs) -> None:
+            del _config, post_processor, kwargs
+            self.transcriber = SimpleNamespace(preflight_model=lambda: "voxtral-transformers")
+
+        def run_forever(self) -> None:
+            raise AssertionError("run_forever must not be called")
+
+        def stop(self) -> None:
+            return None
+
+    fake_daemon_mod.MoonshineFlowDaemon = FakeDaemon
+    monkeypatch.setitem(sys.modules, "moonshine_flow.daemon", fake_daemon_mod)
+    monkeypatch.setattr(cli, "_resolve_config_path", lambda _: Path("/tmp/config.toml"))
+    monkeypatch.setattr(
+        cli,
+        "load_config",
+        lambda _: SimpleNamespace(
+            runtime=SimpleNamespace(log_level="INFO"),
+            stt=SimpleNamespace(model="voxtral:mistralai/Voxtral-Mini-4B-Realtime-2602"),
+        ),
+    )
+    dummy_result = SimpleNamespace(
+        warnings=[],
+        loaded=False,
+        rules=SimpleNamespace(exact_count=0, regex_count=0),
+        disabled_regex_count=0,
+        path=None,
+    )
+    monkeypatch.setattr(cli, "_load_corrections_with_diagnostics", lambda *_a, **_k: (dummy_result, None))
+    monkeypatch.setattr(cli, "configure_logging", lambda _level: None)
+    monkeypatch.setattr(cli, "_has_voxtral_backend", lambda: False)
+
+    exit_code = cli.cmd_run(argparse.Namespace(config=None))
+
+    assert exit_code == 3
+
+
+def test_cmd_run_switches_vllm_voxtral_to_voxtral_backend(monkeypatch) -> None:
+    fake_daemon_mod = ModuleType("moonshine_flow.daemon")
+    calls: dict[str, object] = {"model": None, "stop": 0}
+
+    class FakeDaemon:
+        def __init__(self, _config, post_processor=None, **kwargs) -> None:
+            del post_processor, kwargs
+            calls["model"] = _config.stt.model
+            self.transcriber = SimpleNamespace(preflight_model=lambda: "voxtral-transformers")
+
+        def run_forever(self) -> None:
+            raise KeyboardInterrupt
+
+        def stop(self) -> None:
+            calls["stop"] = int(calls["stop"]) + 1
+
+    fake_daemon_mod.MoonshineFlowDaemon = FakeDaemon
+    monkeypatch.setitem(sys.modules, "moonshine_flow.daemon", fake_daemon_mod)
+    monkeypatch.setattr(cli, "_resolve_config_path", lambda _: Path("/tmp/config.toml"))
+    monkeypatch.setattr(
+        cli,
+        "load_config",
+        lambda _: SimpleNamespace(
+            runtime=SimpleNamespace(log_level="INFO"),
+            stt=SimpleNamespace(model="vllm:mistralai/Voxtral-Mini-4B-Realtime-2602"),
+        ),
+    )
+    dummy_result = SimpleNamespace(
+        warnings=[],
+        loaded=False,
+        rules=SimpleNamespace(exact_count=0, regex_count=0),
+        disabled_regex_count=0,
+        path=None,
+    )
+    monkeypatch.setattr(cli, "_load_corrections_with_diagnostics", lambda *_a, **_k: (dummy_result, None))
+    monkeypatch.setattr(cli, "configure_logging", lambda _level: None)
+    monkeypatch.setattr(
+        cli,
+        "check_all_permissions",
+        lambda: PermissionReport(microphone=True, accessibility=True, input_monitoring=True),
+    )
+    monkeypatch.delenv("XPC_SERVICE_NAME", raising=False)
+    monkeypatch.setattr(cli, "_has_vllm_backend", lambda: False)
+    monkeypatch.setattr(cli, "_has_websockets_backend", lambda: True)
+    monkeypatch.setattr(cli, "_has_voxtral_backend", lambda: True)
+
+    exit_code = cli.cmd_run(argparse.Namespace(config=None))
+
+    assert exit_code == 0
+    assert calls["model"] == "voxtral:mistralai/Voxtral-Mini-4B-Realtime-2602"
+    assert calls["stop"] == 1
+
+
 def test_has_moonshine_backend_true(monkeypatch) -> None:
     monkeypatch.setattr(
         cli,
@@ -336,6 +615,42 @@ def test_has_moonshine_backend_true(monkeypatch) -> None:
 def test_has_moonshine_backend_false(monkeypatch) -> None:
     monkeypatch.setattr(cli, "find_spec", lambda name: None)
     assert not cli._has_moonshine_backend()
+
+
+def test_has_voxtral_backend_true_with_voxmlx(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "_is_macos_arm64", lambda: True)
+    monkeypatch.setattr(
+        cli,
+        "find_spec",
+        lambda name: object() if name == "voxmlx" else None,
+    )
+    assert cli._has_voxtral_backend()
+
+
+def test_has_voxtral_backend_true_with_transformers(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "_is_macos_arm64", lambda: False)
+    monkeypatch.setattr(
+        cli,
+        "find_spec",
+        lambda name: object() if name in {"transformers", "mistral_common"} else None,
+    )
+    assert cli._has_voxtral_backend()
+
+
+def test_has_voxtral_backend_false_on_macos_without_voxmlx(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "_is_macos_arm64", lambda: True)
+    monkeypatch.setattr(
+        cli,
+        "find_spec",
+        lambda name: object() if name in {"transformers", "mistral_common"} else None,
+    )
+    assert not cli._has_voxtral_backend()
+
+
+def test_voxtral_backend_guidance_prefers_voxmlx_on_macos(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "_is_macos_arm64", lambda: True)
+    guidance = cli._voxtral_backend_guidance()
+    assert "voxmlx" in guidance
 
 
 def test_backend_guidance_has_actionable_text() -> None:
@@ -399,7 +714,7 @@ def test_prompt_choice_accepts_number(monkeypatch, capsys) -> None:
     monkeypatch.setattr("builtins.input", lambda _prompt: "2")
     monkeypatch.setattr(cli, "_supports_ansi_styles", lambda: False)
     value = cli._prompt_choice(
-        "model.size",
+        "stt.model",
         "tiny",
         ["tiny", "base"],
     )
@@ -425,8 +740,8 @@ def test_cmd_init_updates_values_and_keeps_others(monkeypatch, tmp_path: Path, c
             "",  # audio.release_tail_seconds
             "",  # audio.trailing_silence_seconds
             "",  # audio.input_device
-            "",  # model.size
-            "ja",  # model.language
+            "",  # stt.model
+            "ja",  # language
             "",  # model.device
             "",  # output.mode
             "",  # output.paste_shortcut
@@ -452,7 +767,7 @@ def test_cmd_init_updates_values_and_keeps_others(monkeypatch, tmp_path: Path, c
     assert "keep: 16000" in captured.out
     updated = cli.load_config(cfg_path)
     assert updated.hotkey.key == "right_shift"
-    assert updated.model.language == "ja"
+    assert updated.language == "ja"
     assert updated.text.llm_correction.mode.value == "ask"
     assert updated.text.llm_correction.model == "llama3.2:latest"
 
@@ -473,8 +788,8 @@ def test_cmd_init_accepts_provider_other(monkeypatch, tmp_path: Path, capsys) ->
             "",  # audio.release_tail_seconds
             "",  # audio.trailing_silence_seconds
             "",  # audio.input_device
-            "",  # model.size
-            "",  # model.language
+            "",  # stt.model
+            "",  # language
             "",  # model.device
             "",  # output.mode
             "",  # output.paste_shortcut
@@ -500,6 +815,49 @@ def test_cmd_init_accepts_provider_other(monkeypatch, tmp_path: Path, capsys) ->
     _ = capsys.readouterr()
     updated = cli.load_config(cfg_path)
     assert updated.text.llm_correction.provider == "my-local-provider"
+
+
+def test_cmd_init_migrates_legacy_model_size_config(monkeypatch, tmp_path: Path, capsys) -> None:
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(
+        """
+[hotkey]
+key = "right_cmd"
+
+[audio]
+sample_rate = 16000
+channels = 1
+dtype = "float32"
+max_record_seconds = 30
+
+[model]
+size = "tiny"
+device = "mps"
+
+[output]
+mode = "clipboard_paste"
+paste_shortcut = "cmd+v"
+
+[runtime]
+log_level = "INFO"
+notify_on_error = true
+""".strip(),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(cli, "_resolve_config_path", lambda _: cfg_path)
+    monkeypatch.setattr(cli, "_is_interactive_session", lambda: True)
+    monkeypatch.setattr(cli, "_supports_ansi_styles", lambda: False)
+    monkeypatch.setattr("builtins.input", lambda _prompt: "")
+
+    exit_code = cli.cmd_init(argparse.Namespace(config=None))
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "Updated config:" in captured.out
+    updated = cli.load_config(cfg_path)
+    assert updated.stt.model == "moonshine:tiny"
+    assert "size =" not in cfg_path.read_text(encoding="utf-8")
 
 
 def test_list_devices_parser_has_config_option() -> None:
@@ -535,6 +893,15 @@ def test_list_parser_accepts_ollama_target() -> None:
     assert args.config == "/tmp/config.toml"
 
 
+def test_list_parser_accepts_model_target() -> None:
+    parser = cli.build_parser()
+    args = parser.parse_args(["list", "model", "--config", "/tmp/config.toml"])
+    assert args.command == "list"
+    assert args.list_target == "model"
+    assert args.func == cli.cmd_list_model
+    assert args.config == "/tmp/config.toml"
+
+
 def test_list_parser_accepts_lmstudio_target() -> None:
     parser = cli.build_parser()
     args = parser.parse_args(["list", "lmstudio", "--config", "/tmp/config.toml"])
@@ -544,14 +911,134 @@ def test_list_parser_accepts_lmstudio_target() -> None:
     assert args.config == "/tmp/config.toml"
 
 
+def test_list_parser_accepts_typing_target() -> None:
+    parser = cli.build_parser()
+    args = parser.parse_args(["list", "typing", "--config", "/tmp/config.toml"])
+    assert args.command == "list"
+    assert args.list_target == "typing"
+    assert args.func == cli.cmd_list_typing
+    assert args.config == "/tmp/config.toml"
+
+
+def test_stt_model_presets_prefers_mlx_on_macos_arm64(monkeypatch) -> None:
+    monkeypatch.setattr(cli.sys, "platform", "darwin", raising=False)
+    monkeypatch.setattr(cli.platform, "machine", lambda: "arm64")
+    presets = cli._stt_model_presets()
+    assert "voxtral:mistralai/Voxtral-Mini-4B-Realtime-2602" in presets
+    assert "mlx:mlx-community/whisper-large-v3-turbo" not in presets
+
+
+def test_stt_model_presets_prefers_vllm_on_non_macos_arm64(monkeypatch) -> None:
+    monkeypatch.setattr(cli.sys, "platform", "linux", raising=False)
+    monkeypatch.setattr(cli.platform, "machine", lambda: "x86_64")
+    presets = cli._stt_model_presets()
+    assert "voxtral:mistralai/Voxtral-Mini-4B-Realtime-2602" in presets
+    assert "mlx:mlx-community/whisper-large-v3-turbo" not in presets
+
+
 def test_cmd_list_shows_available_commands(capsys) -> None:
     exit_code = cli.cmd_list(argparse.Namespace())
     captured = capsys.readouterr()
     assert exit_code == 0
     assert "Available list commands" in captured.out
     assert "mflow list devices" in captured.out
+    assert "mflow list model" in captured.out
+    assert "mflow list typing" in captured.out
     assert "mflow list ollama" in captured.out
     assert "mflow list lmstudio" in captured.out
+
+
+def test_cmd_list_model_requires_interactive_terminal(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(cli, "_is_interactive_session", lambda: False)
+    exit_code = cli.cmd_list_model(argparse.Namespace(config=None))
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert "interactive terminal" in captured.err
+
+
+def test_cmd_list_model_selects_preset_and_updates_config(monkeypatch, tmp_path: Path, capsys) -> None:
+    cfg_path = tmp_path / "config.toml"
+    monkeypatch.setattr(cli, "_resolve_config_path", lambda _: cfg_path)
+    monkeypatch.setattr(cli, "_is_interactive_session", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda _prompt: "1")
+
+    exit_code = cli.cmd_list_model(argparse.Namespace(config=None))
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "stt.model = moonshine:tiny" in captured.out
+    updated = cli.load_config(cfg_path)
+    assert updated.stt.model == "moonshine:tiny"
+
+
+def test_cmd_list_model_selects_custom_and_updates_config(monkeypatch, tmp_path: Path, capsys) -> None:
+    cfg_path = tmp_path / "config.toml"
+    monkeypatch.setattr(cli, "_resolve_config_path", lambda _: cfg_path)
+    monkeypatch.setattr(cli, "_is_interactive_session", lambda: True)
+    answers = iter(["4", "vllm:org/custom-realtime"])
+    monkeypatch.setattr("builtins.input", lambda _prompt: next(answers))
+
+    exit_code = cli.cmd_list_model(argparse.Namespace(config=None))
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "stt.model = vllm:org/custom-realtime" in captured.out
+    updated = cli.load_config(cfg_path)
+    assert updated.stt.model == "vllm:org/custom-realtime"
+
+
+def test_cmd_list_model_shows_downloaded_status(monkeypatch, tmp_path: Path, capsys) -> None:
+    cfg_path = tmp_path / "config.toml"
+    cfg = cli.load_config(cfg_path)
+    cfg.stt.model = "vllm:mistralai/Voxtral-Mini-4B-Realtime-2602"
+    cli.write_config(cfg_path, cfg)
+
+    monkeypatch.setattr(cli, "_resolve_config_path", lambda _: cfg_path)
+    monkeypatch.setattr(cli, "_is_interactive_session", lambda: True)
+    monkeypatch.setattr(
+        cli,
+        "_stt_model_downloaded_display",
+        lambda token: "yes" if token.startswith("vllm:") else "no",
+    )
+    monkeypatch.setattr("builtins.input", lambda _prompt: "")
+
+    exit_code = cli.cmd_list_model(argparse.Namespace(config=None))
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "Current downloaded: yes" in captured.out
+    assert "(downloaded: yes)" in captured.out
+
+
+def test_cmd_list_typing_requires_interactive_terminal(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(cli, "_is_interactive_session", lambda: False)
+
+    exit_code = cli.cmd_list_typing(argparse.Namespace(config=None))
+
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert "interactive terminal" in captured.err
+
+
+def test_cmd_list_typing_selects_mode_and_updates_config(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    cfg_path = tmp_path / "config.toml"
+    cfg = cli.load_config(cfg_path)
+    cfg.output.mode = "direct_typing"
+    cli.write_config(cfg_path, cfg)
+
+    monkeypatch.setattr(cli, "_resolve_config_path", lambda _: cfg_path)
+    monkeypatch.setattr(cli, "_is_interactive_session", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda _prompt: "2")
+
+    exit_code = cli.cmd_list_typing(argparse.Namespace(config=None))
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "output.mode = clipboard_paste" in captured.out
+    updated = cli.load_config(cfg_path)
+    assert updated.output.mode.value == "clipboard_paste"
 
 
 def test_cmd_list_ollama_requires_interactive_terminal(monkeypatch, capsys) -> None:
@@ -992,23 +1479,20 @@ def test_cmd_install_launch_agent_aborts_when_launchd_check_parse_fails(
 
 
 def test_cmd_doctor_prints_launch_agent_and_log_paths(monkeypatch, capsys) -> None:
-    fake_transcriber_mod = ModuleType("moonshine_flow.transcriber")
-
     class FakeTranscriber:
-        def __init__(self, model_size: str, language: str, device: str) -> None:
-            self._summary = f"{model_size}:{language}:{device}"
+        def __init__(self) -> None:
+            self._summary = "moonshine:base:ja:mps"
 
         def backend_summary(self) -> str:
             return self._summary
 
-    fake_transcriber_mod.MoonshineTranscriber = FakeTranscriber
-    monkeypatch.setitem(sys.modules, "moonshine_flow.transcriber", fake_transcriber_mod)
+    monkeypatch.setattr(cli, "create_stt_backend", lambda _config: FakeTranscriber())
     monkeypatch.setattr(cli, "_resolve_config_path", lambda _: Path("/tmp/config.toml"))
     monkeypatch.setattr(
         cli,
         "load_config",
         lambda _: SimpleNamespace(
-            model=SimpleNamespace(size=SimpleNamespace(value="base"), language="ja", device="mps")
+            language="ja", stt=SimpleNamespace(model="moonshine:base"), model=SimpleNamespace(device="mps")
         ),
     )
     monkeypatch.setattr(cli, "find_spec", lambda _: object())
@@ -1042,6 +1526,46 @@ def test_cmd_doctor_prints_launch_agent_and_log_paths(monkeypatch, capsys) -> No
     assert "Permission target (recommended): /tmp/target.app" in captured.out
     assert "Daemon stdout log: /tmp/daemon.out.log" in captured.out
     assert "Daemon stderr log: /tmp/daemon.err.log" in captured.out
+
+
+def test_cmd_doctor_skips_moonshine_guidance_for_vllm(monkeypatch, capsys) -> None:
+    class FakeTranscriber:
+        def backend_summary(self) -> str:
+            return "backend=vllm-realtime"
+
+    monkeypatch.setattr(cli, "create_stt_backend", lambda _config: FakeTranscriber())
+    monkeypatch.setattr(cli, "_resolve_config_path", lambda _: Path("/tmp/config.toml"))
+    monkeypatch.setattr(
+        cli,
+        "load_config",
+        lambda _: SimpleNamespace(
+            language="ja",
+            stt=SimpleNamespace(model="vllm:mistralai/Voxtral-Mini-4B-Realtime-2602"),
+            model=SimpleNamespace(device="mps"),
+        ),
+    )
+    monkeypatch.setattr(cli, "_has_moonshine_backend", lambda: False)
+    monkeypatch.setattr(cli, "find_spec", lambda _name: object())
+    monkeypatch.setattr(
+        cli,
+        "check_all_permissions",
+        lambda: PermissionReport(microphone=True, accessibility=True, input_monitoring=True),
+    )
+    monkeypatch.setattr(cli, "read_launch_agent_plist", lambda: None)
+    monkeypatch.setattr(cli, "launch_agent_path", lambda: Path("/tmp/com.moonshineflow.daemon.plist"))
+    monkeypatch.setattr(
+        cli,
+        "launch_agent_log_paths",
+        lambda: (Path("/tmp/daemon.out.log"), Path("/tmp/daemon.err.log")),
+    )
+    monkeypatch.setattr(cli, "recommended_permission_target", lambda: Path("/tmp/target.app"))
+
+    exit_code = cli.cmd_doctor(argparse.Namespace(config=None, launchd_check=False))
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "Transcriber: backend=vllm-realtime" in captured.out
+    assert "Moonshine backend package is missing" not in captured.out
 
 
 def test_cmd_install_app_bundle_succeeds(monkeypatch, capsys) -> None:
@@ -1222,23 +1746,20 @@ def test_latest_launchd_runtime_warning_detects_not_trusted(tmp_path: Path) -> N
 
 
 def test_cmd_doctor_prints_runtime_warning_from_daemon_log(monkeypatch, capsys, tmp_path: Path) -> None:
-    fake_transcriber_mod = ModuleType("moonshine_flow.transcriber")
-
     class FakeTranscriber:
-        def __init__(self, model_size: str, language: str, device: str) -> None:
-            self._summary = f"{model_size}:{language}:{device}"
+        def __init__(self) -> None:
+            self._summary = "moonshine:base:ja:mps"
 
         def backend_summary(self) -> str:
             return self._summary
 
-    fake_transcriber_mod.MoonshineTranscriber = FakeTranscriber
-    monkeypatch.setitem(sys.modules, "moonshine_flow.transcriber", fake_transcriber_mod)
+    monkeypatch.setattr(cli, "create_stt_backend", lambda _config: FakeTranscriber())
     monkeypatch.setattr(cli, "_resolve_config_path", lambda _: Path("/tmp/config.toml"))
     monkeypatch.setattr(
         cli,
         "load_config",
         lambda _: SimpleNamespace(
-            model=SimpleNamespace(size=SimpleNamespace(value="base"), language="ja", device="mps")
+            language="ja", stt=SimpleNamespace(model="moonshine:base"), model=SimpleNamespace(device="mps")
         ),
     )
     monkeypatch.setattr(cli, "find_spec", lambda _: object())
@@ -1283,23 +1804,20 @@ def test_cmd_doctor_marks_permissions_incomplete_when_runtime_warning_present(
     capsys,
     tmp_path: Path,
 ) -> None:
-    fake_transcriber_mod = ModuleType("moonshine_flow.transcriber")
-
     class FakeTranscriber:
-        def __init__(self, model_size: str, language: str, device: str) -> None:
-            self._summary = f"{model_size}:{language}:{device}"
+        def __init__(self) -> None:
+            self._summary = "moonshine:base:ja:mps"
 
         def backend_summary(self) -> str:
             return self._summary
 
-    fake_transcriber_mod.MoonshineTranscriber = FakeTranscriber
-    monkeypatch.setitem(sys.modules, "moonshine_flow.transcriber", fake_transcriber_mod)
+    monkeypatch.setattr(cli, "create_stt_backend", lambda _config: FakeTranscriber())
     monkeypatch.setattr(cli, "_resolve_config_path", lambda _: Path("/tmp/config.toml"))
     monkeypatch.setattr(
         cli,
         "load_config",
         lambda _: SimpleNamespace(
-            model=SimpleNamespace(size=SimpleNamespace(value="base"), language="ja", device="mps")
+            language="ja", stt=SimpleNamespace(model="moonshine:base"), model=SimpleNamespace(device="mps")
         ),
     )
     monkeypatch.setattr(cli, "find_spec", lambda _: object())
@@ -1346,23 +1864,20 @@ def test_cmd_doctor_marks_permissions_incomplete_when_runtime_warning_present(
 
 
 def test_cmd_doctor_prints_install_hint_when_launch_agent_missing(monkeypatch, capsys) -> None:
-    fake_transcriber_mod = ModuleType("moonshine_flow.transcriber")
-
     class FakeTranscriber:
-        def __init__(self, model_size: str, language: str, device: str) -> None:
-            self._summary = f"{model_size}:{language}:{device}"
+        def __init__(self) -> None:
+            self._summary = "moonshine:base:ja:mps"
 
         def backend_summary(self) -> str:
             return self._summary
 
-    fake_transcriber_mod.MoonshineTranscriber = FakeTranscriber
-    monkeypatch.setitem(sys.modules, "moonshine_flow.transcriber", fake_transcriber_mod)
+    monkeypatch.setattr(cli, "create_stt_backend", lambda _config: FakeTranscriber())
     monkeypatch.setattr(cli, "_resolve_config_path", lambda _: Path("/tmp/config.toml"))
     monkeypatch.setattr(
         cli,
         "load_config",
         lambda _: SimpleNamespace(
-            model=SimpleNamespace(size=SimpleNamespace(value="base"), language="ja", device="mps")
+            language="ja", stt=SimpleNamespace(model="moonshine:base"), model=SimpleNamespace(device="mps")
         ),
     )
     monkeypatch.setattr(cli, "find_spec", lambda _: object())
@@ -1389,23 +1904,20 @@ def test_cmd_doctor_prints_install_hint_when_launch_agent_missing(monkeypatch, c
 
 
 def test_cmd_doctor_compares_launchd_permissions_when_enabled(monkeypatch, capsys) -> None:
-    fake_transcriber_mod = ModuleType("moonshine_flow.transcriber")
-
     class FakeTranscriber:
-        def __init__(self, model_size: str, language: str, device: str) -> None:
-            self._summary = f"{model_size}:{language}:{device}"
+        def __init__(self) -> None:
+            self._summary = "moonshine:base:ja:mps"
 
         def backend_summary(self) -> str:
             return self._summary
 
-    fake_transcriber_mod.MoonshineTranscriber = FakeTranscriber
-    monkeypatch.setitem(sys.modules, "moonshine_flow.transcriber", fake_transcriber_mod)
+    monkeypatch.setattr(cli, "create_stt_backend", lambda _config: FakeTranscriber())
     monkeypatch.setattr(cli, "_resolve_config_path", lambda _: Path("/tmp/config.toml"))
     monkeypatch.setattr(
         cli,
         "load_config",
         lambda _: SimpleNamespace(
-            model=SimpleNamespace(size=SimpleNamespace(value="base"), language="ja", device="mps")
+            language="ja", stt=SimpleNamespace(model="moonshine:base"), model=SimpleNamespace(device="mps")
         ),
     )
     monkeypatch.setattr(cli, "find_spec", lambda _: object())
@@ -1450,23 +1962,20 @@ def test_cmd_doctor_compares_launchd_permissions_when_enabled(monkeypatch, capsy
 
 
 def test_cmd_doctor_reports_launchd_check_error(monkeypatch, capsys) -> None:
-    fake_transcriber_mod = ModuleType("moonshine_flow.transcriber")
-
     class FakeTranscriber:
-        def __init__(self, model_size: str, language: str, device: str) -> None:
-            self._summary = f"{model_size}:{language}:{device}"
+        def __init__(self) -> None:
+            self._summary = "moonshine:base:ja:mps"
 
         def backend_summary(self) -> str:
             return self._summary
 
-    fake_transcriber_mod.MoonshineTranscriber = FakeTranscriber
-    monkeypatch.setitem(sys.modules, "moonshine_flow.transcriber", fake_transcriber_mod)
+    monkeypatch.setattr(cli, "create_stt_backend", lambda _config: FakeTranscriber())
     monkeypatch.setattr(cli, "_resolve_config_path", lambda _: Path("/tmp/config.toml"))
     monkeypatch.setattr(
         cli,
         "load_config",
         lambda _: SimpleNamespace(
-            model=SimpleNamespace(size=SimpleNamespace(value="base"), language="ja", device="mps")
+            language="ja", stt=SimpleNamespace(model="moonshine:base"), model=SimpleNamespace(device="mps")
         ),
     )
     monkeypatch.setattr(cli, "find_spec", lambda _: object())
@@ -1587,25 +2096,22 @@ def test_resolve_app_version_fallback_when_metadata_missing() -> None:
 
 def _make_doctor_monkeypatches(monkeypatch, *, out_log: Path, err_log: Path) -> None:
     """Apply common monkeypatches for cmd_doctor tests."""
-    from types import ModuleType, SimpleNamespace
-
-    fake_transcriber_mod = ModuleType("moonshine_flow.transcriber")
+    from types import SimpleNamespace
 
     class FakeTranscriber:
-        def __init__(self, model_size: str, language: str, device: str) -> None:
-            self._summary = f"{model_size}:{language}:{device}"
+        def __init__(self) -> None:
+            self._summary = "moonshine:base:ja:mps"
 
         def backend_summary(self) -> str:
             return self._summary
 
-    fake_transcriber_mod.MoonshineTranscriber = FakeTranscriber
-    monkeypatch.setitem(sys.modules, "moonshine_flow.transcriber", fake_transcriber_mod)
+    monkeypatch.setattr(cli, "create_stt_backend", lambda _config: FakeTranscriber())
     monkeypatch.setattr(cli, "_resolve_config_path", lambda _: Path("/tmp/config.toml"))
     monkeypatch.setattr(
         cli,
         "load_config",
         lambda _: SimpleNamespace(
-            model=SimpleNamespace(size=SimpleNamespace(value="base"), language="ja", device="mps")
+            language="ja", stt=SimpleNamespace(model="moonshine:base"), model=SimpleNamespace(device="mps")
         ),
     )
     monkeypatch.setattr(cli, "find_spec", lambda _: object())

@@ -19,6 +19,7 @@ def _settings(provider: str) -> LLMCorrectionSettings:
         max_input_chars=500,
         api_key=None,
         enabled_tools=False,
+        language="ja",
     )
 
 
@@ -46,6 +47,8 @@ def test_ollama_client_correct_parses_response(monkeypatch) -> None:
     assert isinstance(payload, dict)
     assert payload["model"] == "test-model"
     assert payload["stream"] is False
+    assert "truncated at the end" in payload["prompt"]
+    assert "Output language must be 'ja'" in payload["prompt"]
 
 
 def test_lmstudio_client_correct_parses_response(monkeypatch) -> None:
@@ -72,6 +75,9 @@ def test_lmstudio_client_correct_parses_response(monkeypatch) -> None:
     assert isinstance(payload, dict)
     assert payload["model"] == "test-model"
     assert isinstance(payload["messages"], list)
+    assert payload["messages"][0]["role"] == "system"
+    assert "truncated at the end" in payload["messages"][0]["content"]
+    assert "Output language must be 'ja'" in payload["messages"][0]["content"]
 
 
 def test_llm_post_processor_falls_back_and_short_circuits_after_failure(monkeypatch) -> None:

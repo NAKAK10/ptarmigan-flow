@@ -13,8 +13,8 @@ from moonshine_flow.audio_recorder import AudioRecorder
 from moonshine_flow.config import AppConfig
 from moonshine_flow.hotkey_monitor import HotkeyMonitor
 from moonshine_flow.output_injector import OutputInjector
+from moonshine_flow.stt.factory import create_stt_backend, parse_stt_model
 from moonshine_flow.text_processing.interfaces import TextPostProcessor
-from moonshine_flow.transcriber import MoonshineTranscriber
 
 LOGGER = logging.getLogger(__name__)
 _HOTKEY_COOLDOWN_SECONDS = 0.25
@@ -28,8 +28,11 @@ class MoonshineFlowDaemon:
         self,
         config: AppConfig,
         post_processor: TextPostProcessor | None = None,
+        *,
+        enable_streaming: bool = True,
     ) -> None:
         self.config = config
+        self._enable_streaming = enable_streaming
         self._stop_event = threading.Event()
         self._audio_queue: queue.Queue[np.ndarray] = queue.Queue()
         self._state_lock = threading.Lock()
@@ -47,11 +50,8 @@ class MoonshineFlowDaemon:
             max_record_seconds=config.audio.max_record_seconds,
             input_device=config.audio.input_device,
         )
-        self.transcriber = MoonshineTranscriber(
-            model_size=config.model.size.value,
-            language=config.model.language,
-            device=config.model.device,
-            trailing_silence_seconds=config.audio.trailing_silence_seconds,
+        self.transcriber = create_stt_backend(
+            config,
             post_processor=post_processor,
         )
         self.injector = OutputInjector(
@@ -98,7 +98,7 @@ class MoonshineFlowDaemon:
         if self._stop_event.is_set() or not self.recorder.is_recording:
             return
 
-        release_tail_seconds = float(self.config.audio.release_tail_seconds)
+        release_tail_seconds = self._effective_release_tail_seconds()
         if release_tail_seconds <= 0.0:
             self._stop_recording_and_queue_audio(reason="hotkey-release")
             return
@@ -122,6 +122,19 @@ class MoonshineFlowDaemon:
             stop_id,
         )
         timer.start()
+
+    def _effective_release_tail_seconds(self) -> float:
+        configured = float(self.config.audio.release_tail_seconds)
+        try:
+            model_token = str(getattr(getattr(self.config, "stt", None), "model", ""))
+            prefix, _model_id = parse_stt_model(model_token)
+        except Exception:
+            return configured
+
+        # Keep explicit user overrides, but default realtime STT to zero extra tail.
+        if prefix in {"voxtral", "vllm"} and abs(configured - 0.25) < 1e-9:
+            return 0.0
+        return configured
 
     def _cancel_pending_stop_locked(self) -> bool:
         timer = self._pending_stop_timer
@@ -171,17 +184,35 @@ class MoonshineFlowDaemon:
             with self._state_lock:
                 self._transcription_in_progress = True
             try:
-                text = self.transcriber.transcribe(audio, self.config.audio.sample_rate)
-                if text:
-                    self.injector.inject(text)
+                if self._enable_streaming:
+                    emitted = ""
+                    for update in self.transcriber.transcribe_stream(audio, self.config.audio.sample_rate):
+                        delta = self._append_only_delta(emitted, update)
+                        if not delta:
+                            continue
+                        self.injector.inject(delta)
+                        emitted += delta
+                    if not emitted:
+                        LOGGER.info("Transcription result was empty")
                 else:
-                    LOGGER.info("Transcription result was empty")
+                    text = self.transcriber.transcribe(audio, self.config.audio.sample_rate)
+                    if text:
+                        self.injector.inject(text)
+                    else:
+                        LOGGER.info("Transcription result was empty")
             except Exception:
                 LOGGER.exception("Transcription pipeline failed")
             finally:
                 with self._state_lock:
                     self._transcription_in_progress = False
                 self._audio_queue.task_done()
+
+    @staticmethod
+    def _append_only_delta(previous: str, current: str) -> str:
+        if not current.startswith(previous):
+            LOGGER.debug("Skipping non-monotonic streaming update")
+            return ""
+        return current[len(previous) :]
 
     def _recover_stale_recording_if_needed(self) -> None:
         if not self.recorder.is_recording:

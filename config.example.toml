@@ -1,3 +1,14 @@
+language = "en"
+
+[stt]
+# format: "<backend>:<model>"
+# examples:
+#   moonshine:base
+#   moonshine:tiny
+#   voxtral:mistralai/Voxtral-Mini-4B-Realtime-2602
+#   vllm:mistralai/Voxtral-Mini-4B-Realtime-2602
+model = "moonshine:base"
+
 [hotkey]
 key = "right_cmd"
 
@@ -11,18 +22,18 @@ max_record_seconds = 30
 release_tail_seconds = 0.25
 # Add trailing silence before transcription for decoder stability.
 # Value is clamped to [0.0, 1.0].
-trailing_silence_seconds = 0.5
+trailing_silence_seconds = 1.0
 # If set, this exact input device is used first (name or index).
 # Use `mflow list devices` to view and choose from available input devices.
 # input_device = "MacBook Air Microphone"
 
 [model]
-size = "base"
-language = "auto"
 device = "mps"
 
 [output]
-mode = "clipboard_paste"
+# direct_typing: types text directly (clipboard is untouched)
+# clipboard_paste: copies to clipboard then pastes with paste_shortcut
+mode = "direct_typing"
 paste_shortcut = "cmd+v"
 
 [runtime]

@@ -26,6 +26,7 @@ https://github.com/NAKAK10/moonshine-flow
 - `moonshine-flow check-permissions --request`: request/check macOS permissions.
 - `moonshine-flow list`: show list subcommands.
 - `moonshine-flow list devices`: list/select input devices and save to config.
+- `moonshine-flow list model`: list/select STT model presets and save to config.
 - `moonshine-flow list ollama`: list/select downloaded Ollama models and save selection to config.
 - `moonshine-flow list lmstudio`: list/select loaded LM Studio models and save selection to config.
 
@@ -85,6 +86,8 @@ If missing, it is auto-created on first run.
 Key settings:
 - `hotkey.key`: recording trigger key.
 - `audio.input_device`: explicit input device (name or index). `null`/unset means system default.
+- `audio.trailing_silence_seconds`: silence appended before transcription (default `1.0`, clamped to `0.0..1.0`).
+- `output.mode`: `direct_typing` (clipboard non-destructive) or `clipboard_paste`.
 - `text.dictionary_path`: optional correction dictionary path.
 - `text.llm_correction.mode`: `always` / `never` / `ask`.
 - `text.llm_correction.provider`: `ollama` / `lmstudio`.
@@ -93,8 +96,8 @@ Key settings:
 - `text.llm_correction.timeout_seconds`: clamped to `0.5..5.0`.
 - `text.llm_correction.max_input_chars`: clamped to `50..5000`.
 - `text.llm_correction.enabled_tools`: tool-calling switch for supporting endpoints.
-- `model.size`: `base` / `tiny`.
-- `model.language`: `auto` / `ja` / `en` / etc.
+- `stt.model`: backend/model token (`moonshine:tiny`, `moonshine:base`, `voxtral:<model-id>`, `mlx:<model-id>`, `vllm:<model-id>`).
+- `language`: transcription/correction language (explicit value such as `ja` / `en`; `auto` unsupported).
 - `model.device`: `mps` / `cpu`.
 
 Correction dictionary:

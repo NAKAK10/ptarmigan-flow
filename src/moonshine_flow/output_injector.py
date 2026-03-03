@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import shlex
 import subprocess
+import time
 
 import pyperclip
 
@@ -61,16 +62,75 @@ class OutputInjector:
         LOGGER.debug("Executing AppleScript: %s", shlex.quote(script))
         subprocess.run(["osascript", "-e", script], check=True)
 
+    @staticmethod
+    def _escape_applescript_text(text: str) -> str:
+        return text.replace("\\", "\\\\").replace('"', '\\"')
+
+    @staticmethod
+    def _send_text_via_quartz(text: str) -> bool:
+        try:
+            from Quartz import (
+                CGEventCreateKeyboardEvent,
+                CGEventKeyboardSetUnicodeString,
+                CGEventPost,
+                kCGHIDEventTap,
+            )
+        except Exception:
+            return False
+
+        try:
+            chunk_size = 32
+            for offset in range(0, len(text), chunk_size):
+                chunk = text[offset : offset + chunk_size]
+                if not chunk:
+                    continue
+                key_down = CGEventCreateKeyboardEvent(None, 0, True)
+                key_up = CGEventCreateKeyboardEvent(None, 0, False)
+                CGEventKeyboardSetUnicodeString(key_down, len(chunk), chunk)
+                CGEventKeyboardSetUnicodeString(key_up, len(chunk), chunk)
+                CGEventPost(kCGHIDEventTap, key_down)
+                CGEventPost(kCGHIDEventTap, key_up)
+                time.sleep(0.001)
+            return True
+        except Exception:
+            LOGGER.debug("Quartz direct typing failed; fallback to AppleScript", exc_info=True)
+            return False
+
+    def _send_text_direct(self, text: str) -> None:
+        if self._send_text_via_quartz(text):
+            return
+
+        normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+        lines = normalized.split("\n")
+        scripts: list[str] = []
+        for index, line in enumerate(lines):
+            if line:
+                escaped = self._escape_applescript_text(line)
+                scripts.append(f'tell application "System Events" to keystroke "{escaped}"')
+            if index < len(lines) - 1:
+                scripts.append('tell application "System Events" to key code 36')
+
+        if not scripts:
+            return
+        command = ["osascript"]
+        for script in scripts:
+            LOGGER.debug("Executing AppleScript: %s", shlex.quote(script))
+            command.extend(["-e", script])
+        subprocess.run(command, check=True)
+
     def inject(self, text: str) -> bool:
-        """Copy text to clipboard and paste into active app."""
+        """Inject text into active app via configured output mode."""
         if not text.strip():
             LOGGER.debug("Skipping empty transcription output")
             return False
 
-        if self.mode != "clipboard_paste":
-            raise ValueError(f"Unsupported output mode: {self.mode}")
-
-        pyperclip.copy(text)
-        self._send_shortcut()
-        LOGGER.info("Transcription pasted into active app")
-        return True
+        if self.mode == "clipboard_paste":
+            pyperclip.copy(text)
+            self._send_shortcut()
+            LOGGER.info("Transcription pasted into active app")
+            return True
+        if self.mode == "direct_typing":
+            self._send_text_direct(text)
+            LOGGER.info("Transcription typed into active app")
+            return True
+        raise ValueError(f"Unsupported output mode: {self.mode}")

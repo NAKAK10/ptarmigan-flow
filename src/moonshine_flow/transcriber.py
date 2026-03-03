@@ -30,7 +30,7 @@ class MoonshineTranscriber:
         model_size: str,
         language: str,
         device: str,
-        trailing_silence_seconds: float = 0.5,
+        trailing_silence_seconds: float = 1.0,
         post_processor: TextPostProcessor | None = None,
     ) -> None:
         self.model_size = model_size.strip().lower()
@@ -52,7 +52,7 @@ class MoonshineTranscriber:
 
     @staticmethod
     def _resolve_language(language: str) -> str:
-        if language in {"", "auto"}:
+        if not language:
             return "en"
         return language
 

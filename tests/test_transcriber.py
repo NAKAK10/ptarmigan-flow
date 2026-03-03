@@ -119,15 +119,15 @@ def test_transcribe_uses_initialized_backend(monkeypatch) -> None:
 
     assert text == "こんにちは"
     assert calls["sample_rate"] == 16000
-    assert calls["audio_len"] == 8002
+    assert calls["audio_len"] == 16002
 
     transcriber.close()
     assert calls["closed"] is True
 
 
-def test_auto_language_resolves_to_en() -> None:
-    transcriber = MoonshineTranscriber(model_size="base", language="auto", device="cpu")
-    assert transcriber._resolved_language == "en"
+def test_language_is_used_as_is() -> None:
+    transcriber = MoonshineTranscriber(model_size="base", language="ja", device="cpu")
+    assert transcriber._resolved_language == "ja"
 
 
 def test_transcribe_applies_text_corrections(monkeypatch) -> None:

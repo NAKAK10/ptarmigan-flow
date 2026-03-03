@@ -51,6 +51,7 @@ from moonshine_flow.permissions import (
     request_microphone_permission,
     reset_app_bundle_tcc,
 )
+from moonshine_flow.stt.factory import create_stt_backend, parse_stt_model
 from moonshine_flow.text_processing.interfaces import ChainedTextPostProcessor, TextPostProcessor
 from moonshine_flow.text_processing.llm import (
     LLMClientError,
@@ -155,7 +156,20 @@ def _format_optional_bool(value: bool | None) -> str:
     return "<unset>"
 
 
-def _build_llm_settings_from_config(llm_cfg: object) -> LLMCorrectionSettings | None:
+def _runtime_language_from_config(config: object) -> str:
+    language = getattr(config, "language", "en")
+    if not isinstance(language, str):
+        return "en"
+    normalized = language.strip()
+    if not normalized or normalized.lower() == "auto":
+        return "en"
+    return normalized
+
+
+def _build_llm_settings_from_config(
+    config: object,
+    llm_cfg: object,
+) -> LLMCorrectionSettings | None:
     provider = str(getattr(llm_cfg, "provider", "")).strip().lower()
     base_url = str(getattr(llm_cfg, "base_url", "")).strip()
     model = str(getattr(llm_cfg, "model", "")).strip()
@@ -169,7 +183,36 @@ def _build_llm_settings_from_config(llm_cfg: object) -> LLMCorrectionSettings | 
         max_input_chars=int(getattr(llm_cfg, "max_input_chars", 500)),
         api_key=_normalize_optional_secret(getattr(llm_cfg, "api_key", None)),
         enabled_tools=bool(getattr(llm_cfg, "enabled_tools", False)),
+        language=_runtime_language_from_config(config),
     )
+
+
+def _stt_model_from_config(config: object) -> str:
+    stt_cfg = getattr(config, "stt", None)
+    token = str(getattr(stt_cfg, "model", "")).strip()
+    if not token:
+        raise ValueError("stt.model is empty")
+    return token
+
+
+def _is_moonshine_stt_model(config: object) -> bool:
+    prefix, _model_id = parse_stt_model(_stt_model_from_config(config))
+    return prefix == "moonshine"
+
+
+def _is_vllm_stt_model(config: object) -> bool:
+    prefix, _model_id = parse_stt_model(_stt_model_from_config(config))
+    return prefix == "vllm"
+
+
+def _is_mlx_stt_model(config: object) -> bool:
+    prefix, _model_id = parse_stt_model(_stt_model_from_config(config))
+    return prefix == "mlx"
+
+
+def _is_voxtral_stt_model(config: object) -> bool:
+    prefix, _model_id = parse_stt_model(_stt_model_from_config(config))
+    return prefix == "voxtral"
 
 
 def _supports_ansi_styles() -> bool:
@@ -648,13 +691,205 @@ def cmd_list(args: argparse.Namespace) -> int:
     del args
     print("Available list commands:")
     print("  devices    List audio input devices and save selected device to config")
+    print("  model      List STT model presets and save selected model to config")
+    print("  typing     List output typing modes and save selected mode to config")
     print("  ollama     List downloaded Ollama models")
     print("  lmstudio   List loaded LM Studio models")
     print("")
     print("Usage:")
     print("  mflow list devices")
+    print("  mflow list model")
+    print("  mflow list typing")
     print("  mflow list ollama")
     print("  mflow list lmstudio")
+    return 0
+
+
+def _huggingface_cache_hub_dir() -> Path:
+    hf_home = os.environ.get("HF_HOME")
+    if hf_home:
+        return Path(hf_home).expanduser() / "hub"
+    xdg_cache_home = os.environ.get("XDG_CACHE_HOME")
+    if xdg_cache_home:
+        return Path(xdg_cache_home).expanduser() / "huggingface" / "hub"
+    return Path.home() / ".cache" / "huggingface" / "hub"
+
+
+def _is_huggingface_model_downloaded(model_id: str) -> bool:
+    snapshots_dir = _huggingface_cache_hub_dir() / f"models--{model_id.replace('/', '--')}" / "snapshots"
+    if not snapshots_dir.is_dir():
+        return False
+    try:
+        for snapshot in snapshots_dir.iterdir():
+            if not snapshot.is_dir():
+                continue
+            try:
+                next(snapshot.iterdir())
+                return True
+            except StopIteration:
+                continue
+    except OSError:
+        return False
+    return False
+
+
+def _stt_model_downloaded_display(model_token: str) -> str:
+    try:
+        prefix, model_id = parse_stt_model(model_token)
+    except ValueError:
+        return "unknown"
+    if prefix in {"vllm", "mlx", "voxtral"}:
+        return "yes" if _is_huggingface_model_downloaded(model_id) else "no"
+    # moonshine-voice manages model cache internally.
+    return "unknown"
+
+
+def _stt_model_presets() -> list[str]:
+    return [
+        "moonshine:tiny",
+        "moonshine:base",
+        "voxtral:mistralai/Voxtral-Mini-4B-Realtime-2602",
+    ]
+
+
+def cmd_list_model(args: argparse.Namespace) -> int:
+    if not _is_interactive_session():
+        print("`mflow list model` requires an interactive terminal.", file=sys.stderr)
+        return 2
+
+    config_path = _resolve_config_path(args.config)
+    config = load_config(config_path)
+    current_model = _stt_model_from_config(config)
+
+    model_choices = [*_stt_model_presets(), "custom"]
+    default_choice: int | None = None
+
+    print(f"Config: {config_path}")
+    print(f"Current stt.model: {current_model}")
+    print(f"Current downloaded: {_stt_model_downloaded_display(current_model)}")
+    print("Select STT model to save into config:")
+    for menu_index, model_name in enumerate(model_choices, start=1):
+        marker = ""
+        if model_name == current_model:
+            marker = " (current)"
+            default_choice = menu_index
+        downloaded_text = ""
+        if model_name != "custom":
+            downloaded_text = f" (downloaded: {_stt_model_downloaded_display(model_name)})"
+        print(f"  {menu_index}. {model_name}{downloaded_text}{marker}")
+
+    if default_choice is None:
+        print(_yellow("Warning: current stt.model is not in the preset list."))
+
+    try:
+        while True:
+            prompt_default = "" if default_choice is None else str(default_choice)
+            raw = input(f"Select number [{prompt_default}]: ").strip()
+            if raw == "":
+                if default_choice is None:
+                    print("Please choose a number from the list.")
+                    continue
+                selected = default_choice
+                _print_keep(str(default_choice))
+            elif raw.isdigit():
+                selected = int(raw)
+            else:
+                print(f"Please choose a number between 1 and {len(model_choices)}.")
+                continue
+
+            if 1 <= selected <= len(model_choices):
+                break
+            print(f"Please choose a number between 1 and {len(model_choices)}.")
+    except (EOFError, KeyboardInterrupt):
+        print("\nCancelled.")
+        return 130
+
+    selected_model = model_choices[selected - 1]
+    if selected_model == "custom":
+        while True:
+            token = _prompt_text(
+                "stt.model.custom",
+                current_model if default_choice is None else "",
+            ).strip()
+            try:
+                parse_stt_model(token)
+            except ValueError as exc:
+                print(str(exc))
+                continue
+            selected_model = token
+            break
+
+    config.stt.model = selected_model
+    write_config(config_path, config)
+    print(_green(f"Updated config: {config_path}"))
+    print(f"stt.model = {config.stt.model}")
+    return 0
+
+
+def cmd_list_typing(args: argparse.Namespace) -> int:
+    if not _is_interactive_session():
+        print("`mflow list typing` requires an interactive terminal.", file=sys.stderr)
+        return 2
+
+    config_path = _resolve_config_path(args.config)
+    config = load_config(config_path)
+    output_cfg = getattr(config, "output", None)
+    current_mode = str(getattr(output_cfg, "mode", "direct_typing")).strip().lower()
+    mode_type = type(getattr(output_cfg, "mode", "direct_typing"))
+    if hasattr(mode_type, "__members__"):
+        mode_choices = [member.value for member in mode_type]
+    else:
+        mode_choices = ["direct_typing", "clipboard_paste"]
+
+    default_choice: int | None = None
+    print(f"Config: {config_path}")
+    print(f"Current output.mode: {current_mode}")
+    print("Select output mode to save into config:")
+    for menu_index, mode_name in enumerate(mode_choices, start=1):
+        marker = " (current)" if mode_name == current_mode else ""
+        description = ""
+        if mode_name == "direct_typing":
+            description = " - type directly without clipboard"
+        elif mode_name == "clipboard_paste":
+            description = " - copy+paste via clipboard"
+        print(f"  {menu_index}. {mode_name}{description}{marker}")
+        if mode_name == current_mode:
+            default_choice = menu_index
+
+    if default_choice is None:
+        print(_yellow("Warning: current output.mode is not in the mode list."))
+
+    try:
+        while True:
+            prompt_default = "" if default_choice is None else str(default_choice)
+            raw = input(f"Select number [{prompt_default}]: ").strip()
+            if raw == "":
+                if default_choice is None:
+                    print("Please choose a number from the list.")
+                    continue
+                selected = default_choice
+                _print_keep(str(default_choice))
+            elif raw.isdigit():
+                selected = int(raw)
+            else:
+                print(f"Please choose a number between 1 and {len(mode_choices)}.")
+                continue
+
+            if 1 <= selected <= len(mode_choices):
+                break
+            print(f"Please choose a number between 1 and {len(mode_choices)}.")
+    except (EOFError, KeyboardInterrupt):
+        print("\nCancelled.")
+        return 130
+
+    selected_mode = mode_choices[selected - 1]
+    try:
+        output_cfg.mode = mode_type(selected_mode)
+    except Exception:
+        output_cfg.mode = selected_mode
+    write_config(config_path, config)
+    print(_green(f"Updated config: {config_path}"))
+    print(f"output.mode = {output_cfg.mode}")
     return 0
 
 
@@ -847,7 +1082,7 @@ def _preflight_llm_for_launchd(config: object) -> tuple[bool, str | None]:
     llm_cfg = getattr(getattr(config, "text", None), "llm_correction", None)
     if llm_cfg is None:
         return False, "text.llm_correction is missing"
-    settings = _build_llm_settings_from_config(llm_cfg)
+    settings = _build_llm_settings_from_config(config, llm_cfg)
     if settings is None:
         return False, "base_url/model is missing"
     try:
@@ -928,17 +1163,33 @@ def _should_enable_llm_correction_for_this_run(llm_cfg: object) -> bool:
     return False
 
 
+def _llm_enabled_for_this_run(config: object) -> bool:
+    llm_cfg = getattr(getattr(config, "text", None), "llm_correction", None)
+    if llm_cfg is None:
+        return False
+    return _should_enable_llm_correction_for_this_run(llm_cfg)
+
+
+def _streaming_supported_by_output_mode(config: object) -> bool:
+    del config
+    return True
+
+
 def _build_runtime_post_processor(
     config: object,
     *,
     base_processor: TextPostProcessor,
+    llm_enabled_override: bool | None = None,
 ) -> TextPostProcessor:
     text_cfg = getattr(config, "text", None)
     llm_cfg = getattr(text_cfg, "llm_correction", None)
-    if llm_cfg is None or not _should_enable_llm_correction_for_this_run(llm_cfg):
+    llm_enabled = llm_enabled_override
+    if llm_enabled is None:
+        llm_enabled = llm_cfg is not None and _should_enable_llm_correction_for_this_run(llm_cfg)
+    if llm_cfg is None or not llm_enabled:
         return base_processor
 
-    settings = _build_llm_settings_from_config(llm_cfg)
+    settings = _build_llm_settings_from_config(config, llm_cfg)
     if settings is None:
         LOGGER.warning(
             "LLM correction is enabled but base_url/model is missing; "
@@ -980,13 +1231,29 @@ def _format_secret_state(secret: str | None) -> str:
     return "SET"
 
 
+def _prompt_stt_model(current: str) -> str:
+    catalog = [*_stt_model_presets(), "custom"]
+    default = current if current in catalog[:-1] else "custom"
+    selected = _prompt_choice("stt.model", default, catalog)
+    if selected != "custom":
+        return selected
+    while True:
+        token = _prompt_text("stt.model.custom", current if default == "custom" else "").strip()
+        try:
+            parse_stt_model(token)
+        except ValueError as exc:
+            print(str(exc))
+            continue
+        return token
+
+
 def cmd_init(args: argparse.Namespace) -> int:
     if not _is_interactive_session():
         print("`mflow init` requires an interactive terminal.", file=sys.stderr)
         return 2
 
     config_path = _resolve_config_path(args.config)
-    config = load_config(config_path)
+    config = load_config(config_path, allow_legacy_model_size=True)
 
     print(f"Config: {config_path}")
     print("Press Enter to keep current values. Use '-' to unset optional fields.")
@@ -1017,10 +1284,8 @@ def cmd_init(args: argparse.Namespace) -> int:
         )
         config.audio.input_device = _prompt_input_device(config.audio.input_device)
 
-        model_size_choices = [size.value for size in type(config.model.size)]
-        selected_model_size = _prompt_choice("model.size", config.model.size.value, model_size_choices)
-        config.model.size = type(config.model.size)(selected_model_size)
-        config.model.language = _prompt_text("model.language", config.model.language)
+        config.stt.model = _prompt_stt_model(config.stt.model)
+        config.language = _prompt_text("language", config.language)
         config.model.device = _prompt_text("model.device", config.model.device)
 
         output_mode_choices = [mode.value for mode in type(config.output.mode)]
@@ -1119,10 +1384,79 @@ def _has_moonshine_backend() -> bool:
     return bool(find_spec("moonshine_voice"))
 
 
+def _has_vllm_backend() -> bool:
+    return bool(find_spec("vllm"))
+
+
+def _has_websockets_backend() -> bool:
+    return bool(find_spec("websockets"))
+
+
+def _has_mlx_backend() -> bool:
+    return bool(find_spec("mlx_whisper"))
+
+
+def _is_macos_arm64() -> bool:
+    machine = platform.machine().strip().lower()
+    return sys.platform == "darwin" and machine in {"arm64", "aarch64"}
+
+
+def _has_voxtral_mlx_backend() -> bool:
+    return _is_macos_arm64() and bool(find_spec("voxmlx"))
+
+
+def _has_voxtral_transformers_backend() -> bool:
+    return bool(find_spec("transformers")) and bool(find_spec("mistral_common"))
+
+
+def _has_voxtral_backend() -> bool:
+    if _is_macos_arm64():
+        return _has_voxtral_mlx_backend()
+    return _has_voxtral_transformers_backend()
+
+
 def _backend_guidance() -> str:
     return (
         "Moonshine backend package is missing. "
         "Install dependencies and run `uv sync` again."
+    )
+
+
+def _vllm_backend_guidance(missing: list[str]) -> str:
+    missing_text = ", ".join(sorted(missing))
+    machine = platform.machine().strip().lower()
+    if sys.platform == "darwin" and machine in {"arm64", "aarch64"}:
+        return (
+            f"vLLM backend dependencies are missing ({missing_text}). "
+            "Local vLLM is not currently available on macOS arm64 in this environment. "
+            "Use stt.model=mlx:mlx-community/whisper-large-v3-turbo "
+            "(for example: `mflow list model`), "
+            "or use stt.model=moonshine:base, or run vLLM on a Linux host."
+        )
+    return (
+        f"vLLM backend dependencies are missing ({missing_text}). "
+        "Install them (example: `uv add vllm websockets`) or switch stt.model to moonshine:base."
+    )
+
+
+def _mlx_backend_guidance() -> str:
+    return (
+        "MLX backend dependency is missing (mlx-whisper). "
+        "Install it (example: `uv add mlx-whisper`) or switch stt.model to moonshine:base."
+    )
+
+
+def _voxtral_backend_guidance() -> str:
+    if _is_macos_arm64():
+        return (
+            "Voxtral backend dependencies are missing. "
+            "On macOS arm64, install voxmlx (example: `uv add voxmlx`) "
+            "or switch stt.model to moonshine:base."
+        )
+    return (
+        "Voxtral backend dependencies are missing. "
+        "Install them (example: `uv add --upgrade transformers \"mistral-common[audio]\"`) "
+        "or switch stt.model to moonshine:base."
     )
 
 
@@ -1192,9 +1526,53 @@ def cmd_run(args: argparse.Namespace) -> int:
             correction_result.disabled_regex_count,
         )
 
-    if not _has_moonshine_backend():
-        LOGGER.error(_backend_guidance())
-        return 3
+    try:
+        if _is_moonshine_stt_model(config) and not _has_moonshine_backend():
+            LOGGER.error(_backend_guidance())
+            return 3
+        if _is_vllm_stt_model(config):
+            LOGGER.info(
+                "Selected vLLM model downloaded: %s",
+                _stt_model_downloaded_display(_stt_model_from_config(config)),
+            )
+            missing: list[str] = []
+            if not _has_vllm_backend():
+                missing.append("vllm")
+            if not _has_websockets_backend():
+                missing.append("websockets")
+            if missing:
+                _, model_id = parse_stt_model(_stt_model_from_config(config))
+                if (
+                    model_id == "mistralai/Voxtral-Mini-4B-Realtime-2602"
+                    and _has_voxtral_backend()
+                ):
+                    LOGGER.warning(_vllm_backend_guidance(missing))
+                    LOGGER.warning(
+                        "Using local Voxtral backend for this run instead of vLLM"
+                    )
+                    config.stt.model = f"voxtral:{model_id}"
+                else:
+                    LOGGER.error(_vllm_backend_guidance(missing))
+                    return 3
+        if _is_voxtral_stt_model(config):
+            LOGGER.info(
+                "Selected Voxtral model downloaded: %s",
+                _stt_model_downloaded_display(_stt_model_from_config(config)),
+            )
+            if not _has_voxtral_backend():
+                LOGGER.error(_voxtral_backend_guidance())
+                return 3
+        if _is_mlx_stt_model(config):
+            LOGGER.info(
+                "Selected MLX model downloaded: %s",
+                _stt_model_downloaded_display(_stt_model_from_config(config)),
+            )
+            if not _has_mlx_backend():
+                LOGGER.error(_mlx_backend_guidance())
+                return 3
+    except Exception as exc:
+        LOGGER.error("Invalid stt.model configuration: %s", exc)
+        return 2
 
     report = check_all_permissions()
     in_launchd_context = os.environ.get("XPC_SERVICE_NAME") == LAUNCH_AGENT_LABEL
@@ -1214,11 +1592,25 @@ def cmd_run(args: argparse.Namespace) -> int:
     if not report.all_granted:
         LOGGER.warning(format_permission_guidance(report))
 
+    llm_enabled = _llm_enabled_for_this_run(config)
     post_processor = _build_runtime_post_processor(
         config,
         base_processor=correction_result.rules,
+        llm_enabled_override=llm_enabled,
     )
-    daemon = MoonshineFlowDaemon(config, post_processor=post_processor)
+    output_cfg = getattr(config, "output", None)
+    output_mode = str(getattr(output_cfg, "mode", "clipboard_paste")).strip().lower()
+    output_supports_streaming = _streaming_supported_by_output_mode(config)
+    enable_streaming = (not llm_enabled) and output_supports_streaming
+    if llm_enabled:
+        LOGGER.info("LLM correction is enabled; STT streaming output is disabled for this run")
+    elif not output_supports_streaming:
+        LOGGER.info("Output mode disables STT streaming for this run (%s)", output_mode)
+    daemon = MoonshineFlowDaemon(
+        config,
+        post_processor=post_processor,
+        enable_streaming=enable_streaming,
+    )
     try:
         backend = daemon.transcriber.preflight_model()
         LOGGER.info(_green("Model preflight OK (%s)", stderr=True), backend)
@@ -1549,8 +1941,6 @@ def _print_codesign_info(target_path: str) -> None:
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
-    from moonshine_flow.transcriber import MoonshineTranscriber
-
     config_path = _resolve_config_path(args.config)
     config = load_config(config_path)
     correction_result, correction_error = _load_corrections_with_diagnostics(
@@ -1644,18 +2034,32 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         timestamp_suffix = f" at {runtime_warning_timestamp}" if runtime_warning_timestamp else ""
         print(_yellow(f"Launchd runtime status: WARNING ({runtime_warning}{timestamp_suffix})"))
 
-    for pkg in ("moonshine_voice", "sounddevice", "pynput"):
+    for pkg in (
+        "moonshine_voice",
+        "sounddevice",
+        "pynput",
+        "websockets",
+        "vllm",
+        "mlx_whisper",
+        "transformers",
+        "mistral_common",
+    ):
         print(f"Package {pkg}:", "FOUND" if find_spec(pkg) else "MISSING")
 
-    if not _has_moonshine_backend():
+    requires_moonshine_backend = False
+    try:
+        requires_moonshine_backend = _is_moonshine_stt_model(config)
+    except ValueError as exc:
+        print(f"stt.model: ERROR ({exc})")
+
+    if requires_moonshine_backend and not _has_moonshine_backend():
         print(_backend_guidance())
 
-    transcriber = MoonshineTranscriber(
-        model_size=config.model.size.value,
-        language=config.model.language,
-        device=config.model.device,
-    )
-    print("Transcriber:", transcriber.backend_summary())
+    try:
+        stt_backend = create_stt_backend(config)
+        print("Transcriber:", stt_backend.backend_summary())
+    except Exception as exc:
+        print(f"Transcriber: ERROR ({exc})")
 
     report = check_all_permissions()
     terminal_status = "OK" if report.all_granted else "INCOMPLETE"
@@ -1809,6 +2213,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     list_devices_parser.add_argument("--config", default=None, help="Path to config TOML")
     list_devices_parser.set_defaults(func=cmd_list_devices)
+
+    list_model_parser = list_subparsers.add_parser(
+        "model",
+        help="List STT model presets and save selected model to config",
+    )
+    list_model_parser.add_argument("--config", default=None, help="Path to config TOML")
+    list_model_parser.set_defaults(func=cmd_list_model)
+
+    list_typing_parser = list_subparsers.add_parser(
+        "typing",
+        help="List output typing modes and save selected mode to config",
+    )
+    list_typing_parser.add_argument("--config", default=None, help="Path to config TOML")
+    list_typing_parser.set_defaults(func=cmd_list_typing)
 
     list_ollama_parser = list_subparsers.add_parser(
         "ollama",

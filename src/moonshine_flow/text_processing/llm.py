@@ -16,9 +16,12 @@ from moonshine_flow.text_processing.normalizer import normalize_transcript_text
 
 LOGGER = logging.getLogger(__name__)
 _CIRCUIT_BREAK_SECONDS = 30.0
-_SYSTEM_INSTRUCTION = (
-    "You are a transcription corrector. Fix only obvious recognition errors and punctuation. "
-    "Keep the original meaning and language. Return only corrected text."
+_BASE_SYSTEM_INSTRUCTION = (
+    "You are a transcription corrector. "
+    "Fix only obvious recognition errors and punctuation. "
+    "If the transcript appears truncated at the end, complete only the shortest natural ending. "
+    "Do not add new facts, entities, or extra sentences. "
+    "Keep the original meaning. Return only corrected text."
 )
 
 
@@ -35,6 +38,7 @@ class LLMCorrectionSettings:
     max_input_chars: int
     api_key: str | None
     enabled_tools: bool
+    language: str
 
 
 class LLMClient(Protocol):
@@ -43,6 +47,15 @@ class LLMClient(Protocol):
 
     def correct(self, text: str) -> str:
         """Return corrected text."""
+
+
+def _build_system_instruction(language: str) -> str:
+    normalized = language.strip() or "en"
+    return (
+        f"{_BASE_SYSTEM_INSTRUCTION} "
+        f"Output language must be '{normalized}'. "
+        "Do not switch to another language."
+    )
 
 
 def _http_json_request(
@@ -93,6 +106,7 @@ class OllamaClient:
         self._model = settings.model
         self._timeout_seconds = settings.timeout_seconds
         self._api_key = settings.api_key
+        self._system_instruction = _build_system_instruction(settings.language)
 
     def _url(self, path: str) -> str:
         return urljoin(self._base_url, path.lstrip("/"))
@@ -124,7 +138,7 @@ class OllamaClient:
             payload={
                 "model": self._model,
                 "stream": False,
-                "prompt": f"{_SYSTEM_INSTRUCTION}\n\nInput:\n{text}\n\nCorrected text:",
+                "prompt": f"{self._system_instruction}\n\nInput:\n{text}\n\nCorrected text:",
                 "options": {"temperature": 0},
             },
         )
@@ -143,6 +157,7 @@ class LMStudioClient:
         self._model = settings.model
         self._timeout_seconds = settings.timeout_seconds
         self._api_key = settings.api_key
+        self._system_instruction = _build_system_instruction(settings.language)
 
     def _url(self, path: str) -> str:
         return urljoin(self._base_url, path.lstrip("/"))
@@ -175,7 +190,7 @@ class LMStudioClient:
                 "model": self._model,
                 "temperature": 0,
                 "messages": [
-                    {"role": "system", "content": _SYSTEM_INSTRUCTION},
+                    {"role": "system", "content": self._system_instruction},
                     {"role": "user", "content": text},
                 ],
             },
