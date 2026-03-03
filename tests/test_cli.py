@@ -457,6 +457,51 @@ def test_cmd_init_updates_values_and_keeps_others(monkeypatch, tmp_path: Path, c
     assert updated.text.llm_correction.model == "llama3.2:latest"
 
 
+def test_cmd_init_accepts_provider_other(monkeypatch, tmp_path: Path, capsys) -> None:
+    cfg_path = tmp_path / "config.toml"
+    monkeypatch.setattr(cli, "_resolve_config_path", lambda _: cfg_path)
+    monkeypatch.setattr(cli, "_is_interactive_session", lambda: True)
+    monkeypatch.setattr(cli, "_supports_ansi_styles", lambda: False)
+
+    answers = iter(
+        [
+            "",  # hotkey.key
+            "",  # audio.sample_rate
+            "",  # audio.channels
+            "",  # audio.dtype
+            "",  # audio.max_record_seconds
+            "",  # audio.release_tail_seconds
+            "",  # audio.trailing_silence_seconds
+            "",  # audio.input_device
+            "",  # model.size
+            "",  # model.language
+            "",  # model.device
+            "",  # output.mode
+            "",  # output.paste_shortcut
+            "",  # runtime.log_level
+            "",  # runtime.notify_on_error
+            "",  # text.dictionary_path
+            "",  # text.llm_correction.mode
+            "3",  # text.llm_correction.provider -> other
+            "my-local-provider",  # text.llm_correction.provider_other
+            "",  # text.llm_correction.base_url
+            "",  # text.llm_correction.model
+            "",  # text.llm_correction.timeout_seconds
+            "",  # text.llm_correction.max_input_chars
+            "",  # text.llm_correction.api_key
+            "",  # text.llm_correction.enabled_tools
+        ]
+    )
+    monkeypatch.setattr("builtins.input", lambda _prompt: next(answers))
+
+    exit_code = cli.cmd_init(argparse.Namespace(config=None))
+
+    assert exit_code == 0
+    _ = capsys.readouterr()
+    updated = cli.load_config(cfg_path)
+    assert updated.text.llm_correction.provider == "my-local-provider"
+
+
 def test_list_devices_parser_has_config_option() -> None:
     parser = cli.build_parser()
     args = parser.parse_args(["list", "devices", "--config", "/tmp/config.toml"])
@@ -481,12 +526,207 @@ def test_list_parser_alias_accepts_devices_target() -> None:
     assert args.func == cli.cmd_list_devices
 
 
+def test_list_parser_accepts_ollama_target() -> None:
+    parser = cli.build_parser()
+    args = parser.parse_args(["list", "ollama", "--config", "/tmp/config.toml"])
+    assert args.command == "list"
+    assert args.list_target == "ollama"
+    assert args.func == cli.cmd_list_ollama
+    assert args.config == "/tmp/config.toml"
+
+
+def test_list_parser_accepts_lmstudio_target() -> None:
+    parser = cli.build_parser()
+    args = parser.parse_args(["list", "lmstudio", "--config", "/tmp/config.toml"])
+    assert args.command == "list"
+    assert args.list_target == "lmstudio"
+    assert args.func == cli.cmd_list_lmstudio
+    assert args.config == "/tmp/config.toml"
+
+
 def test_cmd_list_shows_available_commands(capsys) -> None:
     exit_code = cli.cmd_list(argparse.Namespace())
     captured = capsys.readouterr()
     assert exit_code == 0
     assert "Available list commands" in captured.out
     assert "mflow list devices" in captured.out
+    assert "mflow list ollama" in captured.out
+    assert "mflow list lmstudio" in captured.out
+
+
+def test_cmd_list_ollama_requires_interactive_terminal(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(cli, "_is_interactive_session", lambda: False)
+
+    exit_code = cli.cmd_list_ollama(argparse.Namespace(config=None))
+
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert "interactive terminal" in captured.err
+
+
+def test_cmd_list_ollama_selects_model_and_updates_config(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    cfg_path = tmp_path / "config.toml"
+    monkeypatch.setattr(cli, "_resolve_config_path", lambda _: cfg_path)
+    monkeypatch.setattr(cli, "_is_interactive_session", lambda: True)
+    monkeypatch.setattr(cli, "_supports_ansi_styles", lambda: False)
+    monkeypatch.setattr(
+        cli,
+        "_query_ollama_model_names",
+        lambda **_kwargs: ["llama3.2:latest", "qwen2.5:7b-instruct"],
+    )
+    monkeypatch.setattr("builtins.input", lambda _prompt: "2")
+
+    exit_code = cli.cmd_list_ollama(argparse.Namespace(config=None))
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "Current text.llm_correction.model" in captured.out
+    assert "text.llm_correction.model = qwen2.5:7b-instruct" in captured.out
+    updated = cli.load_config(cfg_path)
+    assert updated.text.llm_correction.model == "qwen2.5:7b-instruct"
+
+
+def test_cmd_list_ollama_enter_keeps_current_model(monkeypatch, tmp_path: Path, capsys) -> None:
+    cfg_path = tmp_path / "config.toml"
+    cfg = cli.load_config(cfg_path)
+    cfg.text.llm_correction.model = "llama3.2:latest"
+    cli.write_config(cfg_path, cfg)
+
+    monkeypatch.setattr(cli, "_resolve_config_path", lambda _: cfg_path)
+    monkeypatch.setattr(cli, "_is_interactive_session", lambda: True)
+    monkeypatch.setattr(cli, "_supports_ansi_styles", lambda: False)
+    monkeypatch.setattr(
+        cli,
+        "_query_ollama_model_names",
+        lambda **_kwargs: ["llama3.2:latest", "qwen2.5:7b-instruct"],
+    )
+    monkeypatch.setattr("builtins.input", lambda _prompt: "")
+
+    exit_code = cli.cmd_list_ollama(argparse.Namespace(config=None))
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "keep: 1" in captured.out
+    updated = cli.load_config(cfg_path)
+    assert updated.text.llm_correction.model == "llama3.2:latest"
+
+
+def test_cmd_list_ollama_errors_when_provider_is_not_ollama(monkeypatch, tmp_path: Path, capsys) -> None:
+    cfg_path = tmp_path / "config.toml"
+    cfg = cli.load_config(cfg_path)
+    cfg.text.llm_correction.provider = "lmstudio"
+    cli.write_config(cfg_path, cfg)
+
+    monkeypatch.setattr(cli, "_resolve_config_path", lambda _: cfg_path)
+    monkeypatch.setattr(cli, "_is_interactive_session", lambda: True)
+    monkeypatch.setattr(
+        cli,
+        "_query_ollama_model_names",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("must not call ollama API")),
+    )
+
+    exit_code = cli.cmd_list_ollama(argparse.Namespace(config=None))
+
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert "requires text.llm_correction.provider = \"ollama\"" in captured.err
+
+
+def test_cmd_list_ollama_reports_query_failure(monkeypatch, tmp_path: Path, capsys) -> None:
+    cfg_path = tmp_path / "config.toml"
+    monkeypatch.setattr(cli, "_resolve_config_path", lambda _: cfg_path)
+    monkeypatch.setattr(cli, "_is_interactive_session", lambda: True)
+    monkeypatch.setattr(
+        cli,
+        "_query_ollama_model_names",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+
+    exit_code = cli.cmd_list_ollama(argparse.Namespace(config=None))
+
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert "boom" in captured.err
+
+
+def test_cmd_list_lmstudio_requires_interactive_terminal(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(cli, "_is_interactive_session", lambda: False)
+
+    exit_code = cli.cmd_list_lmstudio(argparse.Namespace(config=None))
+
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert "interactive terminal" in captured.err
+
+
+def test_cmd_list_lmstudio_selects_model_and_updates_config(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    cfg_path = tmp_path / "config.toml"
+    cfg = cli.load_config(cfg_path)
+    cfg.text.llm_correction.provider = "lmstudio"
+    cfg.text.llm_correction.model = "local-model-a"
+    cli.write_config(cfg_path, cfg)
+
+    monkeypatch.setattr(cli, "_resolve_config_path", lambda _: cfg_path)
+    monkeypatch.setattr(cli, "_is_interactive_session", lambda: True)
+    monkeypatch.setattr(cli, "_supports_ansi_styles", lambda: False)
+    monkeypatch.setattr(
+        cli,
+        "_query_lmstudio_model_names",
+        lambda **_kwargs: ["local-model-a", "local-model-b"],
+    )
+    monkeypatch.setattr("builtins.input", lambda _prompt: "2")
+
+    exit_code = cli.cmd_list_lmstudio(argparse.Namespace(config=None))
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "text.llm_correction.model = local-model-b" in captured.out
+    updated = cli.load_config(cfg_path)
+    assert updated.text.llm_correction.model == "local-model-b"
+
+
+def test_cmd_list_lmstudio_errors_when_provider_is_not_lmstudio(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    cfg_path = tmp_path / "config.toml"
+    monkeypatch.setattr(cli, "_resolve_config_path", lambda _: cfg_path)
+    monkeypatch.setattr(cli, "_is_interactive_session", lambda: True)
+    monkeypatch.setattr(
+        cli,
+        "_query_lmstudio_model_names",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("must not call lmstudio API")),
+    )
+
+    exit_code = cli.cmd_list_lmstudio(argparse.Namespace(config=None))
+
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert "requires text.llm_correction.provider = \"lmstudio\"" in captured.err
+
+
+def test_cmd_list_lmstudio_reports_query_failure(monkeypatch, tmp_path: Path, capsys) -> None:
+    cfg_path = tmp_path / "config.toml"
+    cfg = cli.load_config(cfg_path)
+    cfg.text.llm_correction.provider = "lmstudio"
+    cli.write_config(cfg_path, cfg)
+
+    monkeypatch.setattr(cli, "_resolve_config_path", lambda _: cfg_path)
+    monkeypatch.setattr(cli, "_is_interactive_session", lambda: True)
+    monkeypatch.setattr(
+        cli,
+        "_query_lmstudio_model_names",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("boom-lmstudio")),
+    )
+
+    exit_code = cli.cmd_list_lmstudio(argparse.Namespace(config=None))
+
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert "boom-lmstudio" in captured.err
 
 
 def test_cmd_list_devices_requires_interactive_terminal(monkeypatch, capsys) -> None:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import json
 import logging
 import os
 import platform
@@ -13,6 +14,9 @@ from importlib.metadata import version as package_version
 from importlib.util import find_spec
 from pathlib import Path
 from typing import Any, Callable
+from urllib.error import HTTPError, URLError
+from urllib.parse import urljoin
+from urllib.request import Request, urlopen
 
 from moonshine_flow.app_bundle import (
     APP_BUNDLE_IDENTIFIER,
@@ -489,14 +493,263 @@ def _matches_configured_input_device(configured: int | str | None, *, index: int
     return configured == name
 
 
+def _query_ollama_model_names(
+    *,
+    base_url: str,
+    timeout_seconds: float,
+    api_key: str | None,
+) -> list[str]:
+    base = base_url.rstrip("/") + "/"
+    url = urljoin(base, "api/tags")
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    request = Request(url, method="GET", headers=headers)
+
+    try:
+        with urlopen(request, timeout=timeout_seconds) as response:
+            raw = response.read().decode("utf-8", errors="replace")
+    except HTTPError as exc:
+        raise RuntimeError(f"Ollama request failed (HTTP {exc.code})") from exc
+    except URLError as exc:
+        reason = getattr(exc, "reason", exc)
+        raise RuntimeError(f"Ollama connection failed: {reason}") from exc
+    except TimeoutError as exc:
+        raise RuntimeError("Ollama request timed out") from exc
+
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("Ollama endpoint returned invalid JSON") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError("Ollama endpoint returned unexpected payload")
+
+    models = payload.get("models")
+    if not isinstance(models, list):
+        raise RuntimeError("Ollama response is missing 'models'")
+
+    names: list[str] = []
+    for item in models:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name", "")).strip()
+        if not name:
+            continue
+        names.append(name)
+    return names
+
+
+def _query_lmstudio_model_names(
+    *,
+    base_url: str,
+    timeout_seconds: float,
+    api_key: str | None,
+) -> list[str]:
+    base = base_url.rstrip("/") + "/"
+    url = urljoin(base, "v1/models")
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    request = Request(url, method="GET", headers=headers)
+
+    try:
+        with urlopen(request, timeout=timeout_seconds) as response:
+            raw = response.read().decode("utf-8", errors="replace")
+    except HTTPError as exc:
+        raise RuntimeError(f"LM Studio request failed (HTTP {exc.code})") from exc
+    except URLError as exc:
+        reason = getattr(exc, "reason", exc)
+        raise RuntimeError(f"LM Studio connection failed: {reason}") from exc
+    except TimeoutError as exc:
+        raise RuntimeError("LM Studio request timed out") from exc
+
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("LM Studio endpoint returned invalid JSON") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError("LM Studio endpoint returned unexpected payload")
+
+    models = payload.get("data")
+    if not isinstance(models, list):
+        raise RuntimeError("LM Studio response is missing 'data'")
+
+    names: list[str] = []
+    for item in models:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("id", "")).strip()
+        if not name:
+            continue
+        names.append(name)
+    return names
+
+
+def _select_llm_model_and_save(
+    *,
+    config_path: Path,
+    config: object,
+    base_url: str,
+    model_names: list[str],
+) -> int:
+    if not model_names:
+        print(_yellow("Warning: No models were found.", stderr=True), file=sys.stderr)
+        return 0
+
+    llm_cfg = getattr(getattr(config, "text", None), "llm_correction", None)
+    current_model = str(getattr(llm_cfg, "model", "")).strip()
+    default_choice: int | None = None
+
+    print(f"Config: {config_path}")
+    print(f"Endpoint: {base_url}")
+    print(f"Current text.llm_correction.model: {_display_value(current_model)}")
+    print("Select model to save into config:")
+    for menu_index, model_name in enumerate(model_names, start=1):
+        marker = ""
+        if model_name == current_model:
+            marker = " (current)"
+            default_choice = menu_index
+        print(f"  {menu_index}. {model_name}{marker}")
+
+    if default_choice is None:
+        print(_yellow("Warning: current model is not in the available model list."))
+
+    try:
+        while True:
+            prompt_default = "" if default_choice is None else str(default_choice)
+            raw = input(f"Select number [{prompt_default}]: ").strip()
+            if raw == "":
+                if default_choice is None:
+                    print("Please choose a number from the list.")
+                    continue
+                selected = default_choice
+                _print_keep(str(default_choice))
+            elif raw.isdigit():
+                selected = int(raw)
+            else:
+                print(f"Please choose a number between 1 and {len(model_names)}.")
+                continue
+
+            if 1 <= selected <= len(model_names):
+                break
+            print(f"Please choose a number between 1 and {len(model_names)}.")
+    except (EOFError, KeyboardInterrupt):
+        print("\nCancelled.")
+        return 130
+
+    config.text.llm_correction.model = model_names[selected - 1]
+    write_config(config_path, config)
+    print(_green(f"Updated config: {config_path}"))
+    print(f"text.llm_correction.model = {config.text.llm_correction.model}")
+    return 0
+
+
 def cmd_list(args: argparse.Namespace) -> int:
     del args
     print("Available list commands:")
     print("  devices    List audio input devices and save selected device to config")
+    print("  ollama     List downloaded Ollama models")
+    print("  lmstudio   List loaded LM Studio models")
     print("")
     print("Usage:")
     print("  mflow list devices")
+    print("  mflow list ollama")
+    print("  mflow list lmstudio")
     return 0
+
+
+def cmd_list_ollama(args: argparse.Namespace) -> int:
+    if not _is_interactive_session():
+        print("`mflow list ollama` requires an interactive terminal.", file=sys.stderr)
+        return 2
+
+    config_path = _resolve_config_path(args.config)
+    config = load_config(config_path)
+
+    llm_cfg = getattr(getattr(config, "text", None), "llm_correction", None)
+    if llm_cfg is None:
+        print("Error: text.llm_correction is missing in config.", file=sys.stderr)
+        return 2
+
+    provider = str(getattr(llm_cfg, "provider", "")).strip().lower()
+    if provider != "ollama":
+        print(
+            f"Error: `mflow list ollama` requires text.llm_correction.provider = \"ollama\" "
+            f"(current: {provider or '<unset>'}).",
+            file=sys.stderr,
+        )
+        return 2
+
+    base_url = str(getattr(llm_cfg, "base_url", "")).strip()
+    if not base_url:
+        print("Error: text.llm_correction.base_url is empty.", file=sys.stderr)
+        return 2
+    timeout_seconds = float(getattr(llm_cfg, "timeout_seconds", 5.0))
+    api_key = _normalize_optional_secret(getattr(llm_cfg, "api_key", None))
+
+    try:
+        model_names = _query_ollama_model_names(
+            base_url=base_url,
+            timeout_seconds=timeout_seconds,
+            api_key=api_key,
+        )
+    except Exception as exc:
+        print(_yellow(f"Warning: {exc}", stderr=True), file=sys.stderr)
+        return 2
+
+    return _select_llm_model_and_save(
+        config_path=config_path,
+        config=config,
+        base_url=base_url,
+        model_names=model_names,
+    )
+
+
+def cmd_list_lmstudio(args: argparse.Namespace) -> int:
+    if not _is_interactive_session():
+        print("`mflow list lmstudio` requires an interactive terminal.", file=sys.stderr)
+        return 2
+
+    config_path = _resolve_config_path(args.config)
+    config = load_config(config_path)
+
+    llm_cfg = getattr(getattr(config, "text", None), "llm_correction", None)
+    if llm_cfg is None:
+        print("Error: text.llm_correction is missing in config.", file=sys.stderr)
+        return 2
+
+    provider = str(getattr(llm_cfg, "provider", "")).strip().lower()
+    if provider != "lmstudio":
+        print(
+            f"Error: `mflow list lmstudio` requires text.llm_correction.provider = \"lmstudio\" "
+            f"(current: {provider or '<unset>'}).",
+            file=sys.stderr,
+        )
+        return 2
+
+    base_url = str(getattr(llm_cfg, "base_url", "")).strip()
+    if not base_url:
+        print("Error: text.llm_correction.base_url is empty.", file=sys.stderr)
+        return 2
+    timeout_seconds = float(getattr(llm_cfg, "timeout_seconds", 5.0))
+    api_key = _normalize_optional_secret(getattr(llm_cfg, "api_key", None))
+
+    try:
+        model_names = _query_lmstudio_model_names(
+            base_url=base_url,
+            timeout_seconds=timeout_seconds,
+            api_key=api_key,
+        )
+    except Exception as exc:
+        print(_yellow(f"Warning: {exc}", stderr=True), file=sys.stderr)
+        return 2
+
+    return _select_llm_model_and_save(
+        config_path=config_path,
+        config=config,
+        base_url=base_url,
+        model_names=model_names,
+    )
 
 
 def cmd_list_devices(args: argparse.Namespace) -> int:
@@ -798,15 +1051,33 @@ def cmd_init(args: argparse.Namespace) -> int:
         )
         config.text.llm_correction.mode = type(config.text.llm_correction.mode)(selected_llm_mode)
 
-        llm_provider_choices = [provider.value for provider in type(config.text.llm_correction.provider)]
+        known_llm_providers = ["ollama", "lmstudio"]
+        current_llm_provider = str(config.text.llm_correction.provider).strip().lower()
+        provider_default = (
+            current_llm_provider if current_llm_provider in known_llm_providers else "other"
+        )
         selected_llm_provider = _prompt_choice(
             "text.llm_correction.provider",
-            config.text.llm_correction.provider.value,
-            llm_provider_choices,
+            provider_default,
+            known_llm_providers + ["other"],
         )
-        config.text.llm_correction.provider = type(config.text.llm_correction.provider)(
-            selected_llm_provider
-        )
+        if selected_llm_provider == "other":
+            other_default = (
+                current_llm_provider
+                if current_llm_provider and current_llm_provider not in known_llm_providers
+                else ""
+            )
+            while True:
+                provider_other = _prompt_text(
+                    "text.llm_correction.provider_other",
+                    other_default,
+                ).strip()
+                if provider_other:
+                    config.text.llm_correction.provider = provider_other
+                    break
+                print("Provider cannot be empty.")
+        else:
+            config.text.llm_correction.provider = selected_llm_provider
         config.text.llm_correction.base_url = _prompt_text(
             "text.llm_correction.base_url",
             config.text.llm_correction.base_url,
@@ -1538,6 +1809,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     list_devices_parser.add_argument("--config", default=None, help="Path to config TOML")
     list_devices_parser.set_defaults(func=cmd_list_devices)
+
+    list_ollama_parser = list_subparsers.add_parser(
+        "ollama",
+        help="List downloaded Ollama models",
+    )
+    list_ollama_parser.add_argument("--config", default=None, help="Path to config TOML")
+    list_ollama_parser.set_defaults(func=cmd_list_ollama)
+
+    list_lmstudio_parser = list_subparsers.add_parser(
+        "lmstudio",
+        help="List loaded LM Studio models",
+    )
+    list_lmstudio_parser.add_argument("--config", default=None, help="Path to config TOML")
+    list_lmstudio_parser.set_defaults(func=cmd_list_lmstudio)
 
     check_parser = subparsers.add_parser("check-permissions", help="Check macOS permissions")
     check_parser.add_argument(

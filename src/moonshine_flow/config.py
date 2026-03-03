@@ -86,7 +86,7 @@ class LLMCorrectionConfig(BaseModel):
     """Optional LLM correction settings."""
 
     mode: LLMCorrectionMode = LLMCorrectionMode.NEVER
-    provider: LLMProvider = LLMProvider.OLLAMA
+    provider: str = LLMProvider.OLLAMA.value
     base_url: str = "http://localhost:11434"
     model: str = "qwen2.5:7b-instruct"
     timeout_seconds: float = 5.0

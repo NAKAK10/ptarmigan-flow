@@ -15,7 +15,7 @@ def test_write_example_and_load_config(tmp_path: Path) -> None:
     assert loaded.audio.trailing_silence_seconds == 0.5
     assert loaded.text.dictionary_path is None
     assert loaded.text.llm_correction.mode.value == "never"
-    assert loaded.text.llm_correction.provider.value == "ollama"
+    assert loaded.text.llm_correction.provider == "ollama"
     assert loaded.text.llm_correction.timeout_seconds == 5.0
     assert loaded.text.llm_correction.max_input_chars == 500
     assert loaded.text.llm_correction.enabled_tools is False
@@ -256,3 +256,42 @@ model = "qwen2.5:7b-instruct"
 
     loaded = load_config(cfg_path)
     assert loaded.text.llm_correction.mode.value == "always"
+
+
+def test_load_config_accepts_custom_llm_provider(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(
+        """
+[hotkey]
+key = "right_cmd"
+
+[audio]
+sample_rate = 16000
+channels = 1
+dtype = "float32"
+max_record_seconds = 30
+
+[model]
+size = "base"
+language = "ja"
+device = "mps"
+
+[output]
+mode = "clipboard_paste"
+paste_shortcut = "cmd+v"
+
+[runtime]
+log_level = "INFO"
+notify_on_error = true
+
+[text.llm_correction]
+mode = "always"
+provider = "custom-provider"
+base_url = "http://localhost:8080"
+model = "my-model"
+""".strip(),
+        encoding="utf-8",
+    )
+
+    loaded = load_config(cfg_path)
+    assert loaded.text.llm_correction.provider == "custom-provider"

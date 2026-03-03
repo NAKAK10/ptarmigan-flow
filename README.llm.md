@@ -26,6 +26,8 @@ https://github.com/NAKAK10/moonshine-flow
 - `moonshine-flow check-permissions --request`: request/check macOS permissions.
 - `moonshine-flow list`: show list subcommands.
 - `moonshine-flow list devices`: list/select input devices and save to config.
+- `moonshine-flow list ollama`: list/select downloaded Ollama models and save selection to config.
+- `moonshine-flow list lmstudio`: list/select loaded LM Studio models and save selection to config.
 
 ## Permission Setup
 Settings location: `System Settings -> Privacy & Security`

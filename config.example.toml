@@ -43,7 +43,7 @@ notify_on_error = true
 # never: disable every run
 # ask: ask only on interactive (TTY) run; non-interactive run behaves as never
 mode = "never"
-# provider = "ollama" or "lmstudio"
+# provider = "ollama" or "lmstudio" or custom string
 provider = "ollama"
 # Ollama default: http://localhost:11434
 # LM Studio default: http://localhost:1234/v1
