@@ -1114,8 +1114,9 @@ def _llm_enabled_for_this_run(config: object) -> bool:
 
 
 def _streaming_supported_by_output_mode(config: object) -> bool:
-    del config
-    return True
+    output_cfg = getattr(config, "output", None)
+    mode = str(getattr(output_cfg, "mode", "direct_typing")).strip().lower()
+    return mode == "direct_typing"
 
 
 def _build_runtime_post_processor(
@@ -1229,6 +1230,25 @@ def cmd_init(args: argparse.Namespace) -> int:
         config.runtime.notify_on_error = _prompt_bool(
             "runtime.notify_on_error",
             bool(config.runtime.notify_on_error),
+        )
+        config.runtime.activity_indicator_enabled = _prompt_bool(
+            "runtime.activity_indicator_enabled",
+            bool(config.runtime.activity_indicator_enabled),
+        )
+        config.runtime.activity_indicator_margin_right = _prompt_int(
+            "runtime.activity_indicator_margin_right",
+            int(config.runtime.activity_indicator_margin_right),
+            minimum=0,
+        )
+        config.runtime.activity_indicator_margin_bottom = _prompt_int(
+            "runtime.activity_indicator_margin_bottom",
+            int(config.runtime.activity_indicator_margin_bottom),
+            minimum=0,
+        )
+        config.runtime.activity_indicator_size = _prompt_int(
+            "runtime.activity_indicator_size",
+            int(config.runtime.activity_indicator_size),
+            minimum=16,
         )
 
         config.text.dictionary_path = _prompt_optional_text(

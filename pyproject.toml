@@ -21,6 +21,7 @@ dependencies = [
   "tomli-w>=1.1.0",
   "moonshine-voice>=0.0.49",
   "pyobjc-core>=11.0; platform_system == 'Darwin'",
+  "pyobjc-framework-Cocoa>=11.0; platform_system == 'Darwin'",
   "pyobjc-framework-Quartz>=11.0; platform_system == 'Darwin'",
   "pyobjc-framework-AVFoundation>=11.0; platform_system == 'Darwin'",
 ]

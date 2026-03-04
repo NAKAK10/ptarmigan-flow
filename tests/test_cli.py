@@ -160,6 +160,21 @@ def test_should_enable_llm_correction_for_this_run_mode_ask_non_interactive(monk
     assert cli._should_enable_llm_correction_for_this_run(llm_cfg) is False
 
 
+def test_streaming_supported_by_output_mode_direct_typing() -> None:
+    config = SimpleNamespace(output=SimpleNamespace(mode="direct_typing"))
+    assert cli._streaming_supported_by_output_mode(config) is True
+
+
+def test_streaming_supported_by_output_mode_clipboard_paste() -> None:
+    config = SimpleNamespace(output=SimpleNamespace(mode="clipboard_paste"))
+    assert cli._streaming_supported_by_output_mode(config) is False
+
+
+def test_streaming_supported_by_output_mode_unknown() -> None:
+    config = SimpleNamespace(output=SimpleNamespace(mode="unknown"))
+    assert cli._streaming_supported_by_output_mode(config) is False
+
+
 def test_cmd_run_logs_runtime_status_after_preflight(monkeypatch, caplog) -> None:
     class FakeTranscriber:
         def preflight_model(self) -> str:
@@ -368,6 +383,10 @@ def test_cmd_init_updates_values_and_keeps_others(monkeypatch, tmp_path: Path, c
             "",  # output.paste_shortcut
             "",  # runtime.log_level
             "",  # runtime.notify_on_error
+            "",  # runtime.activity_indicator_enabled
+            "",  # runtime.activity_indicator_margin_right
+            "",  # runtime.activity_indicator_margin_bottom
+            "",  # runtime.activity_indicator_size
             "",  # text.dictionary_path
             "ask",  # text.llm_correction.mode
             "",  # text.llm_correction.provider
@@ -420,6 +439,10 @@ def test_cmd_init_accepts_provider_other(monkeypatch, tmp_path: Path, capsys) ->
             "",  # output.paste_shortcut
             "",  # runtime.log_level
             "",  # runtime.notify_on_error
+            "",  # runtime.activity_indicator_enabled
+            "",  # runtime.activity_indicator_margin_right
+            "",  # runtime.activity_indicator_margin_bottom
+            "",  # runtime.activity_indicator_size
             "",  # text.dictionary_path
             "",  # text.llm_correction.mode
             "3",  # text.llm_correction.provider -> other
@@ -482,7 +505,8 @@ notify_on_error = true
     assert "Updated config:" in captured.out
     updated = cli.load_config(cfg_path)
     assert updated.stt.model == "moonshine:tiny"
-    assert "size =" not in cfg_path.read_text(encoding="utf-8")
+    content = cfg_path.read_text(encoding="utf-8")
+    assert '\nsize = "tiny"' not in content
 
 
 def test_list_devices_parser_has_config_option() -> None:

@@ -90,6 +90,10 @@ class RuntimeConfig(BaseModel):
 
     log_level: str = "INFO"
     notify_on_error: bool = True
+    activity_indicator_enabled: bool = True
+    activity_indicator_margin_right: int = 24
+    activity_indicator_margin_bottom: int = 24
+    activity_indicator_size: int = 42
 
 
 class LLMCorrectionConfig(BaseModel):
@@ -151,6 +155,19 @@ def _clamp_stt_non_negative_seconds(value: float, *, field_name: str) -> float:
     if value < 0.0:
         LOGGER.warning("stt.%s=%s is below 0.0; using 0.0", field_name, value)
         return 0.0
+    return value
+
+
+def _clamp_runtime_non_negative_int(value: int, *, field_name: str, minimum: int = 0) -> int:
+    if value < minimum:
+        LOGGER.warning(
+            "runtime.%s=%s is below %s; using %s",
+            field_name,
+            value,
+            minimum,
+            minimum,
+        )
+        return minimum
     return value
 
 
@@ -248,7 +265,11 @@ def _dump_toml(data: dict[str, Any]) -> str:
             f"paste_shortcut = \"{data['output']['paste_shortcut']}\"\n\n"
             "[runtime]\n"
             f"log_level = \"{data['runtime']['log_level']}\"\n"
-            f"notify_on_error = {str(data['runtime']['notify_on_error']).lower()}\n\n"
+            f"notify_on_error = {str(data['runtime']['notify_on_error']).lower()}\n"
+            f"activity_indicator_enabled = {str(data['runtime'].get('activity_indicator_enabled', True)).lower()}\n"
+            f"activity_indicator_margin_right = {data['runtime'].get('activity_indicator_margin_right', 24)}\n"
+            f"activity_indicator_margin_bottom = {data['runtime'].get('activity_indicator_margin_bottom', 24)}\n"
+            f"activity_indicator_size = {data['runtime'].get('activity_indicator_size', 42)}\n\n"
             "[text]\n"
             f"{dictionary_path_line}\n"
             "[text.llm_correction]\n"
@@ -410,6 +431,19 @@ def load_config(path: Path | None = None, *, allow_legacy_model_size: bool = Fal
     config.stt.idle_shutdown_seconds = _clamp_stt_non_negative_seconds(
         float(config.stt.idle_shutdown_seconds),
         field_name="idle_shutdown_seconds",
+    )
+    config.runtime.activity_indicator_margin_right = _clamp_runtime_non_negative_int(
+        int(config.runtime.activity_indicator_margin_right),
+        field_name="activity_indicator_margin_right",
+    )
+    config.runtime.activity_indicator_margin_bottom = _clamp_runtime_non_negative_int(
+        int(config.runtime.activity_indicator_margin_bottom),
+        field_name="activity_indicator_margin_bottom",
+    )
+    config.runtime.activity_indicator_size = _clamp_runtime_non_negative_int(
+        int(config.runtime.activity_indicator_size),
+        field_name="activity_indicator_size",
+        minimum=16,
     )
     config.language = _normalize_top_level_language(str(config.language))
     config.stt.model = _normalize_stt_model(str(config.stt.model))

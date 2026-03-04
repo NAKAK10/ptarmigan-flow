@@ -46,13 +46,21 @@ device = "mps"
 
 [output]
 # direct_typing: types text directly (clipboard is untouched)
-# clipboard_paste: copies to clipboard then pastes with paste_shortcut
+# clipboard_paste: copies to clipboard then pastes once on release (no streaming chunks)
 mode = "direct_typing"
 paste_shortcut = "cmd+v"
 
 [runtime]
 log_level = "INFO"
 notify_on_error = true
+# Show right-bottom activity icon while recording/transcribing.
+activity_indicator_enabled = true
+# Pixels from right edge.
+activity_indicator_margin_right = 24
+# Pixels from bottom edge.
+activity_indicator_margin_bottom = 24
+# Overlay icon size in pixels (minimum 16).
+activity_indicator_size = 42
 
 [text]
 # Optional transcription correction dictionary path.
