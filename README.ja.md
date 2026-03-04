@@ -27,6 +27,12 @@ ptarmigan-flow run
 録音中に音楽再生の音質が落ちる場合（Bluetoothヘッドセット利用時など）は、
 `audio.input_device` を未設定のまま `audio.input_device_policy = "playback_friendly"` を使ってください。
 
+## 利用サンプル動画
+
+<video src="./assets/usage-sample.mov" controls muted playsinline>
+  お使いのブラウザは video タグに対応していません。
+</video>
+
 ## コマンド一覧
 ### 主要コマンド
 | コマンド | 説明 |

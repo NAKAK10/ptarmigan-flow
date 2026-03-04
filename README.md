@@ -27,6 +27,12 @@ ptarmigan-flow run
 If playback audio quality drops while recording (for example with Bluetooth headsets),
 set `audio.input_device_policy = "playback_friendly"` and keep `audio.input_device` unset.
 
+## Usage Sample Video
+
+<video src="./assets/usage-sample.mov" controls muted playsinline>
+  Your browser does not support the video tag.
+</video>
+
 ## Command Reference
 ### Core Commands
 | Command | Description |
