@@ -29,9 +29,7 @@ set `audio.input_device_policy = "playback_friendly"` and keep `audio.input_devi
 
 ## Usage Sample Video
 
-<video src="./assets/usage-sample.mov" controls muted playsinline>
-  Your browser does not support the video tag.
-</video>
+https://github.com/user-attachments/assets/f763be1b-54af-4342-886d-016837be7884
 
 ## Command Reference
 ### Core Commands
