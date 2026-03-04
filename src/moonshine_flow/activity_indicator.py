@@ -186,7 +186,9 @@ def create_activity_indicator(config: AppConfig) -> ActivityIndicatorPort:
     global _OVERLAY_UNAVAILABLE_WARNED
 
     runtime_cfg = getattr(config, "runtime", None)
-    enabled = bool(getattr(runtime_cfg, "activity_indicator_enabled", True))
+    ui_enabled = bool(getattr(runtime_cfg, "ui_enabled", True))
+    indicator_enabled = bool(getattr(runtime_cfg, "activity_indicator_enabled", True))
+    enabled = ui_enabled and indicator_enabled
     if not enabled:
         return NullActivityIndicator()
     if not _cocoa_overlay_available():

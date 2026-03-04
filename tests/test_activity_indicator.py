@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 from moonshine_flow.activity_indicator import (
     NullActivityIndicator,
     SubprocessActivityIndicator,
@@ -138,6 +136,16 @@ def test_create_activity_indicator_respects_runtime_toggle() -> None:
     assert isinstance(indicator, NullActivityIndicator)
 
 
+def test_create_activity_indicator_respects_ui_enabled_toggle() -> None:
+    config = AppConfig()
+    config.runtime.ui_enabled = False
+    config.runtime.activity_indicator_enabled = True
+
+    indicator = create_activity_indicator(config)
+
+    assert isinstance(indicator, NullActivityIndicator)
+
+
 def test_create_activity_indicator_returns_null_when_cocoa_unavailable(
     monkeypatch, caplog
 ) -> None:
@@ -155,7 +163,10 @@ def test_create_activity_indicator_returns_null_when_cocoa_unavailable(
     warnings = [
         entry.message
         for entry in caplog.records
-        if "Activity indicator is disabled because Cocoa/AppKit runtime is unavailable" in entry.message
+        if (
+            "Activity indicator is disabled because Cocoa/AppKit runtime is unavailable"
+            in entry.message
+        )
     ]
     assert len(warnings) == 1
 

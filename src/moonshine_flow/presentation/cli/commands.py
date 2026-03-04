@@ -1231,6 +1231,10 @@ def cmd_init(args: argparse.Namespace) -> int:
             "runtime.notify_on_error",
             bool(config.runtime.notify_on_error),
         )
+        config.runtime.ui_enabled = _prompt_bool(
+            "runtime.ui_enabled",
+            bool(config.runtime.ui_enabled),
+        )
         config.runtime.activity_indicator_enabled = _prompt_bool(
             "runtime.activity_indicator_enabled",
             bool(config.runtime.activity_indicator_enabled),

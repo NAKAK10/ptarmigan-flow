@@ -73,3 +73,23 @@ def test_runtime_run_drains_exit_command_and_stops() -> None:
     assert "show_recording" in window.calls
     assert "hide" in window.calls
     assert "close" in window.calls
+
+
+def test_parse_args_clamps_bounds(monkeypatch) -> None:
+    monkeypatch.setattr(overlay_module.os, "getppid", lambda: 555)
+
+    parsed = overlay_module._parse_args(
+        ["--size", "10", "--margin-right", "-7", "--margin-bottom", "-3"]
+    )
+
+    assert parsed.size == 16
+    assert parsed.margin_right == 0
+    assert parsed.margin_bottom == 0
+    assert parsed.parent_pid == 555
+
+
+def test_parse_args_accepts_explicit_parent_pid() -> None:
+    parsed = overlay_module._parse_args(["--size", "56", "--parent-pid", "4321"])
+
+    assert parsed.size == 56
+    assert parsed.parent_pid == 4321

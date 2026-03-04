@@ -98,6 +98,7 @@ Key settings:
 - `text.llm_correction.enabled_tools`: tool-calling switch for supporting endpoints.
 - `stt.model`: backend/model token (`moonshine:tiny`, `moonshine:base`, `voxtral:<model-id>`, `mlx:<model-id>`, `vllm:<model-id>`).
 - `stt.idle_shutdown_seconds`: idle seconds before releasing backend resources (`30.0` default, clamped to `>=0.0`, `0` disables idle shutdown).
+- `runtime.ui_enabled`: enable/disable runtime UI overlays (`true` by default).
 - `runtime.activity_indicator_enabled`: show right-bottom activity icon during recording/transcription.
 - `runtime.activity_indicator_margin_right`: right offset in pixels (`>=0`).
 - `runtime.activity_indicator_margin_bottom`: bottom offset in pixels (`>=0`).

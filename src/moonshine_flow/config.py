@@ -90,6 +90,7 @@ class RuntimeConfig(BaseModel):
 
     log_level: str = "INFO"
     notify_on_error: bool = True
+    ui_enabled: bool = True
     activity_indicator_enabled: bool = True
     activity_indicator_margin_right: int = 24
     activity_indicator_margin_bottom: int = 24
@@ -238,22 +239,31 @@ def _dump_toml(data: dict[str, Any]) -> str:
             llm_api_key_line = ""
         else:
             llm_api_key_line = f"api_key = \"{llm_api_key}\"\n"
+        audio_cfg = data["audio"]
+        runtime_cfg = data["runtime"]
+        runtime_ui_enabled = str(runtime_cfg.get("ui_enabled", True)).lower()
+        runtime_indicator_enabled = str(
+            runtime_cfg.get("activity_indicator_enabled", True)
+        ).lower()
+        runtime_margin_right = runtime_cfg.get("activity_indicator_margin_right", 24)
+        runtime_margin_bottom = runtime_cfg.get("activity_indicator_margin_bottom", 24)
+        runtime_indicator_size = runtime_cfg.get("activity_indicator_size", 42)
 
         return (
             f"language = \"{data.get('language', 'en')}\"\n\n"
             "[hotkey]\n"
             f"key = \"{data['hotkey']['key']}\"\n\n"
             "[audio]\n"
-            f"sample_rate = {data['audio']['sample_rate']}\n"
-            f"channels = {data['audio']['channels']}\n"
-            f"dtype = \"{data['audio']['dtype']}\"\n"
-            f"max_record_seconds = {data['audio']['max_record_seconds']}\n"
-            f"release_tail_seconds = {data['audio']['release_tail_seconds']}\n"
-            f"hotkey_release_reconcile_seconds = {data['audio']['hotkey_release_reconcile_seconds']}\n"
-            f"hotkey_idle_reconcile_seconds = {data['audio']['hotkey_idle_reconcile_seconds']}\n"
-            f"trailing_silence_seconds = {data['audio']['trailing_silence_seconds']}\n"
+            f"sample_rate = {audio_cfg['sample_rate']}\n"
+            f"channels = {audio_cfg['channels']}\n"
+            f"dtype = \"{audio_cfg['dtype']}\"\n"
+            f"max_record_seconds = {audio_cfg['max_record_seconds']}\n"
+            f"release_tail_seconds = {audio_cfg['release_tail_seconds']}\n"
+            f"hotkey_release_reconcile_seconds = {audio_cfg['hotkey_release_reconcile_seconds']}\n"
+            f"hotkey_idle_reconcile_seconds = {audio_cfg['hotkey_idle_reconcile_seconds']}\n"
+            f"trailing_silence_seconds = {audio_cfg['trailing_silence_seconds']}\n"
             f"{input_device_line}\n"
-            f"input_device_policy = \"{data['audio']['input_device_policy']}\"\n"
+            f"input_device_policy = \"{audio_cfg['input_device_policy']}\"\n"
             "\n"
             "[stt]\n"
             f"model = \"{data['stt']['model']}\"\n"
@@ -264,12 +274,13 @@ def _dump_toml(data: dict[str, Any]) -> str:
             f"mode = \"{data['output']['mode']}\"\n"
             f"paste_shortcut = \"{data['output']['paste_shortcut']}\"\n\n"
             "[runtime]\n"
-            f"log_level = \"{data['runtime']['log_level']}\"\n"
-            f"notify_on_error = {str(data['runtime']['notify_on_error']).lower()}\n"
-            f"activity_indicator_enabled = {str(data['runtime'].get('activity_indicator_enabled', True)).lower()}\n"
-            f"activity_indicator_margin_right = {data['runtime'].get('activity_indicator_margin_right', 24)}\n"
-            f"activity_indicator_margin_bottom = {data['runtime'].get('activity_indicator_margin_bottom', 24)}\n"
-            f"activity_indicator_size = {data['runtime'].get('activity_indicator_size', 42)}\n\n"
+            f"log_level = \"{runtime_cfg['log_level']}\"\n"
+            f"notify_on_error = {str(runtime_cfg['notify_on_error']).lower()}\n"
+            f"ui_enabled = {runtime_ui_enabled}\n"
+            f"activity_indicator_enabled = {runtime_indicator_enabled}\n"
+            f"activity_indicator_margin_right = {runtime_margin_right}\n"
+            f"activity_indicator_margin_bottom = {runtime_margin_bottom}\n"
+            f"activity_indicator_size = {runtime_indicator_size}\n\n"
             "[text]\n"
             f"{dictionary_path_line}\n"
             "[text.llm_correction]\n"

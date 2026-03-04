@@ -53,6 +53,8 @@ paste_shortcut = "cmd+v"
 [runtime]
 log_level = "INFO"
 notify_on_error = true
+# Toggle runtime UI overlays.
+ui_enabled = true
 # Show right-bottom activity icon while recording/transcribing.
 activity_indicator_enabled = true
 # Pixels from right edge.

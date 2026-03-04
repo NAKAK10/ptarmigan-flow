@@ -21,6 +21,7 @@ def test_write_example_and_load_config(tmp_path: Path) -> None:
     assert loaded.audio.trailing_silence_seconds == 1.0
     assert loaded.audio.input_device_policy.value == "playback_friendly"
     assert loaded.output.mode.value == "direct_typing"
+    assert loaded.runtime.ui_enabled is True
     assert loaded.runtime.activity_indicator_enabled is True
     assert loaded.runtime.activity_indicator_margin_right == 24
     assert loaded.runtime.activity_indicator_margin_bottom == 24
@@ -46,6 +47,7 @@ def test_load_config_creates_missing_file(tmp_path: Path) -> None:
     assert loaded.stt.idle_shutdown_seconds == 30.0
     assert loaded.language == "en"
     assert loaded.output.mode.value == "direct_typing"
+    assert loaded.runtime.ui_enabled is True
     assert loaded.runtime.activity_indicator_enabled is True
     assert loaded.runtime.activity_indicator_margin_right == 24
     assert loaded.runtime.activity_indicator_margin_bottom == 24
@@ -250,6 +252,45 @@ activity_indicator_size = 10
     assert loaded.runtime.activity_indicator_margin_right == 0
     assert loaded.runtime.activity_indicator_margin_bottom == 0
     assert loaded.runtime.activity_indicator_size == 16
+
+
+def test_load_config_accepts_runtime_ui_enabled_toggle(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(
+        """
+language = "ja"
+
+[hotkey]
+key = "right_cmd"
+
+[audio]
+sample_rate = 16000
+channels = 1
+dtype = "float32"
+max_record_seconds = 30
+
+[stt]
+model = "moonshine:base"
+
+[model]
+device = "mps"
+
+[output]
+mode = "clipboard_paste"
+paste_shortcut = "cmd+v"
+
+[runtime]
+log_level = "INFO"
+notify_on_error = true
+ui_enabled = false
+activity_indicator_enabled = true
+""".strip(),
+        encoding="utf-8",
+    )
+
+    loaded = load_config(cfg_path)
+    assert loaded.runtime.ui_enabled is False
+    assert loaded.runtime.activity_indicator_enabled is True
 
 
 def test_load_config_clamps_llm_timeout_and_input_chars(tmp_path: Path) -> None:
