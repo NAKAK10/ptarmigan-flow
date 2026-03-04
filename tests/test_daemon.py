@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from types import SimpleNamespace
 
 import numpy as np
@@ -119,6 +120,26 @@ class _FakeHotkeyMonitor:
         return self.pressed
 
 
+class _FakeActivityIndicator:
+    def __init__(self) -> None:
+        self.show_recording_calls = 0
+        self.show_processing_calls = 0
+        self.hide_calls = 0
+        self.close_calls = 0
+
+    def show_recording(self) -> None:
+        self.show_recording_calls += 1
+
+    def show_processing(self) -> None:
+        self.show_processing_calls += 1
+
+    def hide(self) -> None:
+        self.hide_calls += 1
+
+    def close(self) -> None:
+        self.close_calls += 1
+
+
 class _FakeTimer:
     instances: list[_FakeTimer] = []
 
@@ -154,9 +175,18 @@ def _build_daemon(
     config: AppConfig | None = None,
 ) -> daemon_module.MoonshineFlowDaemon:
     monkeypatch.setattr(daemon_module, "AudioRecorder", _FakeRecorder)
-    monkeypatch.setattr(daemon_module, "create_stt_backend", lambda *_args, **_kwargs: _FakeTranscriber())
+    monkeypatch.setattr(
+        daemon_module,
+        "create_stt_backend",
+        lambda *_args, **_kwargs: _FakeTranscriber(),
+    )
     monkeypatch.setattr(daemon_module, "OutputInjector", _FakeInjector)
     monkeypatch.setattr(daemon_module, "HotkeyMonitor", _FakeHotkeyMonitor)
+    monkeypatch.setattr(
+        daemon_module,
+        "create_activity_indicator",
+        lambda *_args, **_kwargs: _FakeActivityIndicator(),
+    )
     return daemon_module.MoonshineFlowDaemon(config or AppConfig())
 
 
@@ -186,6 +216,15 @@ def test_hotkey_down_respects_cooldown(monkeypatch) -> None:
 
     daemon._on_hotkey_down()
     assert daemon.recorder.start_calls == 1
+
+
+def test_hotkey_down_shows_recording_indicator(monkeypatch) -> None:
+    daemon = _build_daemon(monkeypatch)
+
+    daemon._on_hotkey_down()
+
+    assert daemon.recorder.start_calls == 1
+    assert daemon.activity_indicator.show_recording_calls == 1
 
 
 def test_hotkey_up_schedules_delayed_stop(monkeypatch) -> None:
@@ -261,16 +300,19 @@ def test_stop_cancels_pending_delayed_stop(monkeypatch) -> None:
 
     assert timer.canceled is True
     assert daemon.recorder.close_calls == 1
+    assert daemon.activity_indicator.hide_calls >= 1
+    assert daemon.activity_indicator.close_calls == 1
 
 
 def test_recover_stale_recording_closes_recorder(monkeypatch) -> None:
     daemon = _build_daemon(monkeypatch)
-    monotonic_values = iter([1.0, 1.2, 1.8])
+    monotonic_values = iter([1.0, 1.2, 1.8, 2.4])
     monkeypatch.setattr(daemon_module.time, "monotonic", lambda: next(monotonic_values))
 
     daemon.recorder.is_recording = True
     daemon.recorder.stream_active = False
 
+    daemon._recover_stale_recording_if_needed()
     daemon._recover_stale_recording_if_needed()
     daemon._recover_stale_recording_if_needed()
     assert daemon.recorder.close_calls == 0
@@ -298,6 +340,25 @@ def test_live_input_tick_injects_delta_for_realtime_backend(monkeypatch) -> None
     assert daemon._live_last_snapshot_samples == 4
 
 
+def test_live_input_tick_skips_when_stop_requested(monkeypatch) -> None:
+    config = AppConfig()
+    config.audio.sample_rate = 10
+    daemon = _build_daemon(monkeypatch, config=config)
+    daemon._supports_realtime_input = True
+    daemon.recorder.is_recording = True
+    daemon.recorder.snapshot_audio = np.arange(4, dtype=np.float32).reshape(-1, 1)
+    with daemon._state_lock:
+        daemon._live_stop_requested = True
+
+    daemon.transcriber.transcribe_stream = lambda *_args, **_kwargs: iter(["he"])
+
+    daemon._process_live_input_tick()
+
+    assert daemon.recorder.snapshot_calls == 0
+    assert daemon.injector.injected == []
+    assert daemon._live_emitted_text == ""
+
+
 def test_stop_recording_queues_emitted_prefix_in_live_input_mode(monkeypatch) -> None:
     config = AppConfig()
     config.audio.release_tail_seconds = 0.0
@@ -317,6 +378,18 @@ def test_stop_recording_queues_emitted_prefix_in_live_input_mode(monkeypatch) ->
     assert daemon._live_last_snapshot_samples == 0
 
 
+def test_stop_recording_queued_audio_shows_processing_indicator(monkeypatch) -> None:
+    config = AppConfig()
+    config.audio.release_tail_seconds = 0.0
+    daemon = _build_daemon(monkeypatch, config=config)
+    daemon.recorder.is_recording = True
+
+    daemon._stop_recording_and_queue_audio(reason="hotkey-release")
+
+    assert daemon._audio_queue.qsize() == 1
+    assert daemon.activity_indicator.show_processing_calls == 1
+
+
 def test_worker_streaming_skips_already_emitted_prefix(monkeypatch) -> None:
     daemon = _build_daemon(monkeypatch)
     daemon.transcriber.transcribe_stream = lambda *_args, **_kwargs: iter(["hello"])
@@ -334,6 +407,63 @@ def test_worker_streaming_skips_already_emitted_prefix(monkeypatch) -> None:
     worker.join(timeout=1.0)
 
     assert daemon.injector.injected == ["llo"]
+    assert daemon.activity_indicator.hide_calls == 1
+
+
+def test_worker_waits_for_live_input_lock_before_transcribing(monkeypatch) -> None:
+    daemon = _build_daemon(monkeypatch)
+    daemon._audio_queue.put(
+        SimpleNamespace(
+            audio=np.array([[0.25], [0.5]], dtype=np.float32),
+            emitted_prefix="",
+        )
+    )
+
+    daemon._live_input_lock.acquire()
+    worker = threading.Thread(target=daemon._worker_loop, daemon=True)
+    worker.start()
+    time.sleep(0.05)
+
+    assert daemon.transcriber.calls == []
+
+    daemon._live_input_lock.release()
+    daemon._audio_queue.join()
+    daemon._stop_event.set()
+    worker.join(timeout=1.0)
+
+    assert len(daemon.transcriber.calls) == 1
+
+
+def test_indicator_stays_visible_until_inject_finishes(monkeypatch) -> None:
+    daemon = _build_daemon(monkeypatch)
+    daemon.transcriber.transcribe_stream = lambda *_args, **_kwargs: iter(["hello"])
+    daemon._audio_queue.put(
+        SimpleNamespace(
+            audio=np.array([[0.25], [0.5]], dtype=np.float32),
+            emitted_prefix="",
+        )
+    )
+    entered = threading.Event()
+    unblock = threading.Event()
+
+    def _blocking_inject(text: str) -> None:
+        entered.set()
+        unblock.wait(timeout=1.0)
+        daemon.injector.injected.append(text)
+
+    daemon.injector.inject = _blocking_inject
+    worker = threading.Thread(target=daemon._worker_loop, daemon=True)
+    worker.start()
+
+    assert entered.wait(timeout=1.0) is True
+    assert daemon.activity_indicator.hide_calls == 0
+
+    unblock.set()
+    daemon._audio_queue.join()
+    daemon._stop_event.set()
+    worker.join(timeout=1.0)
+
+    assert daemon.activity_indicator.hide_calls == 1
 
 
 def test_recover_missed_hotkey_release_stops_recording(monkeypatch) -> None:
@@ -355,6 +485,56 @@ def test_recover_missed_hotkey_release_stops_recording(monkeypatch) -> None:
 def test_append_only_delta_tolerates_non_monotonic_tail() -> None:
     delta = daemon_module.MoonshineFlowDaemon._append_only_delta("hellp", "hello world")
     assert delta == "o world"
+
+
+def test_append_only_delta_keeps_phrase_overlap_without_aggressive_trim() -> None:
+    previous = "同じ情報が2度入力される場合があるのでその対策を行います"
+    current = (
+        "同じ情報が2度入力される場合があるのでその対策を行います"
+        "場合があるのでその対策を行ってください"
+    )
+    delta = daemon_module.MoonshineFlowDaemon._append_only_delta(previous, current)
+    assert delta == "場合があるのでその対策を行ってください"
+
+
+def test_worker_uses_final_transcribe_once_when_emitted_prefix_exists(monkeypatch) -> None:
+    daemon = _build_daemon(monkeypatch)
+    daemon.transcriber.transcribe_stream = lambda *_args, **_kwargs: iter(["WRONG"])
+    daemon.transcriber.transcribe = lambda *_args, **_kwargs: "hello"
+    daemon._audio_queue.put(
+        SimpleNamespace(
+            audio=np.array([[0.25], [0.5]], dtype=np.float32),
+            emitted_prefix="he",
+        )
+    )
+
+    worker = threading.Thread(target=daemon._worker_loop, daemon=True)
+    worker.start()
+    daemon._audio_queue.join()
+    daemon._stop_event.set()
+    worker.join(timeout=1.0)
+
+    assert daemon.injector.injected == ["llo"]
+
+
+def test_worker_skips_consecutive_duplicate_streaming_delta(monkeypatch) -> None:
+    daemon = _build_daemon(monkeypatch)
+    daemon._audio_queue.put(
+        SimpleNamespace(
+            audio=np.array([[0.25], [0.5]], dtype=np.float32),
+            emitted_prefix="",
+        )
+    )
+    daemon.transcriber.transcribe_stream = lambda *_args, **_kwargs: iter(["a", "b", "c"])
+    daemon._append_only_delta = lambda *_args, **_kwargs: "dup"  # type: ignore[method-assign]
+
+    worker = threading.Thread(target=daemon._worker_loop, daemon=True)
+    worker.start()
+    daemon._audio_queue.join()
+    daemon._stop_event.set()
+    worker.join(timeout=1.0)
+
+    assert daemon.injector.injected == ["dup"]
 
 
 def test_daemon_passes_audio_input_device_policy_to_recorder(monkeypatch) -> None:
@@ -392,12 +572,16 @@ def test_release_idle_transcriber_resources_skips_when_busy(monkeypatch) -> None
     assert daemon.transcriber.idle_release_calls == 0
 
 
-def test_stop_recording_forces_stop_when_live_input_lock_busy(monkeypatch) -> None:
+def test_stop_recording_falls_back_when_live_lock_is_busy(monkeypatch) -> None:
     config = AppConfig()
     config.audio.release_tail_seconds = 0.0
     daemon = _build_daemon(monkeypatch, config=config)
+    daemon._supports_realtime_input = True
     daemon.recorder.is_recording = True
+    with daemon._state_lock:
+        daemon._live_emitted_text = "latest-prefix"
 
+    monkeypatch.setattr(daemon_module, "_LIVE_INPUT_STOP_LOCK_TIMEOUT_SECONDS", 0.01)
     daemon._live_input_lock.acquire()
     try:
         daemon._stop_recording_and_queue_audio(reason="hotkey-release-reconciled")
@@ -405,5 +589,27 @@ def test_stop_recording_forces_stop_when_live_input_lock_busy(monkeypatch) -> No
         if daemon._live_input_lock.locked():
             daemon._live_input_lock.release()
 
+    item = daemon._audio_queue.get_nowait()
     assert daemon.recorder.stop_calls == 1
-    assert daemon._audio_queue.qsize() == 1
+    assert item.emitted_prefix == "latest-prefix"
+
+
+def test_stop_recording_force_closes_recorder_when_stop_fails(monkeypatch) -> None:
+    config = AppConfig()
+    config.audio.release_tail_seconds = 0.0
+    daemon = _build_daemon(monkeypatch, config=config)
+    daemon.recorder.is_recording = True
+
+    def _raising_stop() -> np.ndarray:
+        daemon.recorder.stop_calls += 1
+        raise RuntimeError("stop failed")
+
+    daemon.recorder.stop = _raising_stop  # type: ignore[method-assign]
+
+    daemon._stop_recording_and_queue_audio(reason="hotkey-release")
+
+    assert daemon.recorder.stop_calls == 1
+    assert daemon.recorder.close_calls == 1
+    assert daemon.recorder.is_recording is False
+    assert daemon.activity_indicator.hide_calls == 1
+    assert daemon._audio_queue.qsize() == 0

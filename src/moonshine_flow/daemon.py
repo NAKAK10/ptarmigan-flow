@@ -10,18 +10,26 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from moonshine_flow.domain.transcription_session import append_only_delta, has_sufficient_new_audio
+from moonshine_flow.activity_indicator import create_activity_indicator
 from moonshine_flow.audio_recorder import AudioRecorder
 from moonshine_flow.config import AppConfig
+from moonshine_flow.domain.transcription_session import append_only_delta, has_sufficient_new_audio
 from moonshine_flow.hotkey_monitor import HotkeyMonitor
 from moonshine_flow.output_injector import OutputInjector
-from moonshine_flow.ports.runtime import AudioInputPort, SpeechToTextPort, TextOutputPort
+from moonshine_flow.ports.runtime import (
+    ActivityIndicatorPort,
+    AudioInputPort,
+    SpeechToTextPort,
+    TextOutputPort,
+)
 from moonshine_flow.stt.factory import create_stt_backend, parse_stt_model
 from moonshine_flow.text_processing.interfaces import TextPostProcessor
 
 LOGGER = logging.getLogger(__name__)
 _HOTKEY_COOLDOWN_SECONDS = 0.25
 _RECORDING_STALE_GRACE_SECONDS = 0.5
+_RECORDING_STARTUP_GRACE_SECONDS = 0.35
+_LIVE_INPUT_STOP_LOCK_TIMEOUT_SECONDS = 0.35
 _LIVE_INPUT_MIN_NEW_AUDIO_SECONDS = 0.1
 _MAIN_LOOP_IDLE_SLEEP_SECONDS = 0.2
 _MAIN_LOOP_ACTIVE_SLEEP_SECONDS = 0.05
@@ -42,6 +50,7 @@ class MoonshineFlowDaemon:
         post_processor: TextPostProcessor | None = None,
         *,
         enable_streaming: bool = True,
+        activity_indicator: ActivityIndicatorPort | None = None,
     ) -> None:
         self.config = config
         self._enable_streaming = enable_streaming
@@ -52,11 +61,13 @@ class MoonshineFlowDaemon:
         self._transcription_in_progress = False
         self._last_release_at_monotonic = 0.0
         self._recording_stale_since_monotonic: float | None = None
+        self._recording_started_at_monotonic: float | None = None
         self._pending_stop_timer: threading.Timer | None = None
         self._pending_stop_id: int | None = None
         self._next_stop_id = 0
         self._live_emitted_text = ""
         self._live_last_snapshot_samples = 0
+        self._live_stop_requested = False
         self._hotkey_not_pressed_since_monotonic: float | None = None
 
         self.recorder: AudioInputPort = AudioRecorder(
@@ -79,6 +90,11 @@ class MoonshineFlowDaemon:
             mode=config.output.mode.value,
             paste_shortcut=config.output.paste_shortcut,
         )
+        self.activity_indicator: ActivityIndicatorPort = (
+            activity_indicator
+            if activity_indicator is not None
+            else create_activity_indicator(config)
+        )
         self.hotkey = HotkeyMonitor(
             key_name=config.hotkey.key,
             on_press=self._on_hotkey_down,
@@ -91,6 +107,30 @@ class MoonshineFlowDaemon:
             daemon=True,
             name="moonshine-worker",
         )
+
+    def _show_recording_indicator(self) -> None:
+        try:
+            self.activity_indicator.show_recording()
+        except Exception:
+            LOGGER.debug("Failed to show recording activity indicator", exc_info=True)
+
+    def _show_processing_indicator(self) -> None:
+        try:
+            self.activity_indicator.show_processing()
+        except Exception:
+            LOGGER.debug("Failed to show processing activity indicator", exc_info=True)
+
+    def _hide_activity_indicator(self) -> None:
+        try:
+            self.activity_indicator.hide()
+        except Exception:
+            LOGGER.debug("Failed to hide activity indicator", exc_info=True)
+
+    def _close_activity_indicator(self) -> None:
+        try:
+            self.activity_indicator.close()
+        except Exception:
+            LOGGER.debug("Failed to close activity indicator", exc_info=True)
 
     def _on_hotkey_down(self) -> None:
         if self._stop_event.is_set():
@@ -112,9 +152,14 @@ class MoonshineFlowDaemon:
 
         try:
             self.recorder.start()
+            now = time.monotonic()
             if self._live_input_enabled():
                 with self._state_lock:
                     self._reset_live_state_locked()
+            with self._state_lock:
+                self._recording_started_at_monotonic = now
+                self._recording_stale_since_monotonic = None
+            self._show_recording_indicator()
             LOGGER.info("Recording started")
         except Exception:
             LOGGER.exception("Failed to start recording")
@@ -186,27 +231,42 @@ class MoonshineFlowDaemon:
     def _reset_live_state_locked(self) -> None:
         self._live_emitted_text = ""
         self._live_last_snapshot_samples = 0
+        self._live_stop_requested = False
 
     def _stop_recording_and_queue_audio(self, *, reason: str) -> None:
         if self._stop_event.is_set() or not self.recorder.is_recording:
             return
 
         emitted_prefix = ""
-        lock_acquired = self._live_input_lock.acquire(timeout=0.2)
+        with self._state_lock:
+            if self._live_input_enabled():
+                self._live_stop_requested = True
+
+        lock_acquired = self._live_input_lock.acquire(timeout=_LIVE_INPUT_STOP_LOCK_TIMEOUT_SECONDS)
         if not lock_acquired:
             LOGGER.warning(
-                "Live input lock was busy during stop; forcing recorder stop (%s)",
+                "Live input lock was busy during stop; stopping without live lock (%s)",
                 reason,
             )
         try:
             audio = self.recorder.stop()
         except Exception:
             LOGGER.exception("Failed to stop recording (%s)", reason)
+            try:
+                self.recorder.close()
+            except Exception:
+                LOGGER.debug(
+                    "Failed to force-close recorder after stop failure (%s)",
+                    reason,
+                    exc_info=True,
+                )
+            self._hide_activity_indicator()
             return
         finally:
             with self._state_lock:
                 self._last_release_at_monotonic = time.monotonic()
                 self._recording_stale_since_monotonic = None
+                self._recording_started_at_monotonic = None
                 self._hotkey_not_pressed_since_monotonic = None
                 if self._live_input_enabled():
                     emitted_prefix = self._live_emitted_text
@@ -216,9 +276,16 @@ class MoonshineFlowDaemon:
 
         if audio.size == 0:
             LOGGER.info("Skipped empty audio capture (%s)", reason)
+            self._hide_activity_indicator()
             return
 
+        if emitted_prefix:
+            LOGGER.debug(
+                "Captured live emitted prefix before queueing final transcription (%s chars)",
+                len(emitted_prefix),
+            )
         self._audio_queue.put(_QueuedAudio(audio=audio, emitted_prefix=emitted_prefix))
+        self._show_processing_indicator()
         LOGGER.info("Queued audio for transcription (%s)", reason)
 
     def _process_live_input_tick(self) -> None:
@@ -233,7 +300,7 @@ class MoonshineFlowDaemon:
             if self._stop_event.is_set() or not self.recorder.is_recording:
                 return
             with self._state_lock:
-                if self._transcription_in_progress:
+                if self._transcription_in_progress or self._live_stop_requested:
                     return
                 emitted = self._live_emitted_text
                 last_snapshot_samples = self._live_last_snapshot_samples
@@ -251,14 +318,24 @@ class MoonshineFlowDaemon:
                 return
 
             for update in self.transcriber.transcribe_stream(audio, self.config.audio.sample_rate):
+                with self._state_lock:
+                    if (
+                        self._live_stop_requested
+                        or self._stop_event.is_set()
+                        or not self.recorder.is_recording
+                    ):
+                        break
                 delta = self._append_only_delta(emitted, update)
                 if not delta:
                     continue
                 self.injector.inject(delta)
                 emitted += delta
+                with self._state_lock:
+                    self._live_emitted_text = emitted
             with self._state_lock:
-                self._live_emitted_text = emitted
-                self._live_last_snapshot_samples = total_samples
+                if not self._live_stop_requested:
+                    self._live_emitted_text = emitted
+                    self._live_last_snapshot_samples = total_samples
         except Exception:
             LOGGER.exception("Realtime input tick failed")
         finally:
@@ -273,34 +350,61 @@ class MoonshineFlowDaemon:
 
             with self._state_lock:
                 self._transcription_in_progress = True
+            self._show_processing_indicator()
             try:
-                audio = item.audio
-                if self._enable_streaming:
-                    emitted = item.emitted_prefix
-                    for update in self.transcriber.transcribe_stream(audio, self.config.audio.sample_rate):
-                        delta = self._append_only_delta(emitted, update)
-                        if not delta:
-                            continue
-                        self.injector.inject(delta)
-                        emitted += delta
-                    if not emitted.strip():
-                        LOGGER.info("Transcription result was empty")
-                else:
-                    text = self.transcriber.transcribe(audio, self.config.audio.sample_rate)
-                    if text:
-                        delta = self._append_only_delta(item.emitted_prefix, text)
-                        if delta:
-                            self.injector.inject(delta)
+                # Serialize transcriber access with live input tick
+                # to avoid concurrent GPU execution.
+                with self._live_input_lock:
+                    audio = item.audio
+                    if self._enable_streaming:
+                        # Live input already emitted partial text while key was held.
+                        # Use one final transcript after release
+                        # to avoid re-emitting duplicated chunks.
+                        if item.emitted_prefix:
+                            text = self.transcriber.transcribe(audio, self.config.audio.sample_rate)
+                            if text:
+                                delta = self._append_only_delta(item.emitted_prefix, text)
+                                if delta:
+                                    self.injector.inject(delta)
+                                else:
+                                    LOGGER.info("Transcription result was empty")
+                            else:
+                                LOGGER.info("Transcription result was empty")
+                        else:
+                            emitted = item.emitted_prefix
+                            last_injected_delta = ""
+                            for update in self.transcriber.transcribe_stream(
+                                audio, self.config.audio.sample_rate
+                            ):
+                                delta = self._append_only_delta(emitted, update)
+                                if not delta:
+                                    continue
+                                if delta == last_injected_delta:
+                                    LOGGER.debug("Skipping duplicate streaming delta")
+                                    continue
+                                self.injector.inject(delta)
+                                emitted += delta
+                                last_injected_delta = delta
+                            if not emitted.strip():
+                                LOGGER.info("Transcription result was empty")
+                    else:
+                        text = self.transcriber.transcribe(audio, self.config.audio.sample_rate)
+                        if text:
+                            delta = self._append_only_delta(item.emitted_prefix, text)
+                            if delta:
+                                self.injector.inject(delta)
+                            else:
+                                LOGGER.info("Transcription result was empty")
                         else:
                             LOGGER.info("Transcription result was empty")
-                    else:
-                        LOGGER.info("Transcription result was empty")
             except Exception:
                 LOGGER.exception("Transcription pipeline failed")
             finally:
                 with self._state_lock:
                     self._transcription_in_progress = False
                 self._audio_queue.task_done()
+                if self._audio_queue.empty() and not self.recorder.is_recording:
+                    self._hide_activity_indicator()
 
     @staticmethod
     def _append_only_delta(previous: str, current: str) -> str:
@@ -369,6 +473,7 @@ class MoonshineFlowDaemon:
         if not self.recorder.is_recording:
             with self._state_lock:
                 self._recording_stale_since_monotonic = None
+                self._recording_started_at_monotonic = None
             return
         if self.recorder.is_stream_active():
             with self._state_lock:
@@ -376,19 +481,48 @@ class MoonshineFlowDaemon:
             return
 
         now = time.monotonic()
+        snapshot_samples = 0
+        try:
+            snapshot = self.recorder.snapshot()
+            snapshot_samples = int(snapshot.shape[0]) if snapshot.ndim else 0
+        except Exception:
+            LOGGER.debug(
+                "Failed to inspect recorder snapshot while stream looked inactive",
+                exc_info=True,
+            )
         with self._state_lock:
+            if self._recording_started_at_monotonic is None:
+                self._recording_started_at_monotonic = now
+            recording_for = now - self._recording_started_at_monotonic
+            if recording_for < _RECORDING_STARTUP_GRACE_SECONDS:
+                self._recording_stale_since_monotonic = None
+                LOGGER.debug(
+                    "Audio stream reported inactive during startup grace (%.2fs/%.2fs, samples=%s)",
+                    recording_for,
+                    _RECORDING_STARTUP_GRACE_SECONDS,
+                    snapshot_samples,
+                )
+                return
             stale_since = self._recording_stale_since_monotonic
             if stale_since is None:
                 self._recording_stale_since_monotonic = now
-                LOGGER.warning(
-                    "Detected inactive audio stream while recording; waiting for recovery grace"
+                LOGGER.debug(
+                    "Detected inactive audio stream while recording; waiting for recovery grace "
+                    "(samples=%s)",
+                    snapshot_samples,
                 )
                 return
             stale_for = now - stale_since
         if stale_for < _RECORDING_STALE_GRACE_SECONDS:
             return
 
-        LOGGER.warning("Recovering recorder after %.2fs inactive stream while recording", stale_for)
+        LOGGER.warning(
+            "Recovering recorder after %.2fs inactive stream while recording "
+            "(recording_for=%.2fs, samples=%s)",
+            stale_for,
+            recording_for,
+            snapshot_samples,
+        )
         try:
             with self._state_lock:
                 self._cancel_pending_stop_locked()
@@ -398,6 +532,7 @@ class MoonshineFlowDaemon:
         finally:
             with self._state_lock:
                 self._recording_stale_since_monotonic = None
+                self._recording_started_at_monotonic = None
                 self._last_release_at_monotonic = now
 
     def _release_idle_transcriber_resources_if_needed(self) -> None:
@@ -456,6 +591,7 @@ class MoonshineFlowDaemon:
             return
 
         self._stop_event.set()
+        self._hide_activity_indicator()
         if not self._transcriber_uses_external_server():
             LOGGER.info(
                 "💨 Backend session stopped (no external server): %s",
@@ -482,5 +618,6 @@ class MoonshineFlowDaemon:
                 close()
             except Exception:
                 LOGGER.debug("Failed to close transcriber cleanly", exc_info=True)
+        self._close_activity_indicator()
 
         LOGGER.info("Moonshine Flow daemon stopped")
