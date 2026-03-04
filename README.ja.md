@@ -72,6 +72,16 @@ brew reinstall python@3.11
 ./scripts/install_brew.sh
 ```
 
+同じエラーが続く場合、tap 側に古い Formula が残っている可能性があります。
+tap を更新してから再インストールしてください:
+
+```bash
+brew untap nakak10/ptarmigan-flow
+brew tap nakak10/ptarmigan-flow https://github.com/NAKAK10/ptarmigan-flow
+brew update
+brew reinstall ptarmigan-flow
+```
+
 更新・削除:
 ```bash
 brew upgrade ptarmigan-flow

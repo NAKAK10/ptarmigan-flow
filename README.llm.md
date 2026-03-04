@@ -125,6 +125,11 @@ Homebrew/runtime notes:
 - If install fails with `Broken Python installation, platform.mac_ver() returned an empty value`, run:
   1. `brew reinstall python@3.11`
   2. `./scripts/install_brew.sh`
+- If the same error persists, the tap may still have an older formula revision. Refresh tap metadata and reinstall:
+  1. `brew untap nakak10/ptarmigan-flow`
+  2. `brew tap nakak10/ptarmigan-flow https://github.com/NAKAK10/ptarmigan-flow`
+  3. `brew update`
+  4. `brew reinstall ptarmigan-flow`
 - If runtime is broken, startup attempts auto-repair under `$(brew --prefix)/var/ptarmigan-flow`.
 
 Architecture compatibility (Apple Silicon / Intel):
