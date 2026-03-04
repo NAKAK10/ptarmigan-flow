@@ -113,13 +113,12 @@ Correction dictionary:
 - Invalid dictionary TOML fails startup with diagnostics.
 
 ## Installation and Runtime Notes
-- Fast install helper: `./scripts/install_brew.sh`
-- Manual install: `brew install ptarmigan-flow`
+- Recommended install: `brew install ptarmigan-flow`
+- Optional helper (legacy migration + retry): `./scripts/install_brew.sh`
 - Update: `brew upgrade ptarmigan-flow`
 - Uninstall: `brew uninstall ptarmigan-flow`
 
 Homebrew/runtime notes:
-- In most cases, manual `brew tap` URL is unnecessary.
 - If Homebrew auto-update causes issues, use `HOMEBREW_NO_AUTO_UPDATE=1` only when needed.
 - If runtime is broken, startup attempts auto-repair under `$(brew --prefix)/var/ptarmigan-flow`.
 

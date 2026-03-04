@@ -5,6 +5,8 @@ TAP="nakak10/ptarmigan-flow"
 TAP_URL="https://github.com/NAKAK10/ptarmigan-flow"
 FORMULA="ptarmigan-flow"
 EXPECTED_REPO="nakak10/ptarmigan-flow"
+OLD_TAP="nakak10/moonshine-flow"
+OLD_FORMULA="moonshine-flow"
 TAP_EXISTS=0
 BREW_PREFIX=""
 
@@ -61,12 +63,58 @@ preflight_checks() {
   fi
 }
 
+migrate_from_legacy_name() {
+  if brew list --formula | grep -qx "${OLD_FORMULA}"; then
+    echo "Legacy formula ${OLD_FORMULA} is installed; uninstalling for migration..."
+    HOMEBREW_NO_AUTO_UPDATE=1 brew uninstall "${OLD_FORMULA}"
+  fi
+
+  if brew tap | grep -qx "${OLD_TAP}"; then
+    echo "Removing legacy tap ${OLD_TAP}..."
+    HOMEBREW_NO_AUTO_UPDATE=1 brew untap "${OLD_TAP}"
+  fi
+}
+
+recover_python311() {
+  echo "Attempting dependency recovery: python@3.11..."
+  if HOMEBREW_NO_AUTO_UPDATE=1 brew postinstall python@3.11; then
+    return 0
+  fi
+
+  echo "python@3.11 postinstall failed; reinstalling python@3.11..."
+  HOMEBREW_NO_AUTO_UPDATE=1 brew reinstall python@3.11
+}
+
+install_formula() {
+  echo "Installing ${FORMULA}..."
+  if HOMEBREW_NO_AUTO_UPDATE=1 brew install "${FORMULA}"; then
+    echo "Installed stable release: ${FORMULA}"
+    return 0
+  fi
+
+  echo "Stable install failed. Retrying once after dependency recovery..."
+  if recover_python311 && HOMEBREW_NO_AUTO_UPDATE=1 brew install "${FORMULA}"; then
+    echo "Installed stable release after recovery: ${FORMULA}"
+    return 0
+  fi
+
+  if HOMEBREW_NO_AUTO_UPDATE=1 brew info "${FORMULA}" >/dev/null 2>&1; then
+    echo "Stable install failed after recovery. Resolve the Homebrew error above and retry." >&2
+    return 1
+  fi
+
+  echo "Stable formula unavailable yet. Installing --HEAD..."
+  HOMEBREW_NO_AUTO_UPDATE=1 brew install --HEAD "${FORMULA}"
+  echo "Installed HEAD release: ${FORMULA}"
+}
+
 if ! command -v brew >/dev/null 2>&1; then
   echo "Homebrew is required. Install from https://brew.sh first." >&2
   exit 1
 fi
 
 preflight_checks
+migrate_from_legacy_name
 
 if brew tap | grep -qx "${TAP}"; then
   TAP_EXISTS=1
@@ -98,18 +146,7 @@ else
   echo "Tap ${TAP} is already configured."
 fi
 
-echo "Installing ${FORMULA}..."
-if HOMEBREW_NO_AUTO_UPDATE=1 brew install "${FORMULA}"; then
-  echo "Installed stable release: ${FORMULA}"
-else
-  if HOMEBREW_NO_AUTO_UPDATE=1 brew info "${FORMULA}" >/dev/null 2>&1; then
-    echo "Stable install failed. Resolve the Homebrew error above and retry." >&2
-    exit 1
-  fi
-  echo "Stable formula unavailable yet. Installing --HEAD..."
-  HOMEBREW_NO_AUTO_UPDATE=1 brew install --HEAD "${FORMULA}"
-  echo "Installed HEAD release: ${FORMULA}"
-fi
+install_formula
 
 ptarmigan-flow --help >/dev/null
 echo "Done. Verified command: ptarmigan-flow --help"

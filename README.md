@@ -49,12 +49,12 @@ For full command list and options:
 ## Installation (Homebrew)
 ### Fast path (recommended)
 ```bash
-./scripts/install_brew.sh
+brew install ptarmigan-flow
 ```
 
-### Manual
+### Optional helper (legacy migration + retry)
 ```bash
-brew install ptarmigan-flow
+./scripts/install_brew.sh
 ```
 
 Update / uninstall:

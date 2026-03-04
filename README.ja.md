@@ -49,12 +49,12 @@ ptarmigan-flow run
 ## インストール（Homebrew）
 ### 最短（推奨）
 ```bash
-./scripts/install_brew.sh
+brew install ptarmigan-flow
 ```
 
-### 手動
+### 任意ヘルパー（旧名移行 + リトライ付き）
 ```bash
-brew install ptarmigan-flow
+./scripts/install_brew.sh
 ```
 
 更新・削除:
