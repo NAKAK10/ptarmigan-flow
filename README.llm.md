@@ -120,6 +120,11 @@ Correction dictionary:
 
 Homebrew/runtime notes:
 - If Homebrew auto-update causes issues, use `HOMEBREW_NO_AUTO_UPDATE=1` only when needed.
+- During `brew install`, the formula validates `python@3.11` health using `platform.mac_ver()`.
+- If `/usr/local/opt/python@3.11/bin/python3.11` is broken, install automatically falls back to `/opt/homebrew/opt/python@3.11/bin/python3.11` (and `/opt/homebrew/opt/uv/bin/uv`) when available.
+- If install fails with `Broken Python installation, platform.mac_ver() returned an empty value`, run:
+  1. `brew reinstall python@3.11`
+  2. `./scripts/install_brew.sh`
 - If runtime is broken, startup attempts auto-repair under `$(brew --prefix)/var/ptarmigan-flow`.
 
 Architecture compatibility (Apple Silicon / Intel):

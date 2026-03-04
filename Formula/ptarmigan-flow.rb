@@ -20,9 +20,8 @@ class PtarmiganFlow < Formula
   def install
     libexec.install buildpath.children
 
-    python = Formula["python@3.11"].opt_bin/"python3.11"
-    uv = Formula["uv"].opt_bin/"uv"
-    ENV["UV_PYTHON"] = python
+    python, uv = resolve_python_and_uv!
+    ENV["UV_PYTHON"] = python.to_s
     ENV["UV_PYTHON_DOWNLOADS"] = "never"
     ENV["SETUPTOOLS_SCM_PRETEND_VERSION_FOR_PTARMIGAN_FLOW"] = version.to_s unless build.head?
     system uv, "sync", "--project", libexec, "--frozen"
@@ -40,6 +39,47 @@ class PtarmiganFlow < Formula
       SH
       chmod 0755, bin/command_name
     end
+  end
+
+  private
+
+  def resolve_python_and_uv!
+    primary_python = Formula["python@3.11"].opt_bin/"python3.11"
+    primary_uv = Formula["uv"].opt_bin/"uv"
+    return [primary_python, primary_uv] if python_is_healthy?(primary_python)
+
+    fallback_python = Pathname.new("/opt/homebrew/opt/python@3.11/bin/python3.11")
+    fallback_uv = Pathname.new("/opt/homebrew/opt/uv/bin/uv")
+    if fallback_python.exist? && fallback_uv.exist? && python_is_healthy?(fallback_python)
+      opoo <<~EOS
+        Detected broken python@3.11 at #{primary_python}; using fallback #{fallback_python}.
+      EOS
+      return [fallback_python, fallback_uv]
+    end
+
+    odie <<~EOS
+      Unable to locate a healthy Python 3.11 runtime for ptarmigan-flow install.
+      Checked:
+        - #{primary_python}
+        - #{fallback_python}
+
+      Try:
+        brew reinstall python@3.11
+        ./scripts/install_brew.sh
+    EOS
+  end
+
+  def python_is_healthy?(python)
+    return false unless python.exist?
+
+    probe = Utils.safe_popen_read(
+      python.to_s,
+      "-c",
+      "import platform; print(platform.mac_ver()[0])",
+    ).strip
+    !probe.empty?
+  rescue ErrorDuringExecution, Errno::ENOENT, RuntimeError
+    false
   end
 
   test do

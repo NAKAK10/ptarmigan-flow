@@ -59,6 +59,19 @@ brew install ptarmigan-flow
 ./scripts/install_brew.sh
 ```
 
+### インストール失敗時の対処
+`brew install ptarmigan-flow` が次のようなエラーで失敗する場合:
+`Broken Python installation, platform.mac_ver() returned an empty value`
+
+Formula は `/usr/local/opt/python@3.11` を検証し、利用可能なら
+`/opt/homebrew/opt/python@3.11` に自動フォールバックします。
+両方とも不健全な場合は、次で復旧して再実行してください:
+
+```bash
+brew reinstall python@3.11
+./scripts/install_brew.sh
+```
+
 更新・削除:
 ```bash
 brew upgrade ptarmigan-flow

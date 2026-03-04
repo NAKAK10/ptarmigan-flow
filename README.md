@@ -59,6 +59,19 @@ brew install ptarmigan-flow
 ./scripts/install_brew.sh
 ```
 
+### Troubleshooting install failures
+If `brew install ptarmigan-flow` fails with:
+`Broken Python installation, platform.mac_ver() returned an empty value`
+
+The formula now validates `/usr/local/opt/python@3.11` and automatically
+falls back to `/opt/homebrew/opt/python@3.11` when available.
+If both runtimes are unhealthy, repair Python and retry:
+
+```bash
+brew reinstall python@3.11
+./scripts/install_brew.sh
+```
+
 Update / uninstall:
 ```bash
 brew upgrade ptarmigan-flow

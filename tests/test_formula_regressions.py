@@ -28,3 +28,12 @@ def test_formula_installs_pflow_alias_wrapper() -> None:
 
     assert "%w[ptarmigan-flow pflow].each do |command_name|" in content
     assert 'shell_output("#{bin}/pflow --help")' in content
+
+
+def test_formula_has_python_health_probe_and_fallback() -> None:
+    formula_path = Path(__file__).resolve().parents[1] / "Formula" / "ptarmigan-flow.rb"
+    content = formula_path.read_text(encoding="utf-8")
+
+    assert "def python_is_healthy?(python)" in content
+    assert "/opt/homebrew/opt/python@3.11/bin/python3.11" in content
+    assert "brew reinstall python@3.11" in content
