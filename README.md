@@ -1,3 +1,7 @@
+<div align="center">
+  <img src="https://github.com/user-attachments/assets/2d14cfd0-ec79-4b31-b634-e7c995528726" alt="ptarmigan flow banner" width="800">
+</div>
+
 # ptarmigan-flow
 
 A push-to-talk transcription daemon for macOS.
