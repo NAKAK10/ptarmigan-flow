@@ -29,9 +29,7 @@ ptarmigan-flow run
 
 ## 利用サンプル動画
 
-<video src="./assets/usage-sample.mov" controls muted playsinline>
-  お使いのブラウザは video タグに対応していません。
-</video>
+https://github.com/user-attachments/assets/f763be1b-54af-4342-886d-016837be7884
 
 ## コマンド一覧
 ### 主要コマンド
