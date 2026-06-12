@@ -21,30 +21,80 @@ def _app_version() -> str:
 block_cipher = None
 ROOT = Path(SPECPATH).parents[1]
 APP_VERSION = _app_version()
-hiddenimports = collect_submodules("ptarmigan_flow")
 datas = [(str(ROOT / "config.example.toml"), ".")]
 binaries = []
 
-# These packages ship non-Python assets (Metal shaders, dylibs, tokenizer data)
-# that pyinstaller-hooks-contrib has no hooks for; without collect_all the
-# bundled app fails at runtime (e.g. mlx cannot load mlx.metallib).
-for package in (
+OPTIONAL_BACKEND_MODULE_PREFIXES = (
+    "ptarmigan_flow.stt.granite_mlx",
+    "ptarmigan_flow.stt.granite_transformers",
+    "ptarmigan_flow.stt.mlx_whisper",
+    "ptarmigan_flow.stt.voxtral_mlx",
+    "ptarmigan_flow.stt.voxtral_transformers",
+    "ptarmigan_flow.stt._test_support",
+)
+
+OPTIONAL_BACKEND_PACKAGE_EXCLUDES = (
     "mlx",
-    "mlx_whisper",
     "mlx_audio",
+    "mlx_whisper",
     "voxmlx",
-    "moonshine_voice",
     "mistral_common",
-):
+    "torch",
+    "transformers",
+    "scipy",
+    "sklearn",
+    "numba",
+    "llvmlite",
+    "pytest",
+)
+
+RELEASE_BACKEND_PACKAGES = (
+    "moonshine_voice",
+)
+
+MOONSHINE_EXCLUDED_BASENAMES = {
+    "libmoonshine.so",
+    "beckett.wav",
+    "two_cities.wav",
+}
+
+MOONSHINE_EXCLUDED_HIDDENIMPORTS = {
+    "moonshine_voice.libmoonshine",
+}
+
+
+def _keep_release_module(name: str) -> bool:
+    return not name.startswith(OPTIONAL_BACKEND_MODULE_PREFIXES)
+
+
+def _drop_unneeded_moonshine_entries(entries):
+    return [
+        entry
+        for entry in entries
+        if Path(entry[0]).name not in MOONSHINE_EXCLUDED_BASENAMES
+    ]
+
+
+hiddenimports = [
+    name
+    for name in collect_submodules("ptarmigan_flow")
+    if _keep_release_module(name)
+]
+
+# The downloadable app is intentionally a compact Moonshine build. Larger
+# MLX/Granite/Voxtral/Torch backends remain available through the CLI/Homebrew
+# environment, but are not shipped in this small app artifact.
+for package in RELEASE_BACKEND_PACKAGES:
     pkg_datas, pkg_binaries, pkg_hiddenimports = collect_all(package)
     if package == "moonshine_voice":
         # moonshine-voice macOS wheels (≤0.0.59) ship a Linux ELF named
-        # libmoonshine.so due to a packaging bug. Exclude it from binaries
-        # so PyInstaller does not attempt Mach-O analysis on an ELF file.
-        pkg_binaries = [
-            (src, dst)
-            for src, dst in pkg_binaries
-            if not os.path.basename(src).startswith("libmoonshine")
+        # libmoonshine.so due to a packaging bug. Exclude it from datas,
+        # binaries, and hidden imports so PyInstaller never attempts Mach-O
+        # analysis on it.
+        pkg_datas = _drop_unneeded_moonshine_entries(pkg_datas)
+        pkg_binaries = _drop_unneeded_moonshine_entries(pkg_binaries)
+        pkg_hiddenimports = [
+            name for name in pkg_hiddenimports if name not in MOONSHINE_EXCLUDED_HIDDENIMPORTS
         ]
     datas += pkg_datas
     binaries += pkg_binaries
@@ -59,7 +109,10 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=[
+        *OPTIONAL_BACKEND_MODULE_PREFIXES,
+        *OPTIONAL_BACKEND_PACKAGE_EXCLUDES,
+    ],
     noarchive=False,
 )
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)

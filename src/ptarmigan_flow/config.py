@@ -11,8 +11,6 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from ptarmigan_flow.stt.model_families import GRANITE_HF_MODEL_ID
-
 LOGGER = logging.getLogger(__name__)
 
 
@@ -90,7 +88,7 @@ class SttVLLMConfig(BaseModel):
 class SttConfig(BaseModel):
     """Speech-to-text backend configuration."""
 
-    model: str = f"granite:{GRANITE_HF_MODEL_ID}"
+    model: str = "moonshine:tiny"
     idle_shutdown_seconds: float = 30.0
     vllm: SttVLLMConfig = Field(default_factory=SttVLLMConfig)
 

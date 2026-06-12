@@ -8,13 +8,13 @@ language = "en"
 [stt]
 # format: "<backend>:<model>"
 # examples:
-#   moonshine:base
 #   moonshine:tiny
+#   moonshine:base
 #   granite:ibm-granite/granite-4.0-1b-speech
 #   mlx:openai/whisper-large-v3-turbo
 #   voxtral:mistralai/Voxtral-Mini-4B-Realtime-2602
 #   vllm:mistralai/Voxtral-Mini-4B-Realtime-2602
-model = "granite:ibm-granite/granite-4.0-1b-speech"
+model = "moonshine:tiny"
 # Auto-stop backend resources after this many idle seconds.
 # 0 disables idle shutdown.
 idle_shutdown_seconds = 30.0

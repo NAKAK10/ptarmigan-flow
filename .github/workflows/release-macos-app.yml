@@ -64,10 +64,13 @@ jobs:
           set -euo pipefail
           # moonshine-voice only ships macosx_15_0_* wheels; our Python binary
           # reports macosx_14_0_arm64 (its compile-time MACOSX_DEPLOYMENT_TARGET)
-          # even though the runner OS is macOS 15. Sync everything else first,
-          # then manually fetch and repackage moonshine-voice as py3-none-any so
-          # uv will install it (the dylibs work fine at runtime on macOS 15).
-          uv sync --extra dev --no-install-package moonshine-voice
+          # even though the runner OS is macOS 15. Build the app from a minimal
+          # release venv instead of the full project/dev dependency set, then
+          # manually fetch and repackage moonshine-voice as py3-none-any so uv
+          # will install it (the dylibs work fine at runtime on macOS 15).
+          uv venv .release-venv --python 3.11 --managed-python
+          uv pip install --python .release-venv/bin/python \
+            -r packaging/macos/requirements-release.txt
 
           MOONSHINE_VER=$(awk -F'"' '/name = "moonshine-voice"/{f=1} f && /version = /{print $2; exit}' uv.lock)
           echo "Fetching moonshine-voice==$MOONSHINE_VER for macosx_15_0_arm64"
@@ -120,7 +123,9 @@ jobs:
           print(f"Created: {dst}")
           PYEOF
 
-          uv pip install "/tmp/mw/moonshine_voice-${MOONSHINE_VER}-py3-none-any.whl" --no-deps
+          uv pip install --python .release-venv/bin/python \
+            "/tmp/mw/moonshine_voice-${MOONSHINE_VER}-py3-none-any.whl" \
+            --no-deps
 
       - name: Build PyInstaller app
         env:
@@ -128,10 +133,7 @@ jobs:
         run: |
           set -euo pipefail
           export APP_VERSION="${TAG_NAME#v}"
-          # --no-sync: skip venv re-sync so uv does not reinstall moonshine-voice
-          # from the lock file (which would bring back the Linux ELF libmoonshine.so
-          # that we excluded during the Install dependencies step).
-          uv run --no-sync pyinstaller --clean --noconfirm packaging/macos/PtarmiganFlow.spec
+          .release-venv/bin/pyinstaller --clean --noconfirm packaging/macos/PtarmiganFlow.spec
 
       - name: Import Developer ID Application certificate
         env:

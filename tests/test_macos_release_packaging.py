@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import json
+import os
+import subprocess
+import sys
 import tomllib
 from pathlib import Path
 
@@ -42,13 +46,69 @@ def test_pyinstaller_spec_builds_ptarmiganflow_app() -> None:
     assert "target_arch='arm64'" in spec
 
 
+def test_pyinstaller_spec_collects_only_release_backend_packages() -> None:
+    spec = (ROOT / "packaging/macos/PtarmiganFlow.spec").read_text(encoding="utf-8")
+
+    assert "RELEASE_BACKEND_PACKAGES" in spec
+    release_packages_block = spec.split("RELEASE_BACKEND_PACKAGES", 1)[1].split(")", 1)[0]
+    assert '"moonshine_voice"' in spec
+    assert '"mlx_audio"' not in release_packages_block
+    assert '"mlx_whisper"' not in release_packages_block
+    assert '"voxmlx"' not in release_packages_block
+    assert '"mistral_common"' not in release_packages_block
+    assert '"torch"' in spec
+    assert '"transformers"' in spec
+    assert "OPTIONAL_BACKEND_MODULE_PREFIXES" in spec
+    assert "ptarmigan_flow.stt.granite_mlx" in spec
+    assert "ptarmigan_flow.stt.granite_transformers" in spec
+    assert "MOONSHINE_EXCLUDED_HIDDENIMPORTS" in spec
+    assert "moonshine_voice.libmoonshine" in spec
+
+
+def test_stt_factory_import_does_not_import_optional_backend_modules() -> None:
+    code = """
+import json
+import sys
+import ptarmigan_flow.stt.factory  # noqa: F401
+
+optional_modules = [
+    "ptarmigan_flow.stt.granite_mlx",
+    "ptarmigan_flow.stt.granite_transformers",
+    "ptarmigan_flow.stt.mlx_whisper",
+    "ptarmigan_flow.stt.voxtral_mlx",
+    "ptarmigan_flow.stt.voxtral_transformers",
+]
+loaded = [name for name in optional_modules if name in sys.modules]
+print(json.dumps(loaded))
+raise SystemExit(1 if loaded else 0)
+""".strip()
+    env = {**os.environ, "PYTHONPATH": str(ROOT / "src")}
+
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    loaded = json.loads(result.stdout.strip() or "[]")
+    assert result.returncode == 0, f"optional backend modules were imported: {loaded}"
+
+
 def test_release_workflow_builds_notarizes_and_uploads_draft_release() -> None:
     workflow = (ROOT / ".github/workflows/release-macos-app.yml").read_text(encoding="utf-8")
 
     assert "workflow_dispatch" in workflow
     assert "tag:" in workflow
-    assert "macos-14" in workflow
+    assert "macos-15" in workflow
     assert "pyinstaller" in workflow.lower()
+    assert "uv sync --extra dev" not in workflow
+    assert "packaging/macos/requirements-release.txt" in workflow
+    assert ".release-venv" in workflow
+    assert "uv venv .release-venv --python 3.11 --managed-python" in workflow
+    assert "uv pip install --python .release-venv" in workflow
     assert "Validate Apple release secrets" in workflow
     assert "Missing GitHub secret:" in workflow
     assert "Developer ID Application" in workflow

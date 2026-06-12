@@ -73,6 +73,13 @@ codesigns it with the Developer ID certificate, notarizes it with Apple,
 staples the notarization ticket, zips it as
 `PtarmiganFlow-macos-arm64.zip`, and attaches the zip to a draft GitHub Release.
 
+The downloadable app is a compact Moonshine build. It uses the release-only
+dependency list in `packaging/macos/requirements-release.txt`, defaults new
+configs to `stt.model = "moonshine:tiny"`, and does not ship the optional
+Torch, Transformers, MLX, MLX-audio, VoxMLX, Granite, or Voxtral runtime
+stacks. Those larger backends remain available through the normal CLI/Homebrew
+environment.
+
 Publish the draft release only after downloading the zip and checking the app on
 a clean Apple Silicon Mac. Publishing the release keeps the existing Homebrew
 formula update workflow responsible for formula changes.

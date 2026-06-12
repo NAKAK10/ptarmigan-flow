@@ -5,20 +5,7 @@ from __future__ import annotations
 import platform
 
 from ptarmigan_flow.stt.base import SpeechToTextBackend
-from ptarmigan_flow.stt.granite_mlx import GraniteMLXSettings, GraniteMLXSTTBackend
-from ptarmigan_flow.stt.granite_transformers import (
-    GraniteTransformersSettings,
-    GraniteTransformersSTTBackend,
-)
-from ptarmigan_flow.stt.mlx_whisper import MLXWhisperBackendSettings, MLXWhisperSTTBackend
 from ptarmigan_flow.stt.model_families import WHISPER_HF_MODEL_ID
-from ptarmigan_flow.stt.moonshine import MoonshineSTTBackend
-from ptarmigan_flow.stt.vllm_realtime import VLLMRealtimeBackendSettings, VLLMRealtimeSTTBackend
-from ptarmigan_flow.stt.voxtral_mlx import VoxtralMLXSettings, VoxtralMLXSTTBackend
-from ptarmigan_flow.stt.voxtral_transformers import (
-    VoxtralTransformersSettings,
-    VoxtralTransformersSTTBackend,
-)
 from ptarmigan_flow.text_processing.interfaces import NoopTextPostProcessor, TextPostProcessor
 
 
@@ -53,6 +40,8 @@ def create_stt_backend(
     processor = post_processor or NoopTextPostProcessor()
 
     if prefix == "moonshine":
+        from ptarmigan_flow.stt.moonshine import MoonshineSTTBackend
+
         if model_id not in {"tiny", "base"}:
             raise ValueError("moonshine model must be one of: tiny, base")
         model_cfg = getattr(config, "model", None)
@@ -69,6 +58,11 @@ def create_stt_backend(
         )
 
     if prefix == "vllm":
+        from ptarmigan_flow.stt.vllm_realtime import (
+            VLLMRealtimeBackendSettings,
+            VLLMRealtimeSTTBackend,
+        )
+
         language = str(getattr(config, "language", "en")).strip().lower() or "en"
         audio_cfg = getattr(config, "audio", None)
         stt_cfg = getattr(config, "stt", None)
@@ -91,12 +85,19 @@ def create_stt_backend(
         audio_cfg = getattr(config, "audio", None)
         trailing_silence_seconds = _effective_trailing_silence_seconds_for_realtime(audio_cfg)
         if _is_macos_arm64():
+            from ptarmigan_flow.stt.voxtral_mlx import VoxtralMLXSettings, VoxtralMLXSTTBackend
+
             settings = VoxtralMLXSettings(
                 model_id=model_id,
                 language=language,
                 trailing_silence_seconds=trailing_silence_seconds,
             )
             return VoxtralMLXSTTBackend(settings, post_processor=processor)
+        from ptarmigan_flow.stt.voxtral_transformers import (
+            VoxtralTransformersSettings,
+            VoxtralTransformersSTTBackend,
+        )
+
         settings = VoxtralTransformersSettings(
             model_id=model_id,
             language=language,
@@ -109,12 +110,19 @@ def create_stt_backend(
         audio_cfg = getattr(config, "audio", None)
         trailing_silence_seconds = float(getattr(audio_cfg, "trailing_silence_seconds", 1.0))
         if _is_macos_arm64():
+            from ptarmigan_flow.stt.granite_mlx import GraniteMLXSettings, GraniteMLXSTTBackend
+
             settings = GraniteMLXSettings(
                 model_id=model_id,
                 language=language,
                 trailing_silence_seconds=trailing_silence_seconds,
             )
             return GraniteMLXSTTBackend(settings, post_processor=processor)
+        from ptarmigan_flow.stt.granite_transformers import (
+            GraniteTransformersSettings,
+            GraniteTransformersSTTBackend,
+        )
+
         settings = GraniteTransformersSettings(
             model_id=model_id,
             language=language,
@@ -127,6 +135,11 @@ def create_stt_backend(
         machine = platform.machine().strip().lower()
         if system != "darwin" or machine not in {"arm64", "aarch64"}:
             raise ValueError("mlx backend is supported only on macOS arm64")
+        from ptarmigan_flow.stt.mlx_whisper import (
+            MLXWhisperBackendSettings,
+            MLXWhisperSTTBackend,
+        )
+
         language = str(getattr(config, "language", "en")).strip().lower() or "en"
         audio_cfg = getattr(config, "audio", None)
         trailing_silence_seconds = float(getattr(audio_cfg, "trailing_silence_seconds", 1.0))

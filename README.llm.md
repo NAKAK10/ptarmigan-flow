@@ -137,7 +137,8 @@ Correction dictionary:
 - `pflow update` runs `brew upgrade ptarmigan-flow` and refreshes the installed launch agent when present.
 
 Release app notes:
-- The downloadable Mac app is built by `.github/workflows/release-macos-app.yml` with PyInstaller on `macos-14`.
+- The downloadable Mac app is built by `.github/workflows/release-macos-app.yml` with PyInstaller on `macos-15`.
+- The app release build uses `packaging/macos/requirements-release.txt` and intentionally ships the compact Moonshine runtime only. Optional Torch/Transformers/MLX/MLX-audio/VoxMLX backends remain for the normal CLI/Homebrew environment.
 - The workflow signs with a Developer ID Application certificate, notarizes, staples, zips `PtarmiganFlow.app`, and attaches `PtarmiganFlow-macos-arm64.zip` to a draft GitHub Release.
 - The app setup window checks Microphone, Accessibility, and Input Monitoring permissions and provides buttons for permission requests, login startup, restart, and config editing.
 - This path is separate from the Homebrew `install-app-bundle` runtime wrapper.
