@@ -27,8 +27,7 @@ binaries = []
 
 # These packages ship non-Python assets (Metal shaders, dylibs, tokenizer data)
 # that pyinstaller-hooks-contrib has no hooks for; without collect_all the
-# bundled app fails at runtime (e.g. mlx cannot load mlx.metallib, moonshine
-# cannot load libmoonshine.dylib).
+# bundled app fails at runtime (e.g. mlx cannot load mlx.metallib).
 for package in (
     "mlx",
     "mlx_whisper",
@@ -38,6 +37,15 @@ for package in (
     "mistral_common",
 ):
     pkg_datas, pkg_binaries, pkg_hiddenimports = collect_all(package)
+    if package == "moonshine_voice":
+        # moonshine-voice macOS wheels (≤0.0.59) ship a Linux ELF named
+        # libmoonshine.so due to a packaging bug. Exclude it from binaries
+        # so PyInstaller does not attempt Mach-O analysis on an ELF file.
+        pkg_binaries = [
+            (src, dst, typ)
+            for src, dst, typ in pkg_binaries
+            if not os.path.basename(src).startswith("libmoonshine")
+        ]
     datas += pkg_datas
     binaries += pkg_binaries
     hiddenimports += pkg_hiddenimports
