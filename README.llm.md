@@ -142,6 +142,7 @@ Release app notes:
 - The app setup window checks Microphone, Accessibility, and Input Monitoring permissions and provides buttons for permission requests, login startup, restart, and config editing.
 - This path is separate from the Homebrew `install-app-bundle` runtime wrapper.
 - Required GitHub Secrets: `APPLE_CERTIFICATE_BASE64`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_TEAM_ID`, `APPLE_ID`, and `APPLE_APP_SPECIFIC_PASSWORD`.
+- Release preparation details for Pages and Apple signing secrets live in `docs/release-prep.md`.
 
 Homebrew/runtime notes:
 - If Homebrew auto-update causes issues, use `HOMEBREW_NO_AUTO_UPDATE=1` only when needed.

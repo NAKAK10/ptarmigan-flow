@@ -23,3 +23,22 @@ def test_readmes_document_distribution_paths() -> None:
         assert "Microphone" in text or "マイク" in text
         assert "Accessibility" in text or "アクセシビリティ" in text
         assert "Input Monitoring" in text or "入力監視" in text
+        assert "docs/release-prep.md" in text
+
+
+def test_release_prep_doc_lists_required_secrets_and_commands() -> None:
+    text = Path("docs/release-prep.md").read_text(encoding="utf-8")
+
+    for secret in [
+        "APPLE_CERTIFICATE_BASE64",
+        "APPLE_CERTIFICATE_PASSWORD",
+        "APPLE_TEAM_ID",
+        "APPLE_ID",
+        "APPLE_APP_SPECIFIC_PASSWORD",
+    ]:
+        assert secret in text
+
+    assert "gh secret set" in text
+    assert "base64" in text
+    assert "release-macos-app.yml" in text
+    assert "pages.yml" in text

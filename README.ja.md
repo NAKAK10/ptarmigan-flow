@@ -38,6 +38,8 @@ https://github.com/NAKAK10/ptarmigan-flow/releases/latest/download/PtarmiganFlow
 
 `PtarmiganFlow-macos-arm64.zip` を展開し、`PtarmiganFlow.app` をアプリケーションフォルダへ移動して開いてください。セットアップ画面からマイク、アクセシビリティ、入力監視の権限状態を確認できます。
 
+Pages と Apple 署名 secret を含むメンテナー向け配布準備は [docs/release-prep.md](docs/release-prep.md) にまとめています。
+
 ## 利用サンプル動画
 
 https://github.com/user-attachments/assets/f763be1b-54af-4342-886d-016837be7884

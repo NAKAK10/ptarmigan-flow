@@ -38,6 +38,8 @@ https://github.com/NAKAK10/ptarmigan-flow/releases/latest/download/PtarmiganFlow
 
 Unzip `PtarmiganFlow-macos-arm64.zip`, move `PtarmiganFlow.app` to Applications, open it, and use the setup window to check Microphone, Accessibility, and Input Monitoring permissions.
 
+Maintainer release setup, including Pages and Apple signing secrets, is documented in [docs/release-prep.md](docs/release-prep.md).
+
 ## Usage Sample Video
 
 https://github.com/user-attachments/assets/f763be1b-54af-4342-886d-016837be7884
