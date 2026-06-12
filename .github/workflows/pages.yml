@@ -31,6 +31,9 @@ jobs:
           mkdir -p _site/assets
           cp -r site/* _site/
 
+      - name: Install ffmpeg
+        run: sudo apt-get install -y ffmpeg
+
       - name: Transcode demo video
         run: |
           set -euo pipefail
