@@ -42,8 +42,8 @@ for package in (
         # libmoonshine.so due to a packaging bug. Exclude it from binaries
         # so PyInstaller does not attempt Mach-O analysis on an ELF file.
         pkg_binaries = [
-            (src, dst, typ)
-            for src, dst, typ in pkg_binaries
+            (src, dst)
+            for src, dst in pkg_binaries
             if not os.path.basename(src).startswith("libmoonshine")
         ]
     datas += pkg_datas
