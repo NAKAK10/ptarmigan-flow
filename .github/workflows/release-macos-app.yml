@@ -59,13 +59,35 @@ jobs:
       - name: Setup uv
         uses: astral-sh/setup-uv@v5
 
-      - name: Install Python 3.11
-        run: uv python install 3.11
-
       - name: Install dependencies
-        env:
-          MACOSX_DEPLOYMENT_TARGET: "15.0"
-        run: uv sync --extra dev
+        run: |
+          set -euo pipefail
+          # moonshine-voice only ships macosx_15_0_* wheels; our Python binary
+          # reports macosx_14_0_arm64 (its compile-time MACOSX_DEPLOYMENT_TARGET)
+          # even though the runner OS is macOS 15. Sync everything else first,
+          # then manually fetch and repackage moonshine-voice as py3-none-any so
+          # uv will install it (the dylibs work fine at runtime on macOS 15).
+          uv sync --extra dev --no-install-package moonshine-voice
+
+          MOONSHINE_VER=$(awk -F'"' '/name = "moonshine-voice"/{f=1} f && /version = /{print $2; exit}' uv.lock)
+          echo "Fetching moonshine-voice==$MOONSHINE_VER for macosx_15_0_arm64"
+
+          mkdir -p /tmp/mw/ex
+          python3 -m pip download \
+            "moonshine-voice==$MOONSHINE_VER" \
+            --platform macosx_15_0_arm64 --python-version 311 --only-binary :all: \
+            -d /tmp/mw
+
+          # Strip the macOS platform tag so uv/pip accepts the wheel anywhere.
+          # Content (dylibs) is unchanged; macOS 15 arm64 runner runs them fine.
+          cd /tmp/mw/ex
+          unzip -q "$(ls /tmp/mw/moonshine_voice-*.whl | head -1)"
+          find . -name "WHEEL" -exec sed -i '' 's/^Tag:.*$/Tag: py3-none-any/' {} \;
+          find . -name "RECORD" -delete
+          zip -qr "/tmp/mw/moonshine_voice-${MOONSHINE_VER}-py3-none-any.whl" .
+          cd -
+
+          uv pip install "/tmp/mw/moonshine_voice-${MOONSHINE_VER}-py3-none-any.whl" --no-deps
 
       - name: Build PyInstaller app
         env:
