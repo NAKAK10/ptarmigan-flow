@@ -210,7 +210,9 @@ def test_cmd_list_model_hub_search_empty_results_returns_0(
     )
 
     result = commands.cmd_list_model(
-        argparse.Namespace(config=str(cfg_path), hub_search="no-such-model", backend="mlx", limit=20)
+        argparse.Namespace(
+            config=str(cfg_path), hub_search="no-such-model", backend="mlx", limit=20
+        )
     )
 
     assert result == 0

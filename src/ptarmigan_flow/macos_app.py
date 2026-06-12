@@ -34,18 +34,32 @@ def _permission_status(report: PermissionReport, key: str) -> str:
 
 
 def _dispatch_cli_args(argv: list[str]) -> int | None:
-    """Route launchd's PyInstaller fallback argv into the normal CLI."""
-    if len(argv) < 2 or argv[:2] != ["-m", "ptarmigan_flow.cli"]:
+    """Route `<bundle exe> -m <module>` argv into the matching in-process entry point.
+
+    The frozen executable stands in for the Python interpreter wherever the
+    daemon builds child commands as ``[sys.executable, "-m", <module>, ...]``
+    (launchd fallback and the activity-overlay subprocess).
+    """
+    if len(argv) < 2 or argv[0] != "-m":
         return None
 
-    from ptarmigan_flow.cli import main as cli_main
+    module_name = argv[1]
+    if module_name == "ptarmigan_flow.cli":
+        from ptarmigan_flow.cli import main as cli_main
 
-    original_argv = sys.argv[:]
-    try:
-        sys.argv = [original_argv[0], *argv[2:]]
-        return int(cli_main())
-    finally:
-        sys.argv = original_argv
+        original_argv = sys.argv[:]
+        try:
+            sys.argv = [original_argv[0], *argv[2:]]
+            return int(cli_main())
+        finally:
+            sys.argv = original_argv
+
+    if module_name == "ptarmigan_flow.activity_overlay":
+        from ptarmigan_flow.activity_overlay import main as overlay_main
+
+        return int(overlay_main(argv[2:]))
+
+    return None
 
 
 def _run_appkit_app() -> int:

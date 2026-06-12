@@ -1,19 +1,52 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+import os
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _dist_version
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_submodules
+from PyInstaller.utils.hooks import collect_all, collect_submodules
+
+
+def _app_version() -> str:
+    env_version = os.environ.get("APP_VERSION")
+    if env_version:
+        return env_version
+    try:
+        return _dist_version("ptarmigan-flow")
+    except PackageNotFoundError:
+        return "0.0.0"
 
 
 block_cipher = None
 ROOT = Path(SPECPATH).parents[1]
+APP_VERSION = _app_version()
 hiddenimports = collect_submodules("ptarmigan_flow")
+datas = [(str(ROOT / "config.example.toml"), ".")]
+binaries = []
+
+# These packages ship non-Python assets (Metal shaders, dylibs, tokenizer data)
+# that pyinstaller-hooks-contrib has no hooks for; without collect_all the
+# bundled app fails at runtime (e.g. mlx cannot load mlx.metallib, moonshine
+# cannot load libmoonshine.dylib).
+for package in (
+    "mlx",
+    "mlx_whisper",
+    "mlx_audio",
+    "voxmlx",
+    "moonshine_voice",
+    "mistral_common",
+):
+    pkg_datas, pkg_binaries, pkg_hiddenimports = collect_all(package)
+    datas += pkg_datas
+    binaries += pkg_binaries
+    hiddenimports += pkg_hiddenimports
 
 a = Analysis(
     [str(ROOT / "src/ptarmigan_flow/macos_app.py")],
     pathex=[str(ROOT)],
-    binaries=[],
-    datas=[(str(ROOT / "config.example.toml"), ".")],
+    binaries=binaries,
+    datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
@@ -54,8 +87,8 @@ app = BUNDLE(
     info_plist={
         "CFBundleDisplayName": "PtarmiganFlow",
         "CFBundleName": "PtarmiganFlow",
-        "CFBundleShortVersionString": "0.0.0",
-        "CFBundleVersion": "0.0.0",
+        "CFBundleShortVersionString": APP_VERSION,
+        "CFBundleVersion": APP_VERSION,
         "LSMinimumSystemVersion": "14.0",
         "NSMicrophoneUsageDescription": "PtarmiganFlow records audio only while the hotkey is held.",
         "NSAppleEventsUsageDescription": "PtarmiganFlow sends text to the active app when you release the hotkey.",

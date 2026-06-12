@@ -65,7 +65,12 @@ jobs:
         run: uv sync --extra dev
 
       - name: Build PyInstaller app
-        run: uv run pyinstaller --clean --noconfirm packaging/macos/PtarmiganFlow.spec
+        env:
+          TAG_NAME: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          export APP_VERSION="${TAG_NAME#v}"
+          uv run pyinstaller --clean --noconfirm packaging/macos/PtarmiganFlow.spec
 
       - name: Import Developer ID Application certificate
         env:
