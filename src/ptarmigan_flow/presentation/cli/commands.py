@@ -48,6 +48,7 @@ from ptarmigan_flow.application.use_cases.load_corrections import (
     load_corrections_with_diagnostics as load_corrections_with_diagnostics_use_case,
 )
 from ptarmigan_flow.config import (
+    AppConfig,
     InputDevicePolicy,
     VLLMStartupPreset,
     default_config_path,
@@ -79,6 +80,10 @@ from ptarmigan_flow.permissions import (
     reset_app_bundle_tcc,
 )
 from ptarmigan_flow.stt.factory import create_stt_backend, parse_stt_model
+from ptarmigan_flow.stt.model_catalog import (
+    search_hub_models,
+    verified_model_entries,
+)
 from ptarmigan_flow.stt.model_families import (
     GRANITE_HF_MODEL_ID,
     WHISPER_HF_MODEL_ID,
@@ -829,16 +834,97 @@ def _log_stt_startup_download_if_needed(model_token: str) -> None:
 
 
 def _stt_model_presets() -> list[str]:
-    return [
-        "moonshine:tiny",
-        "moonshine:base",
-        f"granite:{GRANITE_HF_MODEL_ID}",
-        f"mlx:{WHISPER_HF_MODEL_ID}",
-        "voxtral:mistralai/Voxtral-Mini-4B-Realtime-2602",
-    ]
+    return [entry.token for entry in verified_model_entries()]
+
+
+def _cmd_list_model_hub_search(args: argparse.Namespace, query: str) -> int:
+    backend = getattr(args, "backend", None)
+    if not backend:
+        print(
+            _yellow(
+                "Error: --hub-search requires --backend (granite|mlx|voxtral|vllm).",
+                stderr=True,
+            ),
+            file=sys.stderr,
+        )
+        return 2
+
+    limit = getattr(args, "limit", None) or 20
+    try:
+        hub_entries = search_hub_models(query, backend=backend, limit=limit)
+    except RuntimeError as exc:
+        print(_yellow(f"Warning: {exc}", stderr=True), file=sys.stderr)
+        return 2
+
+    if not hub_entries:
+        print(f"No public Hugging Face Hub models matched query: {query}")
+        return 0
+
+    config_path = _resolve_config_path(args.config)
+    if config_path.exists():
+        current_model = _stt_model_from_config(load_config(config_path))
+    else:
+        current_model = AppConfig().stt.model
+    default_choice: int | None = None
+
+    print(f"Config: {config_path}")
+    print(f"Current stt.model: {current_model}")
+    print(f"Hugging Face Hub results for '{query}' (backend: {backend}):")
+    for menu_index, entry in enumerate(hub_entries, start=1):
+        marker = ""
+        if entry.token == current_model:
+            marker = " (current)"
+            default_choice = menu_index
+        downloaded_text = f" (downloaded: {_stt_model_downloaded_display(entry.token)})"
+        print(f"  {menu_index}. {entry.token} [unverified Hub result]{downloaded_text}{marker}")
+
+    if not _is_interactive_session():
+        return 0
+
+    print("Select STT model to save into config:")
+    try:
+        while True:
+            prompt_default = "" if default_choice is None else str(default_choice)
+            raw = input(f"Select number [{prompt_default}]: ").strip()
+            if raw == "":
+                if default_choice is None:
+                    print("Please choose a number from the list.")
+                    continue
+                selected = default_choice
+                _print_keep(str(default_choice))
+            elif raw.isdigit():
+                selected = int(raw)
+            else:
+                print(f"Please choose a number between 1 and {len(hub_entries)}.")
+                continue
+
+            if 1 <= selected <= len(hub_entries):
+                break
+            print(f"Please choose a number between 1 and {len(hub_entries)}.")
+    except (EOFError, KeyboardInterrupt):
+        print("\nCancelled.")
+        return 130
+
+    selected_model = hub_entries[selected - 1].token
+    try:
+        parse_stt_model(selected_model)
+    except ValueError as exc:
+        print(_yellow(f"Warning: {exc}", stderr=True), file=sys.stderr)
+        return 2
+
+    config = load_config(config_path)
+    config.stt.model = selected_model
+    write_config(config_path, config)
+    print(_green(f"Updated config: {config_path}"))
+    print(f"stt.model = {config.stt.model}")
+    return 0
 
 
 def cmd_list_model(args: argparse.Namespace) -> int:
+    hub_query = getattr(args, "hub_search", None)
+    if hub_query is not None:
+        return _cmd_list_model_hub_search(args, hub_query)
+
     if not _is_interactive_session():
         print("`pflow list model` requires an interactive terminal.", file=sys.stderr)
         return 2
@@ -853,6 +939,12 @@ def cmd_list_model(args: argparse.Namespace) -> int:
     print(f"Config: {config_path}")
     print(f"Current stt.model: {current_model}")
     print(f"Current downloaded: {_stt_model_downloaded_display(current_model)}")
+    print(
+        _dim(
+            "Hint: `pflow list model --hub-search <query> --backend <backend>` "
+            "searches Hugging Face Hub."
+        )
+    )
     print("Select STT model to save into config:")
     for menu_index, model_name in enumerate(model_choices, start=1):
         marker = ""
@@ -860,9 +952,11 @@ def cmd_list_model(args: argparse.Namespace) -> int:
             marker = " (current)"
             default_choice = menu_index
         downloaded_text = ""
+        verified_text = ""
         if model_name != "custom":
+            verified_text = " [verified]"
             downloaded_text = f" (downloaded: {_stt_model_downloaded_display(model_name)})"
-        print(f"  {menu_index}. {model_name}{downloaded_text}{marker}")
+        print(f"  {menu_index}. {model_name}{verified_text}{downloaded_text}{marker}")
 
     if default_choice is None:
         print(_yellow("Warning: current stt.model is not in the preset list."))
@@ -1274,9 +1368,12 @@ def _format_secret_state(secret: str | None) -> str:
 
 
 def _prompt_stt_model(current: str) -> str:
-    catalog = [*_stt_model_presets(), "custom"]
-    default = current if current in catalog[:-1] else "custom"
-    selected = _prompt_choice("stt.model", default, catalog)
+    entries = verified_model_entries()
+    preset_tokens = [entry.token for entry in entries]
+    choices = [(entry.token, f"{entry.description} [verified]") for entry in entries]
+    choices.append(("custom", "Enter a custom <backend>:<model> token."))
+    default = current if current in preset_tokens else "custom"
+    selected = _prompt_choice_with_descriptions("stt.model", default, choices)
     if selected != "custom":
         return selected
     while True:
@@ -1287,6 +1384,32 @@ def _prompt_stt_model(current: str) -> str:
             print(str(exc))
             continue
         return token
+
+
+def _prompt_language(current: str) -> str:
+    current_language = str(current).strip() or "en"
+    builtins = [
+        ("en", "English transcription/correction."),
+        ("ja", "Japanese transcription/correction."),
+        ("zh", "Chinese transcription/correction."),
+    ]
+    choices = [*builtins, ("custom", "Enter another BCP 47 language code.")]
+    builtin_values = [value for value, _description in builtins]
+    default = current_language if current_language in builtin_values else "custom"
+    selected = _prompt_choice_with_descriptions("language", default, choices)
+    if selected != "custom":
+        return selected
+
+    custom_default = current_language if default == "custom" else ""
+    while True:
+        language = _prompt_text("language.custom", custom_default).strip()
+        if not language:
+            print("language must not be empty")
+            continue
+        if language.lower() == "auto":
+            print("language='auto' is no longer supported; use an explicit value like 'ja' or 'en'")
+            continue
+        return language
 
 
 def _edit_hotkey_section(config: object) -> None:
@@ -1347,7 +1470,7 @@ def _edit_stt_section(config: object) -> None:
 
 
 def _edit_language_section(config: object) -> None:
-    config.language = _prompt_text("language", config.language)
+    config.language = _prompt_language(config.language)
 
 
 def _edit_model_section(config: object) -> None:

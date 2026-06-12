@@ -31,6 +31,15 @@ ptarmigan-flow run
 録音中に音楽再生の音質が落ちる場合（Bluetoothヘッドセット利用時など）は、
 `audio.input_device` を未設定のまま `audio.input_device_policy = "playback_friendly"` を使ってください。
 
+## Mac アプリのダウンロード
+GitHub Releases から Apple Silicon 向けの署名・公証済みビルドをダウンロードできます。
+
+https://github.com/NAKAK10/ptarmigan-flow/releases/latest/download/PtarmiganFlow-macos-arm64.zip
+
+`PtarmiganFlow-macos-arm64.zip` を展開し、`PtarmiganFlow.app` をアプリケーションフォルダへ移動して開いてください。セットアップ画面からマイク、アクセシビリティ、入力監視の権限状態を確認できます。
+
+Pages と Apple 署名 secret を含むメンテナー向け配布準備は [docs/release-prep.md](docs/release-prep.md) にまとめています。
+
 ## 利用サンプル動画
 
 https://github.com/user-attachments/assets/f763be1b-54af-4342-886d-016837be7884
@@ -89,3 +98,14 @@ pflow update
 brew uninstall ptarmigan-flow
 ```
 `pflow update` は内部で `brew upgrade ptarmigan-flow` を実行し、導入済みの launchd エージェントも更新します。
+
+## モデルと言語の選択
+`pflow list model` で検証済み STT プリセットを選択できます。公開されている Hugging Face Hub の ASR モデルを検索する場合は次を使います。
+
+```bash
+pflow list model --hub-search whisper --backend mlx --limit 20
+```
+
+Hub 検索結果には `unverified Hub result`（未検証）と表示され、設定値は従来通り `stt.model = "<backend>:<repo_id>"` 形式で保存されます。`HF_TOKEN` は任意で、rate limit 対策やアカウントで閲覧可能なモデルへのアクセスが必要な場合だけ使われます。
+
+`pflow config language` または `pflow init` では、説明付きで `en`、`ja`、`zh`、custom を選択できます。

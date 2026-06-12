@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 
 from ptarmigan_flow.presentation.cli import commands
+from ptarmigan_flow.stt.model_catalog import HUB_SEARCH_BACKENDS
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -61,6 +62,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="List STT model presets and save selected model to config",
     )
     list_model_parser.add_argument("--config", default=None, help="Path to config TOML")
+    list_model_parser.add_argument(
+        "--hub-search",
+        metavar="QUERY",
+        default=None,
+        help="Search Hugging Face Hub for ASR models (results are unverified)",
+    )
+    list_model_parser.add_argument(
+        "--backend",
+        choices=list(HUB_SEARCH_BACKENDS),
+        default=None,
+        help="Backend prefix to combine with Hub search results",
+    )
+    list_model_parser.add_argument(
+        "--limit",
+        type=int,
+        default=20,
+        help="Maximum number of Hub search results (default: 20)",
+    )
     list_model_parser.set_defaults(func=commands.cmd_list_model)
 
     list_typing_parser = list_subparsers.add_parser(

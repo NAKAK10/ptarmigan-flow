@@ -28,6 +28,7 @@ https://github.com/NAKAK10/ptarmigan-flow
 - `ptarmigan-flow list`: show list subcommands.
 - `ptarmigan-flow list devices`: list/select input devices and save to config.
 - `ptarmigan-flow list model`: list/select STT model presets and save to config.
+- `ptarmigan-flow list model --hub-search <query> --backend <backend> --limit 20`: search public Hugging Face Hub ASR models and show them as unverified results.
 - `ptarmigan-flow list ollama`: list/select downloaded Ollama models and save selection to config.
 - `ptarmigan-flow list lmstudio`: list/select loaded LM Studio models and save selection to config.
 
@@ -108,6 +109,19 @@ Key settings:
 - `language`: transcription/correction language (explicit value such as `ja` / `en`; `auto` unsupported).
 - `model.device`: `mps` / `cpu`.
 
+Language selection:
+- `pflow config language` and `pflow init` show a described picker for `en`, `ja`, `zh`, and `custom`.
+- `en`: English transcription/correction.
+- `ja`: Japanese transcription/correction.
+- `zh`: Chinese transcription/correction.
+- `custom`: any non-empty explicit language code other than `auto`.
+
+STT model selection:
+- `pflow list model` shows verified presets.
+- `pflow list model --hub-search whisper --backend mlx --limit 20` searches Hugging Face Hub with ASR filtering.
+- Hub results are marked `unverified Hub result` and save as `stt.model = "<backend>:<repo_id>"`.
+- `HF_TOKEN` is optional. If present, it is sent as an Authorization header to reduce rate-limit issues or access models visible to that account.
+
 Correction dictionary:
 - Default path: `~/.config/ptarmigan-flow/transcription_corrections.toml`
 - Template file: `transcription_corrections.example.toml`
@@ -116,10 +130,19 @@ Correction dictionary:
 
 ## Installation and Runtime Notes
 - Recommended install: `brew install ptarmigan-flow`
+- Download release app: `PtarmiganFlow-macos-arm64.zip` from GitHub Releases.
 - Optional helper (legacy migration + retry): `./scripts/install_brew.sh`
 - Update: `pflow update`
 - Uninstall: `brew uninstall ptarmigan-flow`
 - `pflow update` runs `brew upgrade ptarmigan-flow` and refreshes the installed launch agent when present.
+
+Release app notes:
+- The downloadable Mac app is built by `.github/workflows/release-macos-app.yml` with PyInstaller on `macos-14`.
+- The workflow signs with a Developer ID Application certificate, notarizes, staples, zips `PtarmiganFlow.app`, and attaches `PtarmiganFlow-macos-arm64.zip` to a draft GitHub Release.
+- The app setup window checks Microphone, Accessibility, and Input Monitoring permissions and provides buttons for permission requests, login startup, restart, and config editing.
+- This path is separate from the Homebrew `install-app-bundle` runtime wrapper.
+- Required GitHub Secrets: `APPLE_CERTIFICATE_BASE64`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_TEAM_ID`, `APPLE_ID`, and `APPLE_APP_SPECIFIC_PASSWORD`.
+- Release preparation details for Pages and Apple signing secrets live in `docs/release-prep.md`.
 
 Homebrew/runtime notes:
 - If Homebrew auto-update causes issues, use `HOMEBREW_NO_AUTO_UPDATE=1` only when needed.

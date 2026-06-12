@@ -42,6 +42,15 @@ def test_write_example_and_load_config(tmp_path: Path) -> None:
     assert loaded.text.llm_correction.enabled_tools is False
 
 
+def test_config_example_documents_language_choices() -> None:
+    example = Path("config.example.toml").read_text(encoding="utf-8")
+
+    assert "# language choices:" in example
+    assert "#   en: English transcription/correction" in example
+    assert "#   ja: Japanese transcription/correction" in example
+    assert "#   zh: Chinese transcription/correction" in example
+
+
 def test_load_config_creates_missing_file(tmp_path: Path) -> None:
     cfg_path = tmp_path / "new.toml"
     loaded = load_config(cfg_path)
