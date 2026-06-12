@@ -147,6 +147,43 @@ def test_cmd_config_cancel_does_not_write_changes(tmp_path, monkeypatch) -> None
     assert loaded.language == "en"
 
 
+def test_cmd_config_language_saves_described_builtin_choice(
+    tmp_path,
+    monkeypatch,
+    capsys,
+) -> None:
+    cfg_path = tmp_path / "config.toml"
+
+    monkeypatch.setattr(commands, "_is_interactive_session", lambda: True)
+    _install_input_sequence(monkeypatch, ["2"])
+
+    result = commands.cmd_config(argparse.Namespace(config=str(cfg_path), config_target="language"))
+
+    assert result == 0
+    loaded = load_config(cfg_path)
+    assert loaded.language == "ja"
+    captured = capsys.readouterr()
+    assert "en" in captured.out
+    assert "English transcription/correction" in captured.out
+    assert "ja" in captured.out
+    assert "Japanese transcription/correction" in captured.out
+    assert "zh" in captured.out
+    assert "Chinese transcription/correction" in captured.out
+
+
+def test_cmd_config_language_saves_custom_choice(tmp_path, monkeypatch) -> None:
+    cfg_path = tmp_path / "config.toml"
+
+    monkeypatch.setattr(commands, "_is_interactive_session", lambda: True)
+    _install_input_sequence(monkeypatch, ["4", "fr"])
+
+    result = commands.cmd_config(argparse.Namespace(config=str(cfg_path), config_target="language"))
+
+    assert result == 0
+    loaded = load_config(cfg_path)
+    assert loaded.language == "fr"
+
+
 def test_cmd_init_uses_shared_full_editor(tmp_path, monkeypatch) -> None:
     cfg_path = tmp_path / "config.toml"
 

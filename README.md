@@ -31,6 +31,13 @@ ptarmigan-flow run
 If playback audio quality drops while recording (for example with Bluetooth headsets),
 set `audio.input_device_policy = "playback_friendly"` and keep `audio.input_device` unset.
 
+## Download the Mac App
+Download the signed and notarized Apple Silicon build from GitHub Releases:
+
+https://github.com/NAKAK10/ptarmigan-flow/releases/latest/download/PtarmiganFlow-macos-arm64.zip
+
+Unzip `PtarmiganFlow-macos-arm64.zip`, move `PtarmiganFlow.app` to Applications, open it, and use the setup window to check Microphone, Accessibility, and Input Monitoring permissions.
+
 ## Usage Sample Video
 
 https://github.com/user-attachments/assets/f763be1b-54af-4342-886d-016837be7884
@@ -89,3 +96,14 @@ pflow update
 brew uninstall ptarmigan-flow
 ```
 `pflow update` runs `brew upgrade ptarmigan-flow` and refreshes the installed launch agent when present.
+
+## Model and Language Selection
+Use `pflow list model` to select verified STT presets. To search public Hugging Face Hub ASR models, run:
+
+```bash
+pflow list model --hub-search whisper --backend mlx --limit 20
+```
+
+Hub results are marked `unverified Hub result`; they keep the same `stt.model = "<backend>:<repo_id>"` format. `HF_TOKEN` is optional and is only used to raise rate limits or access models your account can see.
+
+Use `pflow config language` or `pflow init` to select `en`, `ja`, `zh`, or a custom language code with descriptions.

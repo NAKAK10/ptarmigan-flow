@@ -1,3 +1,8 @@
+# language choices:
+#   en: English transcription/correction
+#   ja: Japanese transcription/correction
+#   zh: Chinese transcription/correction
+# Use `pflow config language` or `pflow init` for a described picker.
 language = "en"
 
 [stt]

@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ptarmigan-flow — macOSのための完全ローカル音声入力（プッシュトゥトーク）</title>
+  <meta name="description" content="キーを押して話し、離すだけ。ローカルの音声認識モデルが文字起こしして、アクティブなアプリへそのまま入力します。macOS（Apple Silicon）向けのプッシュトゥトーク音声入力。音声がMacの外に出ることはありません。">
+  <meta property="og:title" content="ptarmigan-flow — macOSのための完全ローカル音声入力">
+  <meta property="og:description" content="キーを押して話し、離すだけ。ローカルの音声認識モデルが文字起こしして、アクティブなアプリへ入力します。音声がMacの外に出ることはありません。">
+  <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f3f5f6">
+  <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#14181b">
+  <link rel="alternate" hreflang="en" href="./index.html">
+  <link rel="alternate" hreflang="ja" href="./ja.html">
+  <link rel="icon" type="image/svg+xml" href="./favicon.svg">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">本文へスキップ</a>
+
+  <header class="site-header">
+    <div class="wrap header-inner">
+      <a class="brand" href="./ja.html">
+        <svg class="logo-badge" width="28" height="28" viewBox="0 0 64 64" role="img" aria-label="ptarmigan-flow のロゴ">
+          <rect width="64" height="64" rx="14" fill="var(--badge)"/>
+          <g fill="var(--badge-bird)">
+            <ellipse cx="29" cy="39" rx="17.5" ry="13"/>
+            <circle cx="43" cy="23" r="8.2"/>
+            <path d="M31 31 L47 21 L45 37 Z"/>
+            <path d="M50 19.5 L58.5 23 L50 26.5 Z"/>
+            <path d="M14.5 33 L3.5 44.5 L17 49 Z"/>
+          </g>
+          <circle cx="44.5" cy="21.5" r="1.9" fill="var(--badge)"/>
+          <path d="M37.5 14.6 Q43 10.2 48.5 14.6 Q43 17.2 37.5 14.6 Z" fill="var(--comb)"/>
+        </svg>
+        <span class="brand-name">ptarmigan-flow</span>
+      </a>
+      <nav class="site-nav" aria-label="メイン">
+        <a class="nav-section" href="#how">使い方</a>
+        <a class="nav-section" href="#features">特長</a>
+        <a class="nav-section" href="#install">インストール</a>
+        <a class="nav-section" href="#permissions">権限設定</a>
+        <a href="https://github.com/NAKAK10/ptarmigan-flow">GitHub</a>
+        <a class="lang-switch" href="./index.html" hreflang="en" lang="en">English</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="hero">
+      <div class="wrap">
+        <p class="eyebrow">macOS · Apple Silicon · 完全ローカル処理</p>
+        <h1>押して話す。<br>離せば、文字に。</h1>
+        <p class="lede">ptarmigan-flow は macOS 向けのプッシュトゥトーク音声入力デーモンです。右 <strong>&#8984;</strong> キーを押している間だけ録音し、離すと<strong>ローカル</strong>の音声認識モデルが文字起こしして、アクティブなアプリへそのまま入力します。<strong>音声があなたの Mac の外へ送られることはありません。</strong></p>
+
+        <div class="flow-strip" aria-hidden="true">
+          <span class="keycap"><span class="keycap-glyph">&#8984;</span><span class="keycap-label">hold</span></span>
+          <span class="rec"><span class="rec-dot"></span>REC</span>
+          <span class="wave"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+          <span class="flow-arrow">&#8594;</span>
+          <span class="typed"><span class="typed-text">金曜までにリリースノートをお送りします。</span><span class="caret"></span></span>
+        </div>
+
+        <div class="cta-grid">
+          <div class="cta-card">
+            <h2 class="cta-title">Mac アプリをダウンロード</h2>
+            <p class="cta-note">署名・公証済み · macOS 14 以降 · Apple Silicon（arm64）</p>
+            <a class="btn" href="https://github.com/NAKAK10/ptarmigan-flow/releases/latest/download/PtarmiganFlow-macos-arm64.zip">PtarmiganFlow.zip をダウンロード</a>
+          </div>
+          <div class="cta-card">
+            <h2 class="cta-title">Homebrew でインストール</h2>
+            <div class="cmd">
+              <pre><code>brew tap nakak10/ptarmigan-flow https://github.com/NAKAK10/ptarmigan-flow
+brew install ptarmigan-flow</code></pre>
+              <button type="button" class="copy-btn" data-done="コピーしました">コピー</button>
+            </div>
+            <p class="cta-note">続けて<a href="#install">3 つのセットアップコマンド</a>を実行してください。</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="demo">
+      <div class="wrap">
+        <p class="eyebrow">デモ</p>
+        <h2>実際の入力の様子</h2>
+        <p class="section-intro">ptarmigan-flow を使っている様子の短い録画です。キーを押して話すと、文字起こし結果がアクティブなアプリに入力されます。</p>
+        <video class="demo-video" controls preload="metadata" playsinline>
+          <source src="./assets/usage-sample.mp4" type="video/mp4">
+          お使いのブラウザではこの動画を再生できません。<a href="https://github.com/NAKAK10/ptarmigan-flow">GitHub</a> でご覧いただけます。
+        </video>
+      </div>
+    </section>
+
+    <section class="section" id="how">
+      <div class="wrap">
+        <p class="eyebrow">使い方</p>
+        <h2>ウィンドウいらずの 4 ステップ</h2>
+        <ol class="steps">
+          <li>
+            <span class="step-num" aria-hidden="true">1</span>
+            <h3>押す</h3>
+            <p>どのアプリでも、右 <kbd>&#8984;</kbd> キーを押し続けます。すぐに録音が始まります（既定で最大 30 秒）。</p>
+          </li>
+          <li>
+            <span class="step-num" aria-hidden="true">2</span>
+            <h3>話す</h3>
+            <p>入力したい内容を話します。録音中は画面上の小さなインジケーターでお知らせします。</p>
+          </li>
+          <li>
+            <span class="step-num" aria-hidden="true">3</span>
+            <h3>離す</h3>
+            <p>キーを離すと、ローカルのモデルが Mac 上で文字起こしを行います。音声のアップロードは行いません。</p>
+          </li>
+          <li>
+            <span class="step-num" aria-hidden="true">4</span>
+            <h3>入力される</h3>
+            <p>文字起こし結果がアクティブなアプリへ直接タイピングされます。クリップボード貼り付けも選べます。</p>
+          </li>
+        </ol>
+      </div>
+    </section>
+
+    <section class="section" id="features">
+      <div class="wrap">
+        <p class="eyebrow">特長</p>
+        <h2>プライバシー第一、流れを止めない</h2>
+        <div class="features">
+          <div class="feature">
+            <h3>ローカルで完結、プライベート</h3>
+            <p>音声認識はすべて Mac 上で実行します。クラウド送信・アカウント登録・テレメトリーはありません。このページも外部アセットを読み込みません。</p>
+          </div>
+          <div class="feature">
+            <h3>選べるローカルモデル</h3>
+            <p>Moonshine（tiny / base）、IBM Granite Speech（既定）、MLX 版 Whisper large-v3-turbo、Mistral Voxtral、vLLM サーバーモードに対応しています。</p>
+          </div>
+          <div class="feature">
+            <h3>補正もローカルで</h3>
+            <p>補正辞書で固有名詞などの誤変換を直せるほか、Ollama / LM&nbsp;Studio 経由のローカル LLM による後処理補正も利用できます。</p>
+          </div>
+          <div class="feature">
+            <h3>自然な入力方法</h3>
+            <p>直接タイピングならクリップボードを汚しません。クリップボード貼り付けモードへも設定ひとつで切り替えられます。</p>
+          </div>
+          <div class="feature">
+            <h3>ログインと同時に起動</h3>
+            <p>launchd エージェントを一度インストールすれば、ログインのたびに自動で待機します。常駐ウィンドウはありません。</p>
+          </div>
+          <div class="feature">
+            <h3>邪魔をしない設計</h3>
+            <p>録音・文字起こし中は小さなアクティビティインジケーターを表示できます。録音は既定で最大 30 秒です（変更できます）。</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="install">
+      <div class="wrap">
+        <p class="eyebrow">インストール</p>
+        <h2>2 つの導入方法</h2>
+        <div class="install-grid">
+          <div class="install-card">
+            <h3>1 &mdash; Mac アプリをダウンロード</h3>
+            <ol>
+              <li>zip をダウンロードして展開します。</li>
+              <li><code>PtarmiganFlow.app</code> をアプリケーションフォルダへ移動して開きます。</li>
+              <li>表示される案内に従って、下記の 3 つの権限を許可します。</li>
+            </ol>
+            <p>アプリは署名・公証済みです。それでも初回起動時に macOS の警告が出る場合は、アプリを右クリックして「開く」を選択してください。</p>
+            <a class="btn" href="https://github.com/NAKAK10/ptarmigan-flow/releases/latest/download/PtarmiganFlow-macos-arm64.zip">PtarmiganFlow.zip をダウンロード</a>
+          </div>
+          <div class="install-card">
+            <h3>2 &mdash; Homebrew</h3>
+            <div class="cmd">
+              <pre><code>brew tap nakak10/ptarmigan-flow https://github.com/NAKAK10/ptarmigan-flow
+brew install ptarmigan-flow</code></pre>
+              <button type="button" class="copy-btn" data-done="コピーしました">コピー</button>
+            </div>
+            <p>続けて、インストールの確認・権限のリクエスト・デーモンの起動を行います。</p>
+            <div class="cmd">
+              <pre><code>pflow doctor
+pflow check-permissions --request
+pflow run</code></pre>
+              <button type="button" class="copy-btn" data-done="コピーしました">コピー</button>
+            </div>
+            <p><code>pflow</code> は <code>ptarmigan-flow</code> の短縮エイリアスです。</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="permissions">
+      <div class="wrap">
+        <p class="eyebrow">権限設定</p>
+        <h2>3 つの macOS 権限について</h2>
+        <p class="section-intro">ptarmigan-flow はキー入力の検出、音声の録音、テキストの入力を行うため、それぞれに対応する権限が必要です。次のコマンドで 3 つまとめてリクエストできます。</p>
+        <div class="cmd perm-cmd">
+          <pre><code>pflow check-permissions --request</code></pre>
+          <button type="button" class="copy-btn" data-done="コピーしました">コピー</button>
+        </div>
+        <div class="perm-grid">
+          <div class="perm-card">
+            <h3>マイク</h3>
+            <p>音声を録音するために必要です。録音するのはホットキーを押している間だけです。</p>
+            <span class="settings-path">システム設定 &#8594; プライバシーとセキュリティ &#8594; マイク</span>
+          </div>
+          <div class="perm-card">
+            <h3>アクセシビリティ</h3>
+            <p>文字起こし結果をアクティブなアプリへ入力（または貼り付けのキー操作を送信）するために必要です。</p>
+            <span class="settings-path">システム設定 &#8594; プライバシーとセキュリティ &#8594; アクセシビリティ</span>
+          </div>
+          <div class="perm-card">
+            <h3>入力監視</h3>
+            <p>ほかのアプリにフォーカスがあるときでも、グローバルホットキー（右 <kbd>&#8984;</kbd>）を検出するために必要です。</p>
+            <span class="settings-path">システム設定 &#8594; プライバシーとセキュリティ &#8594; 入力監視</span>
+          </div>
+        </div>
+        <div class="note">
+          <p><strong>ダウンロードしたアプリの初回起動について:</strong> アプリは署名・公証済みのため、通常はそのまま開けます。Gatekeeper の警告が表示された場合は、<code>PtarmiganFlow.app</code> を右クリックして「開く」を一度選択してください。</p>
+        </div>
+        <div class="note">
+          <p><strong>権限を許可した後は:</strong> すでに launch agent としてデーモンが動作している場合、<code>pflow restart-launch-agent</code> で権限を反映してください。</p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap footer-inner">
+      <div class="footer-brand">
+        <svg class="logo-badge" width="22" height="22" viewBox="0 0 64 64" aria-hidden="true">
+          <rect width="64" height="64" rx="14" fill="var(--badge)"/>
+          <g fill="var(--badge-bird)">
+            <ellipse cx="29" cy="39" rx="17.5" ry="13"/>
+            <circle cx="43" cy="23" r="8.2"/>
+            <path d="M31 31 L47 21 L45 37 Z"/>
+            <path d="M50 19.5 L58.5 23 L50 26.5 Z"/>
+            <path d="M14.5 33 L3.5 44.5 L17 49 Z"/>
+          </g>
+          <circle cx="44.5" cy="21.5" r="1.9" fill="var(--badge)"/>
+          <path d="M37.5 14.6 Q43 10.2 48.5 14.6 Q43 17.2 37.5 14.6 Z" fill="var(--comb)"/>
+        </svg>
+        <span class="brand-name">ptarmigan-flow</span>
+      </div>
+      <ul class="footer-links">
+        <li><a href="https://github.com/NAKAK10/ptarmigan-flow">GitHub</a></li>
+        <li><a href="https://github.com/NAKAK10/ptarmigan-flow/blob/main/README.ja.md">README（日本語）</a></li>
+        <li><a href="https://github.com/NAKAK10/ptarmigan-flow/blob/main/README.md" hreflang="en">README (English)</a></li>
+      </ul>
+      <p class="footer-note">macOS 14 以降・Apple Silicon（arm64）の Mac が必要です。</p>
+    </div>
+  </footer>
+
+  <script src="./script.js"></script>
+</body>
+</html>
