@@ -49,6 +49,8 @@ def test_release_workflow_builds_notarizes_and_uploads_draft_release() -> None:
     assert "tag:" in workflow
     assert "macos-14" in workflow
     assert "pyinstaller" in workflow.lower()
+    assert "Validate Apple release secrets" in workflow
+    assert "Missing GitHub secret:" in workflow
     assert "Developer ID Application" in workflow
     assert "codesign" in workflow
     assert "notarytool submit" in workflow
