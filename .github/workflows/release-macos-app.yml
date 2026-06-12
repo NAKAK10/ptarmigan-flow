@@ -72,20 +72,47 @@ jobs:
           MOONSHINE_VER=$(awk -F'"' '/name = "moonshine-voice"/{f=1} f && /version = /{print $2; exit}' uv.lock)
           echo "Fetching moonshine-voice==$MOONSHINE_VER for macosx_15_0_arm64"
 
-          mkdir -p /tmp/mw/ex
+          mkdir -p /tmp/mw
           python3 -m pip download \
             "moonshine-voice==$MOONSHINE_VER" \
             --platform macosx_15_0_arm64 --python-version 311 --only-binary :all: \
             -d /tmp/mw
 
-          # Strip the macOS platform tag so uv/pip accepts the wheel anywhere.
-          # Content (dylibs) is unchanged; macOS 15 arm64 runner runs them fine.
-          cd /tmp/mw/ex
-          unzip -q "$(ls /tmp/mw/moonshine_voice-*.whl | head -1)"
-          find . -name "WHEEL" -exec sed -i '' 's/^Tag:.*$/Tag: py3-none-any/' {} \;
-          find . -name "RECORD" -delete
-          zip -qr "/tmp/mw/moonshine_voice-${MOONSHINE_VER}-py3-none-any.whl" .
-          cd -
+          # Repackage the wheel as py3-none-any with a correct RECORD (sha256 hashes).
+          # The dylib content is unchanged; macOS 15 arm64 runner runs them fine.
+          python3 - <<'PYEOF'
+          import base64, glob, hashlib, os, zipfile
+
+          def sha256_digest(data: bytes) -> str:
+              return "sha256=" + base64.urlsafe_b64encode(hashlib.sha256(data).digest()).decode().rstrip("=")
+
+          src = glob.glob("/tmp/mw/moonshine_voice-*.whl")[0]
+          ver = os.path.basename(src).split("-")[1]
+          dst = f"/tmp/mw/moonshine_voice-{ver}-py3-none-any.whl"
+
+          files: dict[str, tuple] = {}
+          with zipfile.ZipFile(src) as zin:
+              for item in zin.infolist():
+                  data = zin.read(item.filename)
+                  if item.filename.endswith(".dist-info/WHEEL"):
+                      data = data.replace(b"macosx_15_0_universal2", b"any")
+                      data = data.replace(b"macosx_15_0_arm64", b"any")
+                  files[item.filename] = (item, data)
+
+          record_fname = next(f for f in files if f.endswith("/RECORD"))
+          record_lines = []
+          for fname, (_, data) in files.items():
+              if fname == record_fname:
+                  record_lines.append(f"{fname},,")
+              else:
+                  record_lines.append(f"{fname},{sha256_digest(data)},{len(data)}")
+          files[record_fname] = (files[record_fname][0], "\n".join(record_lines).encode())
+
+          with zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED) as zout:
+              for fname, (item, data) in files.items():
+                  zout.writestr(item, data)
+          print(f"Created: {dst}")
+          PYEOF
 
           uv pip install "/tmp/mw/moonshine_voice-${MOONSHINE_VER}-py3-none-any.whl" --no-deps
 
