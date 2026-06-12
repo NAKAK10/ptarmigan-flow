@@ -13,7 +13,6 @@ permissions:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-  UV_PYTHON_PREFERENCE: managed
 
 jobs:
   build:
@@ -64,6 +63,8 @@ jobs:
         run: uv python install 3.11
 
       - name: Install dependencies
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "15.0"
         run: uv sync --extra dev
 
       - name: Build PyInstaller app
