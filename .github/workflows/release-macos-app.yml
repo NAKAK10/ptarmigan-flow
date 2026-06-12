@@ -121,6 +121,11 @@ jobs:
           TAG_NAME: ${{ inputs.tag }}
         run: |
           set -euo pipefail
+          # Remove the Linux ELF libmoonshine.so from the venv.
+          # moonshine-voice macOS wheels (<=0.0.59) bundle a Linux ELF named
+          # libmoonshine.so; PyInstaller finds and fails on it regardless of
+          # what the spec's collect_all filter does.
+          find .venv -name "libmoonshine.so" -delete
           export APP_VERSION="${TAG_NAME#v}"
           uv run pyinstaller --clean --noconfirm packaging/macos/PtarmiganFlow.spec
 
