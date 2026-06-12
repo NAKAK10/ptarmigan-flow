@@ -93,11 +93,17 @@ jobs:
           files: dict[str, tuple] = {}
           with zipfile.ZipFile(src) as zin:
               for item in zin.infolist():
-                  data = zin.read(item.filename)
-                  if item.filename.endswith(".dist-info/WHEEL"):
+                  fname = item.filename
+                  # libmoonshine.so in the macOS wheel is a Linux ELF (packaging
+                  # bug in moonshine-voice <=0.0.59). Exclude it entirely so
+                  # PyInstaller never encounters it.
+                  if os.path.basename(fname) == "libmoonshine.so":
+                      continue
+                  data = zin.read(fname)
+                  if fname.endswith(".dist-info/WHEEL"):
                       data = data.replace(b"macosx_15_0_universal2", b"any")
                       data = data.replace(b"macosx_15_0_arm64", b"any")
-                  files[item.filename] = (item, data)
+                  files[fname] = (item, data)
 
           record_fname = next(f for f in files if f.endswith("/RECORD"))
           record_lines = []
@@ -121,13 +127,11 @@ jobs:
           TAG_NAME: ${{ inputs.tag }}
         run: |
           set -euo pipefail
-          # Remove the Linux ELF libmoonshine.so from the venv.
-          # moonshine-voice macOS wheels (<=0.0.59) bundle a Linux ELF named
-          # libmoonshine.so; PyInstaller finds and fails on it regardless of
-          # what the spec's collect_all filter does.
-          find .venv -name "libmoonshine.so" -delete
           export APP_VERSION="${TAG_NAME#v}"
-          uv run pyinstaller --clean --noconfirm packaging/macos/PtarmiganFlow.spec
+          # --no-sync: skip venv re-sync so uv does not reinstall moonshine-voice
+          # from the lock file (which would bring back the Linux ELF libmoonshine.so
+          # that we excluded during the Install dependencies step).
+          uv run --no-sync pyinstaller --clean --noconfirm packaging/macos/PtarmiganFlow.spec
 
       - name: Import Developer ID Application certificate
         env:
