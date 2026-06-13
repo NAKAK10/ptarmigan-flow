@@ -155,6 +155,7 @@ def install_app_bundle_from_env(app_bundle_path: Path | None = None) -> Path | N
         "CFBundleShortVersionString": "1.0",
         "CFBundleVersion": "1",
         "LSBackgroundOnly": True,
+        "LSUIElement": True,
         "NSMicrophoneUsageDescription": "PtarmiganFlow records audio only while hotkey is held.",
     }
     new_plist_bytes = plistlib.dumps(info_payload)

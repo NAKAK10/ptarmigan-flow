@@ -166,6 +166,7 @@ app = BUNDLE(
         "CFBundleShortVersionString": APP_VERSION,
         "CFBundleVersion": APP_VERSION,
         "LSMinimumSystemVersion": "14.0",
+        "LSUIElement": True,
         "NSMicrophoneUsageDescription": "PtarmiganFlow records audio only while the hotkey is held.",
         "NSAppleEventsUsageDescription": "PtarmiganFlow sends text to the active app when you release the hotkey.",
     },

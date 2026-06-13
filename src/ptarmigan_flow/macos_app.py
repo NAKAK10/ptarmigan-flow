@@ -7,6 +7,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from ptarmigan_flow import login_item
 from ptarmigan_flow.app_daemon_controller import (
     DaemonController,
     build_daemon_from_config,
@@ -18,7 +19,6 @@ from ptarmigan_flow.config import (
     load_config,
     write_config,
 )
-from ptarmigan_flow.launchd import install_launch_agent, restart_launch_agent
 from ptarmigan_flow.onboarding_flow import OnboardingFlow
 from ptarmigan_flow.permissions import (
     PermissionReport,
@@ -86,11 +86,17 @@ def _run_appkit_app() -> int:
     import objc
     from AppKit import (
         NSApplication,
-        NSApplicationActivationPolicyRegular,
+        NSApplicationActivationPolicyAccessory,
         NSBackingStoreBuffered,
         NSButton,
+        NSControlStateValueOff,
+        NSControlStateValueOn,
         NSImage,
+        NSMenu,
+        NSMenuItem,
+        NSStatusBar,
         NSTextField,
+        NSVariableStatusItemLength,
         NSWindow,
         NSWindowStyleMaskClosable,
         NSWindowStyleMaskMiniaturizable,
@@ -103,8 +109,14 @@ def _run_appkit_app() -> int:
         """Native step-by-step onboarding window."""
 
         content_view: object
+        dictation_status_menu_item: object
+        login_menu_item: object
         message_label: object
         permission_timer: object | None
+        start_menu_item: object
+        status_item: object
+        status_menu: object
+        stop_menu_item: object
         window: object
 
         _permission_step_config = {
@@ -151,6 +163,7 @@ def _run_appkit_app() -> int:
             return self
 
         def applicationDidFinishLaunching_(self, _notification):  # noqa: N802
+            self._build_status_item()
             self._build_window()
             self._render_current_step()
             self._refresh_onboarding_permissions()
@@ -176,6 +189,54 @@ def _run_appkit_app() -> int:
             button.setTarget_(self)
             button.setAction_(action)
             return button
+
+        @objc.python_method
+        def _menu_item(self, title: str, action: str | None):
+            item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(title, action, "")
+            item.setTarget_(self)
+            return item
+
+        @objc.python_method
+        def _build_status_item(self) -> None:
+            self.status_item = (
+                NSStatusBar.systemStatusBar().statusItemWithLength_(NSVariableStatusItemLength)
+            )
+            status_button = self.status_item.button()
+            if status_button is not None:
+                status_button.setTitle_("Pt")
+
+            self.status_menu = NSMenu.alloc().init()
+            self.dictation_status_menu_item = self._menu_item("Dictation Stopped", None)
+            self.dictation_status_menu_item.setEnabled_(False)
+            self.status_menu.addItem_(self.dictation_status_menu_item)
+            self.start_menu_item = self._menu_item("Start Dictation", "startDictation:")
+            self.status_menu.addItem_(self.start_menu_item)
+            self.stop_menu_item = self._menu_item("Stop Dictation", "stopDictation:")
+            self.status_menu.addItem_(self.stop_menu_item)
+            self.status_menu.addItem_(NSMenuItem.separatorItem())
+            self.status_menu.addItem_(self._menu_item("Settings", "showSettings:"))
+            self.status_menu.addItem_(self._menu_item("Open Config", "openConfig:"))
+            self.login_menu_item = self._menu_item("Login at Startup", "toggleLoginAtStartup:")
+            self.status_menu.addItem_(self.login_menu_item)
+            self.status_menu.addItem_(NSMenuItem.separatorItem())
+            self.status_menu.addItem_(self._menu_item("Quit", "quit:"))
+            self.status_item.setMenu_(self.status_menu)
+            self._update_status_menu()
+
+        @objc.python_method
+        def _update_status_menu(self) -> None:
+            if not hasattr(self, "status_menu"):
+                return
+            is_running = self.daemon_controller.is_running
+            self.dictation_status_menu_item.setTitle_(
+                "Dictation Running" if is_running else "Dictation Stopped"
+            )
+            self.start_menu_item.setEnabled_(not is_running)
+            self.stop_menu_item.setEnabled_(is_running)
+            login_state = (
+                NSControlStateValueOn if login_item.is_enabled() else NSControlStateValueOff
+            )
+            self.login_menu_item.setState_(login_state)
 
         @objc.python_method
         def _build_window(self) -> None:
@@ -288,10 +349,7 @@ def _run_appkit_app() -> int:
             )
             self.content_view.addSubview_(self._button("Open Config", "openConfig:", 362, 214, 128))
             self.content_view.addSubview_(
-                self._button("Install Login Startup", "installLaunchAgent:", 36, 160, 178)
-            )
-            self.content_view.addSubview_(
-                self._button("Restart Daemon", "restartLaunchAgent:", 232, 160, 150)
+                self._button("Login at Startup", "toggleLoginAtStartup:", 36, 160, 178)
             )
 
         @objc.python_method
@@ -312,7 +370,8 @@ def _run_appkit_app() -> int:
 
         @objc.python_method
         def _set_message(self, message: str) -> None:
-            self.message_label.setStringValue_(message)
+            if hasattr(self, "message_label"):
+                self.message_label.setStringValue_(message)
 
         @objc.python_method
         def _save_language(self, code: str) -> Path:
@@ -362,17 +421,20 @@ def _run_appkit_app() -> int:
                 report = check_all_permissions()
             if not report.all_granted:
                 self._set_message("Grant all permissions before starting dictation.")
+                self._update_status_menu()
                 return
             if not self.daemon_controller.is_running:
                 self.daemon_controller.start()
             if self.daemon_controller.is_running:
                 self._set_message(success_message)
+                self._update_status_menu()
                 return
             error = self.daemon_controller.last_error
             if error is None:
                 self._set_message("Dictation daemon is not running yet.")
             else:
                 self._set_message(f"Could not start dictation: {error}")
+            self._update_status_menu()
 
         def pollPermissions_(self, _timer):  # noqa: N802
             self._refresh_onboarding_permissions()
@@ -413,31 +475,41 @@ def _run_appkit_app() -> int:
         def stopDictation_(self, _sender):  # noqa: N802
             self.daemon_controller.stop()
             self._set_message("Dictation stopped.")
+            self._update_status_menu()
 
-        def installLaunchAgent_(self, _sender):  # noqa: N802
-            try:
-                plist_path = install_launch_agent(default_config_path())
-            except Exception as exc:
-                self._set_message(f"Could not install login startup: {exc}")
-                return
-            self._set_message(f"Installed login startup: {plist_path}")
-
-        def restartLaunchAgent_(self, _sender):  # noqa: N802
-            try:
-                restarted = restart_launch_agent()
-            except Exception as exc:
-                self._set_message(f"Could not restart daemon: {exc}")
-                return
-            message = "Daemon restarted." if restarted else "Login startup is not installed yet."
-            self._set_message(message)
+        def showSettings_(self, _sender):  # noqa: N802
+            self.window.makeKeyAndOrderFront_(None)
+            NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+            self._refresh_onboarding_permissions()
 
         def openConfig_(self, _sender):  # noqa: N802
             config_path = open_config()
             self._set_message(f"Opened config: {config_path}")
 
+        def toggleLoginAtStartup_(self, _sender):  # noqa: N802
+            if login_item.is_enabled():
+                changed = login_item.unregister()
+                message = (
+                    "Login at startup disabled."
+                    if changed
+                    else "Could not disable login at startup."
+                )
+            else:
+                changed = login_item.register()
+                message = (
+                    "Login at startup enabled."
+                    if changed
+                    else "Could not enable login at startup."
+                )
+            self._set_message(message)
+            self._update_status_menu()
+
+        def quit_(self, _sender):  # noqa: N802
+            NSApplication.sharedApplication().terminate_(self)
+
     app = NSApplication.sharedApplication()
     _set_application_icon(app, NSImage, NSData)
-    app.setActivationPolicy_(NSApplicationActivationPolicyRegular)
+    app.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
     delegate = OnboardingController.alloc().init()
     app.setDelegate_(delegate)
     app.activateIgnoringOtherApps_(True)
