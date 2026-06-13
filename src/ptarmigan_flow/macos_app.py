@@ -95,12 +95,14 @@ def _run_appkit_app() -> int:
             self._build_window()
             self.refreshStatus_(None)
 
+        @objc.python_method
         def _label(self, text: str, x: float, y: float, w: float, h: float, *, size: float = 14.0):
             label = NSTextField.labelWithString_(text)
             label.setFrame_(NSMakeRect(x, y, w, h))
             label.setFont_(label.font().fontWithSize_(size))
             return label
 
+        @objc.python_method
         def _button(self, title: str, action: str, x: float, y: float, w: float):
             button = NSButton.alloc().initWithFrame_(NSMakeRect(x, y, w, 32))
             button.setTitle_(title)
@@ -108,6 +110,7 @@ def _run_appkit_app() -> int:
             button.setAction_(action)
             return button
 
+        @objc.python_method
         def _build_window(self) -> None:
             style = (
                 NSWindowStyleMaskTitled
@@ -158,6 +161,7 @@ def _run_appkit_app() -> int:
             self.window.center()
             self.window.makeKeyAndOrderFront_(None)
 
+        @objc.python_method
         def _set_message(self, message: str) -> None:
             self.message_label.setStringValue_(message)
 
