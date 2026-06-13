@@ -12,8 +12,14 @@ from ptarmigan_flow.app_daemon_controller import (
     build_daemon_from_config,
 )
 from ptarmigan_flow.app_icon import APP_ICON_FILE, APP_ICON_RESOURCE_PACKAGE
-from ptarmigan_flow.config import default_config_path, ensure_config_exists
+from ptarmigan_flow.config import (
+    default_config_path,
+    ensure_config_exists,
+    load_config,
+    write_config,
+)
 from ptarmigan_flow.launchd import install_launch_agent, restart_launch_agent
+from ptarmigan_flow.onboarding_flow import OnboardingFlow
 from ptarmigan_flow.permissions import (
     PermissionReport,
     check_all_permissions,
@@ -45,11 +51,6 @@ def open_config() -> Path:
     if sys.platform == "darwin":
         subprocess.run(["open", str(config_path)], check=False)
     return config_path
-
-
-def _permission_status(report: PermissionReport, key: str) -> str:
-    granted = bool(getattr(report, key))
-    return "OK" if granted else "Missing"
 
 
 def _dispatch_cli_args(argv: list[str]) -> int | None:
@@ -94,21 +95,56 @@ def _run_appkit_app() -> int:
         NSWindowStyleMaskClosable,
         NSWindowStyleMaskMiniaturizable,
         NSWindowStyleMaskTitled,
+        NSWorkspace,
     )
-    from Foundation import NSData, NSMakeRect, NSObject
+    from Foundation import NSURL, NSData, NSMakeRect, NSObject, NSTimer
 
     class OnboardingController(NSObject):
-        """Small native window for permissions, launch setup, and config access."""
+        """Native step-by-step onboarding window."""
 
-        status_labels: dict[str, object]
+        content_view: object
         message_label: object
+        permission_timer: object | None
         window: object
+
+        _permission_step_config = {
+            "microphone": {
+                "title": "Microphone Access",
+                "body": "Allow PtarmiganFlow to capture audio while you hold the hotkey.",
+                "request_action": "requestMicrophone:",
+                "settings_url": (
+                    "x-apple.systempreferences:com.apple.preference.security"
+                    "?Privacy_Microphone"
+                ),
+            },
+            "accessibility": {
+                "title": "Accessibility Access",
+                "body": (
+                    "Allow PtarmiganFlow to control the active text field for dictation output."
+                ),
+                "request_action": "requestAccessibility:",
+                "settings_url": (
+                    "x-apple.systempreferences:com.apple.preference.security"
+                    "?Privacy_Accessibility"
+                ),
+            },
+            "input_monitoring": {
+                "title": "Input Monitoring",
+                "body": "Allow PtarmiganFlow to detect the push-to-talk hotkey.",
+                "request_action": "requestInputMonitoring:",
+                "settings_url": (
+                    "x-apple.systempreferences:com.apple.preference.security"
+                    "?Privacy_ListenEvent"
+                ),
+            },
+        }
 
         def init(self):  # noqa: N802 - PyObjC follows Objective-C naming.
             self = objc.super(OnboardingController, self).init()
             if self is None:
                 return None
-            self.status_labels = {}
+            self.onboarding_flow = OnboardingFlow()
+            self.permission_timer = None
             self.daemon_controller = DaemonController(
                 lambda: build_daemon_from_config(default_config_path())
             )
@@ -116,10 +152,15 @@ def _run_appkit_app() -> int:
 
         def applicationDidFinishLaunching_(self, _notification):  # noqa: N802
             self._build_window()
-            self.refreshStatus_(None)
+            self._render_current_step()
+            self._refresh_onboarding_permissions()
 
         def applicationWillTerminate_(self, _notification):  # noqa: N802
+            self._stop_permission_timer()
             self.daemon_controller.stop()
+
+        def applicationDidBecomeActive_(self, _notification):  # noqa: N802
+            self._refresh_onboarding_permissions()
 
         @objc.python_method
         def _label(self, text: str, x: float, y: float, w: float, h: float, *, size: float = 14.0):
@@ -150,48 +191,165 @@ def _run_appkit_app() -> int:
                 False,
             )
             self.window.setTitle_(APP_NAME)
-            content = self.window.contentView()
-            content.addSubview_(self._label("PtarmiganFlow setup", 28, 374, 580, 32, size=22.0))
-            content.addSubview_(
-                self._label(
-                    "Grant permissions, install login startup, and open config from one place.",
-                    28,
-                    342,
-                    580,
-                    24,
-                )
-            )
-
-            rows = [
-                ("Microphone", "microphone", "requestMicrophone:", 292),
-                ("Accessibility", "accessibility", "requestAccessibility:", 238),
-                ("Input Monitoring", "input_monitoring", "requestInputMonitoring:", 184),
-            ]
-            for title, key, action, y in rows:
-                content.addSubview_(self._label(title, 36, y + 5, 180, 24))
-                status = self._label("Checking", 216, y + 5, 120, 24)
-                self.status_labels[key] = status
-                content.addSubview_(status)
-                content.addSubview_(self._button("Allow", action, 366, y, 110))
-
-            content.addSubview_(self._button("Refresh", "refreshStatus:", 500, 184, 94))
-            content.addSubview_(self._button("Start Dictation", "startDictation:", 36, 144, 150))
-            content.addSubview_(self._button("Stop Dictation", "stopDictation:", 204, 144, 140))
-            content.addSubview_(
-                self._button("Install Login Startup", "installLaunchAgent:", 36, 104, 178)
-            )
-            content.addSubview_(
-                self._button("Restart Daemon", "restartLaunchAgent:", 232, 104, 150)
-            )
-            content.addSubview_(self._button("Open Config", "openConfig:", 400, 104, 128))
-            self.message_label = self._label("", 36, 52, 560, 32)
-            content.addSubview_(self.message_label)
+            self.content_view = self.window.contentView()
             self.window.center()
             self.window.makeKeyAndOrderFront_(None)
 
         @objc.python_method
+        def _clear_content_view(self) -> None:
+            for subview in list(self.content_view.subviews()):
+                subview.removeFromSuperview()
+
+        @objc.python_method
+        def _render_current_step(self) -> None:
+            self._clear_content_view()
+            self.content_view.addSubview_(
+                self._label("PtarmiganFlow setup", 28, 374, 580, 32, size=22.0)
+            )
+            step = self.onboarding_flow.current_step
+            if step == "language":
+                self._render_language_step()
+            elif step == "done":
+                self._render_done_step()
+            else:
+                self._render_permission_step(step)
+            self.message_label = self._label("", 36, 52, 560, 32)
+            self.content_view.addSubview_(self.message_label)
+            self._restart_permission_timer()
+
+        @objc.python_method
+        def _render_language_step(self) -> None:
+            self.content_view.addSubview_(
+                self._label("Choose Language", 36, 306, 560, 30, size=20.0)
+            )
+            self.content_view.addSubview_(
+                self._label(
+                    "Select the transcription language to save into your config.",
+                    36,
+                    270,
+                    560,
+                    24,
+                )
+            )
+            self.content_view.addSubview_(self._button("English", "chooseEnglish:", 36, 214, 150))
+            self.content_view.addSubview_(
+                self._button("Japanese", "chooseJapanese:", 204, 214, 150)
+            )
+            self.content_view.addSubview_(self._button("Chinese", "chooseChinese:", 372, 214, 150))
+
+        @objc.python_method
+        def _render_permission_step(self, step: str) -> None:
+            config = self._permission_step_config[step]
+            self.content_view.addSubview_(
+                self._label(
+                    config["title"],
+                    36,
+                    306,
+                    560,
+                    30,
+                    size=20.0,
+                )
+            )
+            self.content_view.addSubview_(
+                self._label(
+                    config["body"],
+                    28,
+                    270,
+                    580,
+                    24,
+                )
+            )
+            self.content_view.addSubview_(
+                self._button("Allow", config["request_action"], 36, 214, 150)
+            )
+            self.content_view.addSubview_(
+                self._button("Open System Settings", "openSystemSettings:", 204, 214, 190)
+            )
+
+        @objc.python_method
+        def _render_done_step(self) -> None:
+            self.content_view.addSubview_(
+                self._label("Ready to Dictate", 36, 306, 560, 30, size=20.0)
+            )
+            self.content_view.addSubview_(
+                self._label(
+                    "Setup is complete. Start dictation now or open the config file.",
+                    36,
+                    270,
+                    560,
+                    24,
+                )
+            )
+            self.content_view.addSubview_(
+                self._button("Start Dictation", "startDictation:", 36, 214, 150)
+            )
+            self.content_view.addSubview_(
+                self._button("Stop Dictation", "stopDictation:", 204, 214, 140)
+            )
+            self.content_view.addSubview_(self._button("Open Config", "openConfig:", 362, 214, 128))
+            self.content_view.addSubview_(
+                self._button("Install Login Startup", "installLaunchAgent:", 36, 160, 178)
+            )
+            self.content_view.addSubview_(
+                self._button("Restart Daemon", "restartLaunchAgent:", 232, 160, 150)
+            )
+
+        @objc.python_method
+        def _stop_permission_timer(self) -> None:
+            if self.permission_timer is not None:
+                self.permission_timer.invalidate()
+                self.permission_timer = None
+
+        @objc.python_method
+        def _restart_permission_timer(self) -> None:
+            self._stop_permission_timer()
+            if self.onboarding_flow.current_step not in self._permission_step_config:
+                return
+            schedule_timer = (
+                NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_
+            )
+            self.permission_timer = schedule_timer(1.0, self, "pollPermissions:", None, True)
+
+        @objc.python_method
         def _set_message(self, message: str) -> None:
             self.message_label.setStringValue_(message)
+
+        @objc.python_method
+        def _save_language(self, code: str) -> Path:
+            config_path = default_config_path()
+            ensure_config_exists(config_path)
+            config = load_config(config_path)
+            config.language = code
+            write_config(config_path, config)
+            return config_path
+
+        @objc.python_method
+        def _choose_language(self, code: str) -> None:
+            try:
+                config_path = self._save_language(code)
+                self.onboarding_flow.choose_language(code)
+            except Exception as exc:
+                self._set_message(f"Could not save language: {exc}")
+                return
+            self._render_current_step()
+            self._set_message(f"Saved language to {config_path}.")
+            self._refresh_onboarding_permissions()
+
+        @objc.python_method
+        def _refresh_onboarding_permissions(self) -> PermissionReport:
+            report = check_all_permissions()
+            before_step = self.onboarding_flow.current_step
+            self.onboarding_flow.refresh(report)
+            after_step = self.onboarding_flow.current_step
+            if after_step != before_step:
+                self._render_current_step()
+            if report.all_granted:
+                if self.onboarding_flow.is_complete:
+                    self._start_daemon_if_ready(
+                        report,
+                        success_message="All permissions granted. Dictation started.",
+                    )
+            return report
 
         @objc.python_method
         def _start_daemon_if_ready(
@@ -216,29 +374,38 @@ def _run_appkit_app() -> int:
             else:
                 self._set_message(f"Could not start dictation: {error}")
 
-        def refreshStatus_(self, _sender):  # noqa: N802
-            report = check_all_permissions()
-            for key, label in self.status_labels.items():
-                label.setStringValue_(_permission_status(report, key))
-            if report.all_granted:
-                self._start_daemon_if_ready(
-                    report,
-                    success_message="All permissions granted. Dictation started.",
-                )
-                return
-            self._set_message("Permission status refreshed.")
+        def pollPermissions_(self, _timer):  # noqa: N802
+            self._refresh_onboarding_permissions()
+
+        def chooseEnglish_(self, _sender):  # noqa: N802
+            self._choose_language("en")
+
+        def chooseJapanese_(self, _sender):  # noqa: N802
+            self._choose_language("ja")
+
+        def chooseChinese_(self, _sender):  # noqa: N802
+            self._choose_language("zh")
 
         def requestMicrophone_(self, _sender):  # noqa: N802
             request_microphone_permission()
-            self.refreshStatus_(None)
+            self._refresh_onboarding_permissions()
 
         def requestAccessibility_(self, _sender):  # noqa: N802
             request_accessibility_permission()
-            self.refreshStatus_(None)
+            self._refresh_onboarding_permissions()
 
         def requestInputMonitoring_(self, _sender):  # noqa: N802
             request_input_monitoring_permission()
-            self.refreshStatus_(None)
+            self._refresh_onboarding_permissions()
+
+        def openSystemSettings_(self, _sender):  # noqa: N802
+            step = self.onboarding_flow.current_step
+            settings_url = self._permission_step_config.get(step, {}).get("settings_url")
+            if settings_url is None:
+                return
+            url = NSURL.URLWithString_(settings_url)
+            if url is not None:
+                NSWorkspace.sharedWorkspace().openURL_(url)
 
         def startDictation_(self, _sender):  # noqa: N802
             self._start_daemon_if_ready()
