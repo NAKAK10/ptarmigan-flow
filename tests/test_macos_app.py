@@ -107,3 +107,50 @@ def test_macos_app_auto_starts_daemon_and_stops_on_termination() -> None:
     assert 'success_message="All permissions granted. Dictation started."' in source
     assert "def applicationWillTerminate_(self, _notification):" in source
     assert "self.daemon_controller.stop()" in source
+
+
+def test_macos_app_uses_onboarding_flow_for_step_wizard() -> None:
+    source = _macos_app_source()
+
+    assert "from ptarmigan_flow.onboarding_flow import OnboardingFlow" in source
+    assert "self.onboarding_flow = OnboardingFlow()" in source
+    assert "self.onboarding_flow.current_step" in source
+    assert 'if step == "language":' in source
+    assert 'elif step == "done":' in source
+
+
+def test_macos_app_polls_current_permission_step_without_manual_refresh() -> None:
+    source = _macos_app_source()
+
+    assert "NSTimer" in source
+    assert "scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_" in source
+    assert "def pollPermissions_(self, _timer):" in source
+    assert "def applicationDidBecomeActive_(self, _notification):" in source
+    assert "self._refresh_onboarding_permissions()" in source
+    assert '"Refresh"' not in source
+    assert "refreshStatus_" not in source
+
+
+def test_macos_app_language_selection_saves_supported_codes_to_config() -> None:
+    source = _macos_app_source()
+
+    assert "load_config" in source
+    assert "write_config" in source
+    assert '"English"' in source
+    assert '"Japanese"' in source
+    assert '"Chinese"' in source
+    assert 'self._choose_language("en")' in source
+    assert 'self._choose_language("ja")' in source
+    assert 'self._choose_language("zh")' in source
+
+
+def test_macos_app_permission_steps_have_allow_and_system_settings_actions() -> None:
+    source = _macos_app_source()
+
+    assert '"Allow"' in source
+    assert '"Open System Settings"' in source
+    assert '"requestMicrophone:"' in source
+    assert '"requestAccessibility:"' in source
+    assert '"requestInputMonitoring:"' in source
+    assert "def openSystemSettings_(self, _sender):" in source
+    assert "x-apple.systempreferences:com.apple.preference.security" in source
