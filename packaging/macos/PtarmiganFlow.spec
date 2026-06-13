@@ -32,9 +32,13 @@ def _target_arch() -> str:
 block_cipher = None
 ROOT = Path(SPECPATH).parents[1]
 APP_ICON = ROOT / "assets/icon/PtarmiganFlow.icns"
+WEBUI_SOURCE = ROOT / "src/ptarmigan_flow/webui"
 APP_VERSION = _app_version()
 TARGET_ARCH = _target_arch()
-datas = [(str(ROOT / "config.example.toml"), ".")]
+datas = [
+    (str(ROOT / "config.example.toml"), "."),
+    (str(WEBUI_SOURCE), "ptarmigan_flow/webui"),
+]
 binaries = []
 
 # Backends kept out of the app build. The MLX engines are bundled (below) so

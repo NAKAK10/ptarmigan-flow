@@ -1,4 +1,4 @@
-"""PyObjC onboarding app used by notarized macOS release builds."""
+"""PyObjC WKWebView app used by notarized macOS release builds."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ import subprocess
 import sys
 import threading
 from pathlib import Path
+from typing import Any
 
 from ptarmigan_flow import app_relaunch, login_item, onboarding_strings
 from ptarmigan_flow import onboarding_flow as onboarding_flow_module
@@ -17,19 +18,10 @@ from ptarmigan_flow.app_daemon_controller import (
     daemon_run_command,
 )
 from ptarmigan_flow.app_icon import APP_ICON_FILE, APP_ICON_RESOURCE_PACKAGE
-from ptarmigan_flow.app_settings_model import (
-    SUPPORTED_HOTKEYS,
-    SUPPORTED_LANGUAGES,
-    SUPPORTED_OUTPUT_MODES,
-    AppSettingsModel,
-)
 from ptarmigan_flow.config import (
     default_config_path,
     ensure_config_exists,
-    load_config,
-    write_config,
 )
-from ptarmigan_flow.corrections_editor_model import CorrectionsEditorModel
 from ptarmigan_flow.onboarding_flow import OnboardingFlow
 from ptarmigan_flow.permissions import (
     PermissionReport,
@@ -42,6 +34,7 @@ from ptarmigan_flow.permissions import (
 from ptarmigan_flow.stt import availability, model_download
 from ptarmigan_flow.stt.factory import parse_stt_model
 from ptarmigan_flow.transcription_corrections import resolve_dictionary_path
+from ptarmigan_flow.web_bridge import BridgeDependencies, WebBridgeDispatcher
 
 APP_NAME = "PtarmiganFlow"
 
@@ -102,91 +95,38 @@ def _run_appkit_app() -> int:
     from AppKit import (
         NSApplication,
         NSApplicationActivationPolicyAccessory,
-        NSBackingStoreBuffered,
-        NSButton,
         NSControlStateValueOff,
         NSControlStateValueOn,
         NSImage,
         NSMenu,
         NSMenuItem,
-        NSPopUpButton,
-        NSProgressIndicator,
         NSStatusBar,
-        NSTextField,
         NSVariableStatusItemLength,
-        NSWindow,
-        NSWindowStyleMaskClosable,
-        NSWindowStyleMaskMiniaturizable,
-        NSWindowStyleMaskTitled,
         NSWorkspace,
     )
-    from Foundation import NSURL, NSData, NSMakeRect, NSObject, NSTimer
+    from Foundation import NSURL, NSData, NSObject, NSTimer
+
+    from ptarmigan_flow.web_ui import WebUIController
 
     class OnboardingController(NSObject):
-        """Native step-by-step onboarding window."""
+        """Menu-bar controller whose presentation layer is WKWebView."""
 
-        content_view: object
-        dictionary_content_view: object
-        dictionary_message_label: object
-        dictionary_path: Path
-        dictionary_row_controls: list[dict[str, object]]
-        dictionary_window: object | None
-        dictionary_menu_item: object
-        dictation_status_menu_item: object
-        download_content_view: object
-        download_message_label: object
-        download_progress_indicator: object
-        download_window: object | None
-        login_menu_item: object
-        message_label: object
-        permission_timer: object | None
-        quit_menu_item: object
-        settings_content_view: object
-        settings_hotkey_popup: object
-        settings_language_popup: object
-        settings_menu_item: object
-        settings_message_label: object
-        settings_model: AppSettingsModel
-        settings_model_popup: object
-        settings_output_mode_popup: object
-        settings_window: object | None
-        start_menu_item: object
-        status_item: object
-        status_menu: object
-        stop_menu_item: object
-        _permission_check_generation: int
-        _permission_check_in_progress: bool
-        _permission_check_thread: threading.Thread | None
-        _model_download_process: subprocess.Popen[str] | None
-        _model_download_success_message_key: str
-        _model_download_thread: threading.Thread | None
-        ui_language: str
-        window: object
-
-        # Keep the macOS permission name discoverable for packaging smoke tests: Input Monitoring.
+        # Keep permission names discoverable for packaging smoke tests:
+        # Microphone, Accessibility, Input Monitoring.
         _permission_step_config = {
             "microphone": {
-                "title_key": "microphone_title",
-                "body_key": "microphone_body",
-                "request_action": "requestMicrophone:",
                 "settings_url": (
                     "x-apple.systempreferences:com.apple.preference.security"
                     "?Privacy_Microphone"
                 ),
             },
             "accessibility": {
-                "title_key": "accessibility_title",
-                "body_key": "accessibility_body",
-                "request_action": "requestAccessibility:",
                 "settings_url": (
                     "x-apple.systempreferences:com.apple.preference.security"
                     "?Privacy_Accessibility"
                 ),
             },
             "input_monitoring": {
-                "title_key": "input_monitoring_title",
-                "body_key": "input_monitoring_body",
-                "request_action": "requestInputMonitoring:",
                 "settings_url": (
                     "x-apple.systempreferences:com.apple.preference.security"
                     "?Privacy_ListenEvent"
@@ -199,36 +139,46 @@ def _run_appkit_app() -> int:
             if self is None:
                 return None
             self.onboarding_flow = OnboardingFlow()
-            self.permission_timer = None
-            self._permission_check_generation = 0
-            self._permission_check_in_progress = False
-            self._permission_check_thread = None
-            try:
-                self.ui_language = load_config(default_config_path()).language
-            except Exception:
-                self.ui_language = "en"
             self.daemon_controller = DaemonController(
                 lambda: daemon_run_command(default_config_path())
             )
-            self.dictionary_path, _explicit = resolve_dictionary_path(None)
-            self.corrections_model = CorrectionsEditorModel()
-            self.dictionary_window = None
-            self.dictionary_row_controls = []
-            self.settings_window = None
-            self.download_window = None
-            self._model_download_process = None
+            self.permission_timer = None
+            self._permission_check_generation = 0
+            self._permission_check_in_progress = False
+            self._permission_check_thread: threading.Thread | None = None
+            self._model_download_process: subprocess.Popen[str] | None = None
             self._model_download_success_message_key = "voice_input_started_message"
-            self._model_download_thread = None
+            self._model_download_thread: threading.Thread | None = None
+            self.web_ui = None
+            self.bridge = WebBridgeDispatcher(
+                deps=BridgeDependencies(
+                    config_path=default_config_path,
+                    check_permissions=check_all_permissions,
+                    available_model_entries=availability.available_model_entries,
+                    is_model_downloaded=model_download.is_model_downloaded,
+                    resolve_dictionary_path=self._dictionary_path,
+                    request_permission=self._request_permission,
+                    open_system_settings=self._open_system_settings,
+                    start_dictation=self._start_daemon_if_ready,
+                    stop_dictation=self._stop_daemon,
+                    daemon_is_running=lambda: self.daemon_controller.is_running,
+                    login_is_enabled=login_item.is_enabled,
+                    login_register=login_item.register,
+                    login_unregister=login_item.unregister,
+                    restart_app=self._restart_app,
+                    mark_language_selected=onboarding_flow_module.mark_language_selected,
+                )
+            )
             return self
 
         def applicationDidFinishLaunching_(self, _notification):  # noqa: N802
             self._build_status_item()
-            self._build_window()
             self.onboarding_flow.start(
                 report=check_all_permissions(),
                 language_already_selected=onboarding_flow_module.language_was_selected(),
             )
-            self._render_current_step()
+            self.bridge.set_onboarding_flow(self.onboarding_flow)
+            self.web_ui = WebUIController.alloc().initWithBridge_title_(self.bridge, APP_NAME)
             self._show_onboarding_window_if_needed()
             self._refresh_onboarding_permissions()
             self._start_permission_check()
@@ -242,29 +192,18 @@ def _run_appkit_app() -> int:
             self._start_permission_check()
 
         @objc.python_method
-        def _label(self, text: str, x: float, y: float, w: float, h: float, *, size: float = 14.0):
-            label = NSTextField.labelWithString_(text)
-            label.setFrame_(NSMakeRect(x, y, w, h))
-            label.setFont_(label.font().fontWithSize_(size))
-            return label
-
-        @objc.python_method
-        def _button(self, title: str, action: str, x: float, y: float, w: float):
-            button = NSButton.alloc().initWithFrame_(NSMakeRect(x, y, w, 32))
-            button.setTitle_(title)
-            button.setTarget_(self)
-            button.setAction_(action)
-            return button
+        def _strings(self) -> dict[str, str]:
+            try:
+                language = self.bridge.handle_action("getState", {})["language"]
+            except Exception:
+                language = "en"
+            return onboarding_strings.strings_for(str(language))
 
         @objc.python_method
         def _menu_item(self, title: str, action: str | None):
             item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(title, action, "")
             item.setTarget_(self)
             return item
-
-        @objc.python_method
-        def _strings(self) -> dict[str, str]:
-            return onboarding_strings.strings_for(self.ui_language)
 
         @objc.python_method
         def _build_status_item(self) -> None:
@@ -337,152 +276,41 @@ def _run_appkit_app() -> int:
             self.login_menu_item.setState_(login_state)
 
         @objc.python_method
-        def _build_window(self) -> None:
-            style = (
-                NSWindowStyleMaskTitled
-                | NSWindowStyleMaskClosable
-                | NSWindowStyleMaskMiniaturizable
-            )
-            self.window = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
-                NSMakeRect(0, 0, 640, 430),
-                style,
-                NSBackingStoreBuffered,
-                False,
-            )
-            self.window.setTitle_(APP_NAME)
-            self.content_view = self.window.contentView()
-            self.window.center()
-
-        @objc.python_method
         def _show_onboarding_window_if_needed(self) -> None:
-            if not self.onboarding_flow.is_complete:
-                self.window.makeKeyAndOrderFront_(None)
+            if not self.onboarding_flow.is_complete and self.web_ui is not None:
+                self.web_ui.show(route="onboarding")
                 NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
 
         @objc.python_method
-        def _clear_content_view(self) -> None:
-            for subview in list(self.content_view.subviews()):
-                subview.removeFromSuperview()
-
-        @objc.python_method
-        def _render_current_step(self) -> None:
-            self._clear_content_view()
-            strings = self._strings()
-            self.content_view.addSubview_(
-                self._label(strings["app_setup_title"], 28, 374, 580, 32, size=22.0)
-            )
-            step = self.onboarding_flow.current_step
-            if step == "language":
-                self._render_language_step()
-            elif step == "done":
-                self._render_done_step()
+        def _set_route(self, route: str) -> None:
+            if self.web_ui is None:
+                return
+            if route == "settings":
+                self.web_ui.show(route="settings")
+            elif route == "dictionary":
+                self.web_ui.show(route="dictionary")
             else:
-                self._render_permission_step(step)
-            self.message_label = self._label("", 36, 52, 560, 32)
-            self.content_view.addSubview_(self.message_label)
-            self._restart_permission_timer()
+                self.web_ui.show(route="onboarding")
+            NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
 
         @objc.python_method
-        def _render_language_step(self) -> None:
-            strings = self._strings()
-            self.content_view.addSubview_(
-                self._label(strings["choose_language_title"], 36, 306, 560, 30, size=20.0)
-            )
-            self.content_view.addSubview_(
-                self._label(
-                    strings["choose_language_body"],
-                    36,
-                    270,
-                    560,
-                    24,
-                )
-            )
-            self.content_view.addSubview_(
-                self._button(strings["language_english"], "chooseEnglish:", 36, 214, 150)
-            )
-            self.content_view.addSubview_(
-                self._button(strings["language_japanese"], "chooseJapanese:", 204, 214, 150)
-            )
-            self.content_view.addSubview_(
-                self._button(strings["language_chinese"], "chooseChinese:", 372, 214, 150)
-            )
+        def _state_payload(self) -> dict[str, Any]:
+            return self.bridge.handle_action("getState", {})
 
         @objc.python_method
-        def _render_permission_step(self, step: str) -> None:
-            config = self._permission_step_config[step]
-            strings = self._strings()
-            self.content_view.addSubview_(
-                self._label(
-                    strings[config["title_key"]],
-                    36,
-                    306,
-                    560,
-                    30,
-                    size=20.0,
-                )
-            )
-            self.content_view.addSubview_(
-                self._label(
-                    strings[config["body_key"]],
-                    28,
-                    270,
-                    580,
-                    24,
-                )
-            )
-            self.content_view.addSubview_(
-                self._button(strings["allow_button"], config["request_action"], 36, 214, 150)
-            )
-            self.content_view.addSubview_(
-                self._button(
-                    strings["open_system_settings_button"],
-                    "openSystemSettings:",
-                    204,
-                    214,
-                    190,
-                )
-            )
-            if step in {"accessibility", "input_monitoring"}:
-                self.content_view.addSubview_(
-                    self._label(strings["restart_required_note"], 36, 166, 560, 38)
-                )
-                self.content_view.addSubview_(
-                    self._button(strings["restart_app_button"], "restartApp:", 36, 124, 150)
-                )
+        def _push_event(self, event: str, payload: dict[str, Any]) -> None:
+            if self.web_ui is not None:
+                self.web_ui.push_event(event, payload)
 
         @objc.python_method
-        def _render_done_step(self) -> None:
-            strings = self._strings()
-            self.content_view.addSubview_(
-                self._label(strings["done_title"], 36, 306, 560, 30, size=20.0)
-            )
-            self.content_view.addSubview_(
-                self._label(
-                    strings["done_body"],
-                    36,
-                    270,
-                    560,
-                    24,
-                )
-            )
-            self.content_view.addSubview_(
-                self._button(strings["start_dictation_button"], "startDictation:", 36, 214, 150)
-            )
-            self.content_view.addSubview_(
-                self._button(strings["stop_dictation_button"], "stopDictation:", 204, 214, 140)
-            )
-            self.content_view.addSubview_(
-                self._button(strings["settings_button"], "showSettings:", 362, 214, 128)
-            )
-            self.content_view.addSubview_(
-                self._button(
-                    strings["login_at_startup_button"],
-                    "toggleLoginAtStartup:",
-                    36,
-                    160,
-                    178,
-                )
-            )
+        def _push_daemon_state(self) -> None:
+            self._update_status_menu()
+            self._push_event("daemonState", self._state_payload())
+
+        @objc.python_method
+        def _dictionary_path(self) -> Path:
+            path, _explicit = resolve_dictionary_path(None)
+            return path
 
         @objc.python_method
         def _stop_permission_timer(self) -> None:
@@ -551,64 +379,26 @@ def _run_appkit_app() -> int:
             self._refresh_onboarding_permissions(report)
 
         @objc.python_method
-        def _set_message(self, message: str) -> None:
-            if hasattr(self, "message_label"):
-                self.message_label.setStringValue_(message)
-
-        @objc.python_method
-        def _build_model_download_window(self) -> None:
-            if self.download_window is not None:
-                return
-            style = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable
-            self.download_window = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
-                NSMakeRect(0, 0, 460, 150),
-                style,
-                NSBackingStoreBuffered,
-                False,
-            )
-            self.download_window.setTitle_(APP_NAME)
-            self.download_content_view = self.download_window.contentView()
-            strings = self._strings()
-            self.download_message_label = self._label(
-                strings["download_preparing_message"],
-                28,
-                92,
-                404,
-                26,
-            )
-            self.download_content_view.addSubview_(self.download_message_label)
-            self.download_progress_indicator = NSProgressIndicator.alloc().initWithFrame_(
-                NSMakeRect(28, 54, 404, 20)
-            )
-            self.download_progress_indicator.setMinValue_(0.0)
-            self.download_progress_indicator.setMaxValue_(100.0)
-            self.download_progress_indicator.setIndeterminate_(True)
-            self.download_content_view.addSubview_(self.download_progress_indicator)
-            self.download_window.center()
-
-        @objc.python_method
-        def _show_model_download_progress(
+        def _refresh_onboarding_permissions(
             self,
-            fraction: float | None,
-            message: str,
-        ) -> None:
-            self._build_model_download_window()
-            self.download_message_label.setStringValue_(message)
-            if fraction is None:
-                self.download_progress_indicator.setIndeterminate_(True)
-                self.download_progress_indicator.startAnimation_(None)
-            else:
-                self.download_progress_indicator.stopAnimation_(None)
-                self.download_progress_indicator.setIndeterminate_(False)
-                self.download_progress_indicator.setDoubleValue_(
-                    max(0.0, min(float(fraction), 1.0)) * 100.0
-                )
-            self.download_window.makeKeyAndOrderFront_(None)
-
-        @objc.python_method
-        def _hide_model_download_progress(self) -> None:
-            if self.download_window is not None:
-                self.download_window.orderOut_(None)
+            report: PermissionReport | None = None,
+        ) -> PermissionReport:
+            if report is None:
+                report = check_all_permissions()
+            before_step = self.onboarding_flow.current_step
+            self.onboarding_flow.refresh(report)
+            after_step = self.onboarding_flow.current_step
+            if after_step != before_step:
+                self._show_onboarding_window_if_needed()
+            self._push_event("permissionsChanged", self._state_payload())
+            self._restart_permission_timer()
+            if report.all_granted:
+                if self.onboarding_flow.is_complete:
+                    self._start_daemon_if_ready(
+                        report,
+                        success_message_key="all_permissions_granted_started_message",
+                    )
+            return report
 
         @objc.python_method
         def _terminate_model_download_process(self) -> None:
@@ -620,419 +410,45 @@ def _run_appkit_app() -> int:
             self._model_download_process = None
 
         @objc.python_method
-        def _text_field(self, text: str, x: float, y: float, w: float, h: float = 26):
-            field = NSTextField.alloc().initWithFrame_(NSMakeRect(x, y, w, h))
-            field.setStringValue_(text)
-            return field
-
-        @objc.python_method
-        def _popup(
-            self,
-            items: list[tuple[str, str]],
-            selected_value: str,
-            x: float,
-            y: float,
-            w: float,
-        ):
-            popup = NSPopUpButton.alloc().initWithFrame_pullsDown_(
-                NSMakeRect(x, y, w, 28),
-                False,
-            )
-            selected_item = None
-            for title, value in items:
-                popup.addItemWithTitle_(title)
-                item = popup.lastItem()
-                if item is not None:
-                    item.setRepresentedObject_(value)
-                    if value == selected_value:
-                        selected_item = item
-            if selected_item is not None:
-                popup.selectItem_(selected_item)
-            elif items:
-                popup.selectItemAtIndex_(0)
-            return popup
-
-        @objc.python_method
-        def _selected_popup_value(self, popup: object) -> str:
-            selected_item = popup.selectedItem()
-            if selected_item is None:
-                return ""
-            value = selected_item.representedObject()
-            if value is not None:
-                return str(value)
-            return str(selected_item.title())
-
-        @objc.python_method
-        def _settings_model_items(self) -> list[tuple[str, str]]:
-            return [
-                (f"{entry.label} ({entry.token})", entry.token)
-                for entry in availability.available_model_entries()
-            ]
-
-        @objc.python_method
-        def _settings_language_items(self) -> list[tuple[str, str]]:
-            strings = self._strings()
-            labels = {
-                "en": strings["language_english"],
-                "ja": strings["language_japanese"],
-                "zh": strings["language_chinese"],
-            }
-            return [(labels[code], code) for code in SUPPORTED_LANGUAGES]
-
-        @objc.python_method
-        def _settings_hotkey_items(self) -> list[tuple[str, str]]:
-            return [(hotkey, hotkey) for hotkey in SUPPORTED_HOTKEYS]
-
-        @objc.python_method
-        def _settings_output_mode_items(self) -> list[tuple[str, str]]:
-            strings = self._strings()
-            labels = {
-                "direct_typing": strings["output_direct_typing"],
-                "clipboard_paste": strings["output_clipboard_paste"],
-            }
-            return [(labels[mode], mode) for mode in SUPPORTED_OUTPUT_MODES]
-
-        @objc.python_method
-        def _build_settings_window(self) -> None:
-            if self.settings_window is not None:
-                return
-            style = (
-                NSWindowStyleMaskTitled
-                | NSWindowStyleMaskClosable
-                | NSWindowStyleMaskMiniaturizable
-            )
-            self.settings_window = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
-                NSMakeRect(0, 0, 620, 390),
-                style,
-                NSBackingStoreBuffered,
-                False,
-            )
-            self.settings_content_view = self.settings_window.contentView()
-            self.settings_window.center()
-
-        @objc.python_method
-        def _clear_settings_view(self) -> None:
-            for subview in list(self.settings_content_view.subviews()):
-                subview.removeFromSuperview()
-
-        @objc.python_method
-        def _set_settings_message(self, message: str) -> None:
-            if hasattr(self, "settings_message_label"):
-                self.settings_message_label.setStringValue_(message)
-
-        @objc.python_method
-        def _settings_field_labels(self, fields: list[str]) -> str:
-            strings = self._strings()
-            labels = {
-                "model": strings["settings_model_label"],
-                "language": strings["settings_language_label"],
-                "hotkey": strings["settings_hotkey_label"],
-                "output_mode": strings["settings_output_mode_label"],
-            }
-            return ", ".join(labels.get(field, field) for field in fields)
-
-        @objc.python_method
-        def _render_settings_form(self) -> None:
-            self._clear_settings_view()
-            strings = self._strings()
-            self.settings_window.setTitle_(strings["settings_window_title"])
-            self.settings_content_view.addSubview_(
-                self._label(strings["settings_window_title"], 28, 338, 560, 30, size=22.0)
-            )
-
-            self.settings_content_view.addSubview_(
-                self._label(strings["settings_model_label"], 34, 284, 160, 24)
-            )
-            model_items = self._settings_model_items()
-            self.settings_model_popup = self._popup(
-                model_items,
-                self.settings_model.model,
-                210,
-                280,
-                360,
-            )
-            self.settings_content_view.addSubview_(self.settings_model_popup)
-            if not model_items:
-                self.settings_content_view.addSubview_(
-                    self._label(strings["settings_no_models_message"], 210, 250, 360, 24)
-                )
-
-            self.settings_content_view.addSubview_(
-                self._label(strings["settings_language_label"], 34, 224, 160, 24)
-            )
-            self.settings_language_popup = self._popup(
-                self._settings_language_items(),
-                self.settings_model.language,
-                210,
-                220,
-                220,
-            )
-            self.settings_content_view.addSubview_(self.settings_language_popup)
-
-            self.settings_content_view.addSubview_(
-                self._label(strings["settings_hotkey_label"], 34, 164, 160, 24)
-            )
-            self.settings_hotkey_popup = self._popup(
-                self._settings_hotkey_items(),
-                self.settings_model.hotkey,
-                210,
-                160,
-                220,
-            )
-            self.settings_content_view.addSubview_(self.settings_hotkey_popup)
-
-            self.settings_content_view.addSubview_(
-                self._label(strings["settings_output_mode_label"], 34, 104, 160, 24)
-            )
-            self.settings_output_mode_popup = self._popup(
-                self._settings_output_mode_items(),
-                self.settings_model.output_mode,
-                210,
-                100,
-                220,
-            )
-            self.settings_content_view.addSubview_(self.settings_output_mode_popup)
-
-            self.settings_content_view.addSubview_(
-                self._button(strings["open_config_advanced_button"], "openConfig:", 34, 46, 230)
-            )
-            self.settings_content_view.addSubview_(
-                self._button(strings["settings_save_button"], "saveSettings:", 480, 46, 90)
-            )
-            self.settings_message_label = self._label("", 34, 16, 536, 24)
-            self.settings_content_view.addSubview_(self.settings_message_label)
-
-        @objc.python_method
-        def _build_dictionary_window(self) -> None:
-            if self.dictionary_window is not None:
-                return
-            style = (
-                NSWindowStyleMaskTitled
-                | NSWindowStyleMaskClosable
-                | NSWindowStyleMaskMiniaturizable
-            )
-            self.dictionary_window = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
-                NSMakeRect(0, 0, 760, 620),
-                style,
-                NSBackingStoreBuffered,
-                False,
-            )
-            self.dictionary_content_view = self.dictionary_window.contentView()
-            self.dictionary_window.center()
-
-        @objc.python_method
-        def _clear_dictionary_view(self) -> None:
-            for subview in list(self.dictionary_content_view.subviews()):
-                subview.removeFromSuperview()
-
-        @objc.python_method
-        def _load_dictionary_model(self) -> None:
-            self.dictionary_path, _explicit = resolve_dictionary_path(None)
-            self.corrections_model = CorrectionsEditorModel.load(self.dictionary_path)
-
-        @objc.python_method
-        def _render_dictionary_editor(self) -> None:
-            self._clear_dictionary_view()
-            strings = self._strings()
-            self.dictionary_row_controls = []
-            self.dictionary_window.setTitle_(strings["dictionary_editor_title"])
-            self.dictionary_content_view.addSubview_(
-                self._label(strings["dictionary_editor_title"], 28, 570, 700, 30, size=22.0)
-            )
-            self.dictionary_content_view.addSubview_(
-                self._label(str(self.dictionary_path), 30, 542, 700, 22)
-            )
-            y = self._render_dictionary_section(
-                "exact",
-                strings["dictionary_exact_rules_title"],
-                self.corrections_model.exact,
-                492,
-            )
-            self._render_dictionary_section(
-                "regex",
-                strings["dictionary_regex_rules_title"],
-                self.corrections_model.regex,
-                y - 26,
-            )
-            self.dictionary_content_view.addSubview_(
-                self._button(
-                    strings["dictionary_add_exact_button"],
-                    "addExactCorrectionRow:",
-                    30,
-                    56,
-                    118,
-                )
-            )
-            self.dictionary_content_view.addSubview_(
-                self._button(
-                    strings["dictionary_add_regex_button"],
-                    "addRegexCorrectionRow:",
-                    162,
-                    56,
-                    118,
-                )
-            )
-            self.dictionary_content_view.addSubview_(
-                self._button(strings["dictionary_save_button"], "saveDictionary:", 626, 56, 90)
-            )
-            self.dictionary_message_label = self._label("", 30, 22, 700, 24)
-            self.dictionary_content_view.addSubview_(self.dictionary_message_label)
-
-        @objc.python_method
-        def _render_dictionary_section(
-            self,
-            section: str,
-            title: str,
-            entries: dict[str, list[str]],
-            y: float,
-        ) -> float:
-            strings = self._strings()
-            self.dictionary_content_view.addSubview_(self._label(title, 30, y, 200, 24, size=17.0))
-            y -= 30
-            self.dictionary_content_view.addSubview_(
-                self._label(strings["dictionary_canonical_label"], 32, y, 180, 20)
-            )
-            self.dictionary_content_view.addSubview_(
-                self._label(strings["dictionary_candidates_patterns_label"], 240, y, 360, 20)
-            )
-            y -= 32
-            if not entries:
-                self.dictionary_content_view.addSubview_(
-                    self._label(strings["dictionary_no_rules"], 32, y, 300, 24)
-                )
-                return y - 38
-            for key, values in entries.items():
-                key_field = self._text_field(key, 30, y, 190)
-                values_field = self._text_field(", ".join(values), 238, y, 360)
-                delete_button = self._button(
-                    strings["dictionary_delete_button"],
-                    "deleteDictionaryRow:",
-                    616,
-                    y - 3,
-                    88,
-                )
-                delete_button.setTag_(len(self.dictionary_row_controls))
-                self.dictionary_content_view.addSubview_(key_field)
-                self.dictionary_content_view.addSubview_(values_field)
-                self.dictionary_content_view.addSubview_(delete_button)
-                self.dictionary_row_controls.append(
-                    {
-                        "section": section,
-                        "key_field": key_field,
-                        "values_field": values_field,
-                    }
-                )
-                y -= 36
-            return y - 20
-
-        @objc.python_method
-        def _set_dictionary_message(self, message: str) -> None:
-            if hasattr(self, "dictionary_message_label"):
-                self.dictionary_message_label.setStringValue_(message)
-
-        @objc.python_method
-        def _split_dictionary_values(self, text: str) -> list[str]:
-            return [part.strip() for part in text.replace("\n", ",").split(",") if part.strip()]
-
-        @objc.python_method
-        def _sync_dictionary_model_from_controls(self) -> None:
-            exact: dict[str, list[str]] = {}
-            regex: dict[str, list[str]] = {}
-            for row in self.dictionary_row_controls:
-                section = row["section"]
-                key = str(row["key_field"].stringValue())
-                values = self._split_dictionary_values(str(row["values_field"].stringValue()))
-                if section == "exact":
-                    exact[key] = values
-                else:
-                    regex[key] = values
-            self.corrections_model = CorrectionsEditorModel(exact=exact, regex=regex)
-
-        @objc.python_method
-        def _new_dictionary_key(self, section: str) -> str:
-            strings = self._strings()
-            if section == "exact":
-                table = self.corrections_model.exact
-                base = strings["dictionary_new_exact_rule"]
-            else:
-                table = self.corrections_model.regex
-                base = strings["dictionary_new_regex_rule"]
-            if base not in table:
-                return base
-            index = 2
-            while f"{base} {index}" in table:
-                index += 1
-            return f"{base} {index}"
-
-        @objc.python_method
-        def _save_language(self, code: str) -> Path:
-            config_path = default_config_path()
-            ensure_config_exists(config_path)
-            config = load_config(config_path)
-            config.language = code
-            write_config(config_path, config)
-            return config_path
-
-        @objc.python_method
-        def _choose_language(self, code: str) -> None:
-            strings = self._strings()
-            try:
-                config_path = self._save_language(code)
-                self.ui_language = code
-                self.onboarding_flow.choose_language(code)
-                onboarding_flow_module.mark_language_selected()
-            except Exception as exc:
-                self._set_message(strings["language_save_failed_message"].format(error=exc))
-                return
-            self._render_current_step()
-            self._update_status_menu()
-            self._set_message(strings["language_saved_message"].format(path=config_path))
-            self._refresh_onboarding_permissions()
-            self._start_permission_check()
-
-        @objc.python_method
-        def _refresh_onboarding_permissions(
-            self,
-            report: PermissionReport | None = None,
-        ) -> PermissionReport:
-            if report is None:
-                report = check_all_permissions()
-            before_step = self.onboarding_flow.current_step
-            self.onboarding_flow.refresh(report)
-            after_step = self.onboarding_flow.current_step
-            if after_step != before_step:
-                self._render_current_step()
-                self._show_onboarding_window_if_needed()
-            if report.all_granted:
-                if self.onboarding_flow.is_complete:
-                    self._start_daemon_if_ready(
-                        report,
-                        success_message_key="all_permissions_granted_started_message",
-                    )
-            return report
-
-        @objc.python_method
         def _configured_model_token(self) -> str | None:
-            strings = self._strings()
             try:
-                config = load_config(default_config_path())
+                config = self.bridge._load_config()
                 model_token = str(config.stt.model)
                 parse_stt_model(model_token)
-            except Exception as exc:
-                self._set_message(strings["daemon_start_failed_message"].format(error=exc))
+            except Exception:
+                self._push_daemon_state()
                 return None
             return model_token
 
         @objc.python_method
+        def _configured_backend_is_available(self) -> bool:
+            try:
+                config = self.bridge._load_config()
+                model_token = str(config.stt.model)
+                backend, _model_id = parse_stt_model(model_token)
+            except Exception:
+                self._push_daemon_state()
+                return False
+            if availability.is_backend_available(backend):
+                return True
+            self._push_daemon_state()
+            return False
+
+        @objc.python_method
         def _start_model_download(self, model_token: str, success_message_key: str) -> None:
-            strings = self._strings()
             process = self._model_download_process
             if process is not None and process.poll() is None:
-                self._show_model_download_progress(None, strings["download_preparing_message"])
+                self._push_event(
+                    "downloadProgress",
+                    {"type": "progress", "model": model_token, "fraction": None},
+                )
                 return
 
             self._model_download_success_message_key = success_message_key
-            self._show_model_download_progress(None, strings["download_preparing_message"])
+            self._push_event(
+                "downloadProgress",
+                {"type": "progress", "model": model_token, "fraction": None},
+            )
             try:
                 process = subprocess.Popen(
                     [
@@ -1049,15 +465,17 @@ def _run_appkit_app() -> int:
                     bufsize=1,
                 )
             except Exception as exc:
-                self._hide_model_download_progress()
-                self._set_message(strings["download_failed_message"].format(error=exc))
-                self._update_status_menu()
+                self._push_event(
+                    "downloadProgress",
+                    {"type": "error", "model": model_token, "message": str(exc)},
+                )
+                self._push_daemon_state()
                 return
 
             self._model_download_process = process
             thread = threading.Thread(
                 target=self._read_model_download_progress,
-                args=(process, success_message_key),
+                args=(process, model_token, success_message_key),
                 daemon=True,
             )
             self._model_download_thread = thread
@@ -1065,14 +483,17 @@ def _run_appkit_app() -> int:
                 thread.start()
             except RuntimeError as exc:
                 self._terminate_model_download_process()
-                self._hide_model_download_progress()
-                self._set_message(strings["download_failed_message"].format(error=exc))
-                self._update_status_menu()
+                self._push_event(
+                    "downloadProgress",
+                    {"type": "error", "model": model_token, "message": str(exc)},
+                )
+                self._push_daemon_state()
 
         @objc.python_method
         def _read_model_download_progress(
             self,
             process: subprocess.Popen[str],
+            model_token: str,
             success_message_key: str,
         ) -> None:
             saw_terminal_event = False
@@ -1088,6 +509,7 @@ def _run_appkit_app() -> int:
                         continue
                     if not isinstance(payload, dict):
                         continue
+                    payload["model"] = model_token
                     payload["success_message_key"] = success_message_key
                     if payload.get("type") in {"done", "error"}:
                         saw_terminal_event = True
@@ -1097,12 +519,17 @@ def _run_appkit_app() -> int:
                 return
             if return_code == 0:
                 self._send_model_download_event(
-                    {"type": "done", "success_message_key": success_message_key}
+                    {
+                        "type": "done",
+                        "model": model_token,
+                        "success_message_key": success_message_key,
+                    }
                 )
                 return
             self._send_model_download_event(
                 {
                     "type": "error",
+                    "model": model_token,
                     "message": f"download-model exited with status {return_code}",
                     "success_message_key": success_message_key,
                 }
@@ -1119,33 +546,14 @@ def _run_appkit_app() -> int:
             except Exception:
                 return
 
-        @objc.python_method
-        def _model_download_progress_message(self, fraction: float | None) -> str:
-            strings = self._strings()
-            if fraction is None:
-                return strings["download_preparing_message"]
-            clamped = max(0.0, min(float(fraction), 1.0))
-            percent = f"{int(round(clamped * 100.0))}%"
-            return strings["download_in_progress_message"].format(percent=percent)
-
         def applyModelDownloadProgress_(self, payload):  # noqa: N802
-            strings = self._strings()
             try:
                 event_type = str(payload.get("type", ""))
             except Exception:
                 return
-            if event_type == "progress":
-                raw_fraction = payload.get("fraction")
-                fraction = None if raw_fraction is None else float(raw_fraction)
-                self._show_model_download_progress(
-                    fraction,
-                    self._model_download_progress_message(fraction),
-                )
-                return
+            self._push_event("downloadProgress", payload)
             if event_type == "done":
                 self._model_download_process = None
-                self._hide_model_download_progress()
-                self._set_message(strings["download_complete_message"])
                 success_key = str(
                     payload.get(
                         "success_message_key",
@@ -1156,10 +564,7 @@ def _run_appkit_app() -> int:
                 return
             if event_type == "error":
                 self._model_download_process = None
-                self._hide_model_download_progress()
-                error = str(payload.get("message", "unknown error"))
-                self._set_message(strings["download_failed_message"].format(error=error))
-                self._update_status_menu()
+                self._push_event("daemonState", self._state_payload())
 
         @objc.python_method
         def _start_daemon_if_ready(
@@ -1168,253 +573,90 @@ def _run_appkit_app() -> int:
             *,
             success_message_key: str = "voice_input_started_message",
         ) -> None:
-            strings = self._strings()
             if report is None:
                 report = check_all_permissions()
             if not report.all_granted:
-                self._set_message(strings["grant_permissions_message"])
-                self._update_status_menu()
+                self._push_daemon_state()
                 return
             if not self._configured_backend_is_available():
-                self._update_status_menu()
+                self._push_daemon_state()
                 return
             model_token = self._configured_model_token()
             if model_token is None:
-                self._update_status_menu()
+                self._push_daemon_state()
                 return
             if not model_download.is_model_downloaded(model_token):
                 self._start_model_download(model_token, success_message_key)
-                self._update_status_menu()
+                self._push_daemon_state()
                 return
             if not self.daemon_controller.is_running:
                 try:
                     self.daemon_controller.start()
-                except Exception as exc:
-                    self._set_message(
-                        strings["daemon_start_failed_message"].format(error=exc)
-                    )
-                    self._update_status_menu()
+                except Exception:
+                    self._push_daemon_state()
                     return
-            if self.daemon_controller.is_running:
-                self._set_message(strings[success_message_key])
-                self._update_status_menu()
-                return
-            error = self.daemon_controller.last_error
-            if error is None:
-                self._set_message(strings["daemon_not_running_message"])
-            else:
-                self._set_message(strings["daemon_start_failed_message"].format(error=error))
-            self._update_status_menu()
+            self._push_daemon_state()
 
         @objc.python_method
-        def _configured_backend_is_available(self) -> bool:
-            strings = self._strings()
-            try:
-                config = load_config(default_config_path())
-                model_token = str(config.stt.model)
-                backend, _model_id = parse_stt_model(model_token)
-            except Exception as exc:
-                self._set_message(strings["daemon_start_failed_message"].format(error=exc))
-                return False
-            if availability.is_backend_available(backend):
-                return True
-            self._set_message(strings["model_unavailable_message"].format(model=model_token))
-            return False
+        def _stop_daemon(self) -> None:
+            self.daemon_controller.stop()
+            self._push_daemon_state()
 
-        def pollPermissions_(self, _timer):  # noqa: N802
+        @objc.python_method
+        def _request_permission(self, kind: str) -> None:
+            if kind == "microphone":
+                request_microphone_permission()
+            elif kind == "accessibility":
+                request_accessibility_permission()
+            elif kind == "input_monitoring":
+                request_input_monitoring_permission()
             self._start_permission_check()
 
-        def chooseEnglish_(self, _sender):  # noqa: N802
-            self._choose_language("en")
-
-        def chooseJapanese_(self, _sender):  # noqa: N802
-            self._choose_language("ja")
-
-        def chooseChinese_(self, _sender):  # noqa: N802
-            self._choose_language("zh")
-
-        def requestMicrophone_(self, _sender):  # noqa: N802
-            request_microphone_permission()
-            self._start_permission_check()
-
-        def requestAccessibility_(self, _sender):  # noqa: N802
-            request_accessibility_permission()
-            self._start_permission_check()
-
-        def requestInputMonitoring_(self, _sender):  # noqa: N802
-            request_input_monitoring_permission()
-            self._start_permission_check()
-
-        def openSystemSettings_(self, _sender):  # noqa: N802
-            step = self.onboarding_flow.current_step
-            settings_url = self._permission_step_config.get(step, {}).get("settings_url")
+        @objc.python_method
+        def _open_system_settings(self, kind: str) -> None:
+            settings_url = self._permission_step_config.get(kind, {}).get("settings_url")
             if settings_url is None:
                 return
             url = NSURL.URLWithString_(settings_url)
             if url is not None:
                 NSWorkspace.sharedWorkspace().openURL_(url)
 
-        def restartApp_(self, _sender):  # noqa: N802
+        @objc.python_method
+        def _toggle_login(self) -> None:
+            if login_item.is_enabled():
+                login_item.unregister()
+            else:
+                login_item.register()
+            self._update_status_menu()
+            self._push_event("daemonState", self._state_payload())
+
+        @objc.python_method
+        def _restart_app(self) -> bool:
             if app_relaunch.relaunch_app():
                 NSApplication.sharedApplication().terminate_(self)
-                return
-            self._set_message(self._strings()["restart_failed_message"])
+                return True
+            return False
+
+        def pollPermissions_(self, _timer):  # noqa: N802
+            self._start_permission_check()
 
         def startDictation_(self, _sender):  # noqa: N802
             self._start_daemon_if_ready()
 
         def stopDictation_(self, _sender):  # noqa: N802
-            self.daemon_controller.stop()
-            self._set_message(self._strings()["dictation_stopped_message"])
-            self._update_status_menu()
+            self._stop_daemon()
 
         def showSettings_(self, _sender):  # noqa: N802
-            self._build_settings_window()
-            strings = self._strings()
-            try:
-                self.settings_model = AppSettingsModel.load(default_config_path())
-                load_error = None
-            except Exception as exc:
-                self.settings_model = AppSettingsModel(
-                    model="",
-                    language=self.ui_language,
-                    hotkey="right_cmd",
-                    output_mode="direct_typing",
-                )
-                load_error = exc
-            self._render_settings_form()
-            if load_error is not None:
-                self._set_settings_message(
-                    strings["settings_load_failed_message"].format(error=load_error)
-                )
-            self.settings_window.makeKeyAndOrderFront_(None)
-            NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
-
-        def saveSettings_(self, _sender):  # noqa: N802
-            strings = self._strings()
-            self.settings_model = AppSettingsModel(
-                model=self._selected_popup_value(self.settings_model_popup),
-                language=self._selected_popup_value(self.settings_language_popup),
-                hotkey=self._selected_popup_value(self.settings_hotkey_popup),
-                output_mode=self._selected_popup_value(self.settings_output_mode_popup),
-            )
-            errors = self.settings_model.validate()
-            if errors:
-                self._set_settings_message(
-                    strings["settings_validation_error"].format(
-                        fields=self._settings_field_labels(errors),
-                    )
-                )
-                return
-            try:
-                self.settings_model.save(default_config_path())
-            except Exception as exc:
-                self._set_settings_message(
-                    strings["settings_save_failed_message"].format(error=exc)
-                )
-                return
-            self.ui_language = self.settings_model.language
-            self._update_status_menu()
-            self._render_current_step()
-            self._render_settings_form()
-            self._set_settings_message(strings["settings_saved_message"])
-            self._set_message(strings["settings_saved_message"])
+            self._set_route("settings")
 
         def showDictionaryEditor_(self, _sender):  # noqa: N802
-            self._build_dictionary_window()
-            try:
-                self._load_dictionary_model()
-                load_error = None
-            except Exception as exc:
-                self.corrections_model = CorrectionsEditorModel()
-                load_error = exc
-            self._render_dictionary_editor()
-            if load_error is not None:
-                self._set_dictionary_message(
-                    self._strings()["dictionary_load_failed_message"].format(error=load_error)
-                )
-            self.dictionary_window.makeKeyAndOrderFront_(None)
-            NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
-
-        def addExactCorrectionRow_(self, _sender):  # noqa: N802
-            self._sync_dictionary_model_from_controls()
-            self.corrections_model.add_exact(
-                self._new_dictionary_key("exact"),
-                [self._strings()["dictionary_default_candidate"]],
-            )
-            self._render_dictionary_editor()
-
-        def addRegexCorrectionRow_(self, _sender):  # noqa: N802
-            self._sync_dictionary_model_from_controls()
-            self.corrections_model.add_regex(
-                self._new_dictionary_key("regex"),
-                [self._strings()["dictionary_default_pattern"]],
-            )
-            self._render_dictionary_editor()
-
-        def deleteDictionaryRow_(self, sender):  # noqa: N802
-            index = int(sender.tag())
-            self._sync_dictionary_model_from_controls()
-            if index >= len(self.dictionary_row_controls):
-                self._render_dictionary_editor()
-                return
-            row = self.dictionary_row_controls[index]
-            key = str(row["key_field"].stringValue())
-            if row["section"] == "exact":
-                self.corrections_model.remove_exact(key)
-            else:
-                self.corrections_model.remove_regex(key)
-            self._render_dictionary_editor()
-
-        def saveDictionary_(self, _sender):  # noqa: N802
-            strings = self._strings()
-            self._sync_dictionary_model_from_controls()
-            errors = self.corrections_model.validate()
-            if errors:
-                error = errors[0]
-                self._set_dictionary_message(
-                    strings["dictionary_invalid_rule_message"].format(
-                        section=error.section,
-                        key=error.key,
-                        pattern=error.pattern,
-                        message=error.message,
-                    )
-                )
-                return
-            try:
-                self.corrections_model.save(self.dictionary_path)
-            except Exception as exc:
-                self._set_dictionary_message(
-                    strings["dictionary_save_failed_message"].format(error=exc)
-                )
-                return
-            self._set_dictionary_message(strings["dictionary_saved_message"])
-            self._set_message(strings["dictionary_saved_message"])
-
-        def openConfig_(self, _sender):  # noqa: N802
-            config_path = open_config()
-            message = self._strings()["config_opened_message"].format(path=config_path)
-            self._set_message(message)
-            self._set_settings_message(message)
+            self._set_route("dictionary")
 
         def toggleLoginAtStartup_(self, _sender):  # noqa: N802
-            strings = self._strings()
-            if login_item.is_enabled():
-                changed = login_item.unregister()
-                message = (
-                    strings["login_disabled_message"]
-                    if changed
-                    else strings["login_disable_failed_message"]
-                )
-            else:
-                changed = login_item.register()
-                message = (
-                    strings["login_enabled_message"]
-                    if changed
-                    else strings["login_enable_failed_message"]
-                )
-            self._set_message(message)
-            self._update_status_menu()
+            self._toggle_login()
+
+        def restartApp_(self, _sender):  # noqa: N802
+            self._restart_app()
 
         def quit_(self, _sender):  # noqa: N802
             NSApplication.sharedApplication().terminate_(self)

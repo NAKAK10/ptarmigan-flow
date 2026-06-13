@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.resources
 import json
 import logging
 import os
@@ -108,6 +109,35 @@ def _copy_app_icon(resources_dir: Path) -> bool:
     return True
 
 
+def _copy_webui_resources(resources_dir: Path) -> bool:
+    """Copy bundled WKWebView assets into the local .app resources directory."""
+    source_dir = Path(importlib.resources.files("ptarmigan_flow").joinpath("webui"))
+    if not source_dir.is_dir():
+        return False
+
+    target_dir = resources_dir / "webui"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    changed = False
+    for source_path in source_dir.iterdir():
+        if not source_path.is_file():
+            continue
+        target_path = target_dir / source_path.name
+        source_bytes = source_path.read_bytes()
+        existing_bytes: bytes | None = None
+        if target_path.exists():
+            try:
+                existing_bytes = target_path.read_bytes()
+            except OSError:
+                pass
+        if existing_bytes == source_bytes:
+            continue
+        target_path.write_bytes(source_bytes)
+        changed = True
+    if changed:
+        LOGGER.debug("app bundle: webui resources updated")
+    return changed
+
+
 def install_app_bundle_from_env(app_bundle_path: Path | None = None) -> Path | None:
     values = _environment_values()
     if values is None:
@@ -139,6 +169,10 @@ def install_app_bundle_from_env(app_bundle_path: Path | None = None) -> Path | N
 
     # --- app icon: copy only when content differs ---
     if _copy_app_icon(resources_dir):
+        any_changed = True
+
+    # --- WKWebView assets: copy only when content differs ---
+    if _copy_webui_resources(resources_dir):
         any_changed = True
 
     # --- Info.plist: write only when content differs ---

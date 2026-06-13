@@ -7,11 +7,23 @@ import ptarmigan_flow.cli as cli_module
 from ptarmigan_flow import macos_app
 from ptarmigan_flow.app_icon import APP_ICON_FILE
 
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def _source(relative: str) -> str:
+    return (ROOT / relative).read_text(encoding="utf-8")
+
 
 def _macos_app_source() -> str:
-    return (Path(__file__).resolve().parents[1] / "src/ptarmigan_flow/macos_app.py").read_text(
-        encoding="utf-8",
-    )
+    return _source("src/ptarmigan_flow/macos_app.py")
+
+
+def _web_ui_source() -> str:
+    return _source("src/ptarmigan_flow/web_ui.py")
+
+
+def _web_bridge_source() -> str:
+    return _source("src/ptarmigan_flow/web_bridge.py")
 
 
 def test_dispatch_cli_args_handles_launchd_python_module_form(monkeypatch) -> None:
@@ -82,8 +94,6 @@ def test_main_calls_freeze_support_before_dispatch(monkeypatch) -> None:
     monkeypatch.setattr(macos_app, "_dispatch_cli_args", fake_dispatch)
 
     assert macos_app.main() == 0
-    # freeze_support must run before any CLI dispatch / GUI launch so that
-    # multiprocessing worker children never fall through to the GUI entry point.
     assert calls == ["freeze_support", "dispatch"]
 
 
@@ -97,277 +107,44 @@ def test_macos_app_sets_runtime_application_icon() -> None:
     assert APP_ICON_FILE == "PtarmiganFlow.icns"
 
 
-def test_macos_app_wires_subprocess_daemon_controller() -> None:
+def test_macos_app_uses_wkwebview_host_instead_of_fixed_coordinate_appkit_ui() -> None:
     source = _macos_app_source()
 
-    assert "from ptarmigan_flow.app_daemon_controller import (" in source
-    assert "DaemonController" in source
-    assert "daemon_run_command" in source
-    assert "build_daemon_from_config" not in source
-    assert "self.daemon_controller = DaemonController" in source
-    assert "lambda: daemon_run_command(default_config_path())" in source
+    assert "from ptarmigan_flow.web_ui import WebUIController" in source
+    assert "self.web_ui = WebUIController" in source
+    assert "self.web_ui.show(route=\"onboarding\")" in source
+    assert "self.web_ui.show(route=\"settings\")" in source
+    assert "self.web_ui.show(route=\"dictionary\")" in source
+    for removed in (
+        "NSButton",
+        "NSTextField",
+        "NSPopUpButton",
+        "NSProgressIndicator",
+        "NSMakeRect(0, 0, 640, 430)",
+        "dictionary_row_controls",
+        "settings_model_popup",
+        "download_progress_indicator",
+        "def _label(",
+        "def _button(",
+    ):
+        assert removed not in source
 
 
-def test_macos_app_exposes_start_stop_dictation_actions() -> None:
-    source = _macos_app_source()
+def test_web_ui_hosts_wkwebview_and_message_bridge() -> None:
+    source = _web_ui_source()
 
-    assert 'self._button(strings["start_dictation_button"], "startDictation:"' in source
-    assert 'self._button(strings["stop_dictation_button"], "stopDictation:"' in source
-    assert "def startDictation_(self, _sender):" in source
-    assert "def stopDictation_(self, _sender):" in source
-    assert "self.daemon_controller.start()" in source
-    assert "self.daemon_controller.stop()" in source
-    assert '"Start Dictation"' not in source
-    assert '"Stop Dictation"' not in source
-
-
-def test_macos_app_auto_starts_daemon_and_stops_on_termination() -> None:
-    source = _macos_app_source()
-
-    assert "if report.all_granted:" in source
-    assert "self._start_daemon_if_ready(" in source
-    assert 'success_message_key="all_permissions_granted_started_message"' in source
-    assert "def applicationWillTerminate_(self, _notification):" in source
-    assert "self.daemon_controller.stop()" in source
+    assert "WKWebView" in source
+    assert "WKWebViewConfiguration" in source
+    assert "WKUserContentController" in source
+    assert 'addScriptMessageHandler_name_(self, "bridge")' in source
+    assert "userContentController_didReceiveScriptMessage_" in source
+    assert "window.app.dispatch(" in source
+    assert "evaluateJavaScript_completionHandler_" in source
+    assert "loadFileURL_allowingReadAccessToURL_" in source
+    assert "importlib.resources.files" in source
 
 
-def test_macos_app_guards_auto_start_by_configured_backend_availability() -> None:
-    source = _macos_app_source()
-
-    assert "from ptarmigan_flow.stt import availability" in source
-    assert "from ptarmigan_flow.stt.factory import parse_stt_model" in source
-    assert "backend, _model_id = parse_stt_model(model_token)" in source
-    assert "availability.is_backend_available(backend)" in source
-    assert 'strings["model_unavailable_message"].format(model=model_token)' in source
-    start_method = source.split("def _start_daemon_if_ready", maxsplit=1)[1].split(
-        "def pollPermissions_",
-        maxsplit=1,
-    )[0]
-    assert "if not self._configured_backend_is_available():" in start_method
-    assert "self.daemon_controller.start()" in start_method
-
-
-def test_macos_app_guards_daemon_start_by_model_download_status() -> None:
-    source = _macos_app_source()
-    start_method = source.split("def _start_daemon_if_ready", maxsplit=1)[1].split(
-        "def pollPermissions_",
-        maxsplit=1,
-    )[0]
-
-    assert "from ptarmigan_flow.stt import availability, model_download" in source
-    assert "model_token = self._configured_model_token()" in start_method
-    assert "model_download.is_model_downloaded(model_token)" in start_method
-    assert "self._start_model_download(model_token, success_message_key)" in start_method
-    assert "self.daemon_controller.start()" in start_method
-
-
-def test_macos_app_downloads_model_with_jsonl_child_process_off_main_thread() -> None:
-    source = _macos_app_source()
-
-    assert "import json" in source
-    assert "subprocess.Popen(" in source
-    assert "sys.executable" in source
-    assert '"-m"' in source
-    assert '"ptarmigan_flow.cli"' in source
-    assert '"download-model"' in source
-    assert "stdout=subprocess.PIPE" in source
-    assert "stderr=subprocess.STDOUT" in source
-    assert "text=True" in source
-    assert "threading.Thread(" in source
-    assert "target=self._read_model_download_progress" in source
-    assert "json.loads(line)" in source
-    assert "performSelectorOnMainThread_withObject_waitUntilDone_(" in source
-    assert "applyModelDownloadProgress_" in source
-
-
-def test_macos_app_updates_progress_indicator_for_download_events() -> None:
-    source = _macos_app_source()
-
-    assert "NSProgressIndicator" in source
-    assert "self.download_progress_indicator" in source
-    assert "setIndeterminate_(True)" in source
-    assert "setIndeterminate_(False)" in source
-    assert "setDoubleValue_(" in source
-    assert '"download_preparing_message"' in source
-    assert '"download_in_progress_message"' in source
-    assert '"download_complete_message"' in source
-    assert '"download_failed_message"' in source
-
-
-def test_macos_app_uses_onboarding_flow_for_step_wizard() -> None:
-    source = _macos_app_source()
-
-    assert "from ptarmigan_flow.onboarding_flow import OnboardingFlow" in source
-    assert "from ptarmigan_flow import onboarding_flow as onboarding_flow_module" in source
-    assert "from ptarmigan_flow import app_relaunch, login_item, onboarding_strings" in source
-    assert "self.onboarding_flow = OnboardingFlow()" in source
-    assert "self.onboarding_flow.current_step" in source
-    assert "self.ui_language" in source
-    assert "load_config(default_config_path()).language" in source
-    assert "onboarding_strings.strings_for(self.ui_language)" in source
-    assert 'if step == "language":' in source
-    assert 'elif step == "done":' in source
-
-
-def test_macos_app_starts_onboarding_from_persisted_language_state() -> None:
-    source = _macos_app_source()
-
-    assert "language_was_selected()" in source
-    assert "self.onboarding_flow.start(" in source
-    assert "report=check_all_permissions()" in source
-    assert "language_already_selected=onboarding_flow_module.language_was_selected()" in source
-
-
-def test_macos_app_polls_current_permission_step_without_manual_refresh() -> None:
-    source = _macos_app_source()
-
-    assert "NSTimer" in source
-    assert "scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_" in source
-    assert "def pollPermissions_(self, _timer):" in source
-    assert "def applicationDidBecomeActive_(self, _notification):" in source
-    assert "self._start_permission_check()" in source
-    assert '"Refresh"' not in source
-    assert "refreshStatus_" not in source
-
-
-def test_macos_app_polls_permissions_through_subprocess_probe() -> None:
-    source = _macos_app_source()
-
-    assert "check_all_permissions_subprocess" in source
-    assert "report = check_all_permissions_subprocess()" in source
-    assert 'schedule_timer(1.75, self, "pollPermissions:", None, True)' in source
-
-
-def test_macos_app_runs_permission_subprocess_probe_off_main_thread() -> None:
-    source = _macos_app_source()
-
-    assert "import threading" in source
-    assert "self._permission_check_in_progress" in source
-    assert "if self._permission_check_in_progress:" in source
-    assert "threading.Thread(" in source
-    assert "daemon=True" in source
-    assert "performSelectorOnMainThread_withObject_waitUntilDone_" in source
-    assert "def applyPermissionCheckResult_(self, payload):" in source
-    assert "self._refresh_onboarding_permissions(report)" in source
-
-
-def test_macos_app_permission_subprocess_probe_falls_back_to_in_process_check() -> None:
-    source = _macos_app_source()
-    worker = source.split("def _check_permissions_in_background", maxsplit=1)[1].split(
-        "def applyPermissionCheckResult_",
-        maxsplit=1,
-    )[0]
-
-    assert "report = check_all_permissions_subprocess()" in worker
-    assert "if report is None:" in worker
-    assert "report = check_all_permissions()" in worker
-
-
-def test_macos_app_active_refresh_uses_background_permission_check() -> None:
-    source = _macos_app_source()
-    active_method = source.split("def applicationDidBecomeActive_", maxsplit=1)[1].split(
-        "@objc.python_method",
-        maxsplit=1,
-    )[0]
-
-    assert "self._start_permission_check()" in active_method
-    assert "self._refresh_onboarding_permissions()" not in active_method
-
-
-def test_macos_app_language_selection_saves_supported_codes_to_config() -> None:
-    source = _macos_app_source()
-
-    assert "load_config" in source
-    assert "write_config" in source
-    assert 'strings["language_english"]' in source
-    assert 'strings["language_japanese"]' in source
-    assert 'strings["language_chinese"]' in source
-    assert '"Japanese"' not in source
-    assert '"Chinese"' not in source
-    assert 'self._choose_language("en")' in source
-    assert 'self._choose_language("ja")' in source
-    assert 'self._choose_language("zh")' in source
-    assert "self.ui_language = code" in source
-    assert "onboarding_flow_module.mark_language_selected()" in source
-    assert "self._render_current_step()" in source
-
-
-def test_macos_app_does_not_front_completed_onboarding_window_on_launch() -> None:
-    source = _macos_app_source()
-    build_window = source.split("def _build_window", maxsplit=1)[1].split(
-        "@objc.python_method",
-        maxsplit=1,
-    )[0]
-    launch_tail = source.split("delegate = OnboardingController.alloc().init()", maxsplit=1)[
-        1
-    ].split("app.run()", maxsplit=1)[0]
-
-    assert "self._show_onboarding_window_if_needed()" in source
-    assert "if not self.onboarding_flow.is_complete:" in source
-    assert "self.window.makeKeyAndOrderFront_(None)" not in build_window
-    assert "activateIgnoringOtherApps_" not in build_window
-    assert "activateIgnoringOtherApps_" not in launch_tail
-
-
-def test_macos_app_resolves_onboarding_copy_from_selected_language() -> None:
-    source = _macos_app_source()
-
-    assert 'strings["app_setup_title"]' in source
-    assert 'strings["choose_language_title"]' in source
-    assert 'strings["choose_language_body"]' in source
-    assert 'strings["done_title"]' in source
-    assert 'strings["done_body"]' in source
-    assert 'strings["start_dictation_button"]' in source
-    assert 'strings["stop_dictation_button"]' in source
-    assert 'strings["settings_button"]' in source
-    assert 'strings["login_at_startup_button"]' in source
-    assert '"title_key": "microphone_title"' in source
-    assert '"body_key": "microphone_body"' in source
-    assert '"title_key": "accessibility_title"' in source
-    assert '"body_key": "accessibility_body"' in source
-    assert '"title_key": "input_monitoring_title"' in source
-    assert '"body_key": "input_monitoring_body"' in source
-    assert 'strings[config["title_key"]]' in source
-    assert 'strings[config["body_key"]]' in source
-
-
-def test_macos_app_permission_steps_have_allow_and_system_settings_actions() -> None:
-    source = _macos_app_source()
-
-    assert 'strings["allow_button"]' in source
-    assert 'strings["open_system_settings_button"]' in source
-    assert '"requestMicrophone:"' in source
-    assert '"requestAccessibility:"' in source
-    assert '"requestInputMonitoring:"' in source
-    assert "def openSystemSettings_(self, _sender):" in source
-    assert "x-apple.systempreferences:com.apple.preference.security" in source
-
-
-def test_macos_app_wires_restart_only_for_restart_sensitive_permission_steps() -> None:
-    source = _macos_app_source()
-    permission_renderer = source.split("def _render_permission_step", maxsplit=1)[1].split(
-        "@objc.python_method",
-        maxsplit=1,
-    )[0]
-
-    assert 'if step in {"accessibility", "input_monitoring"}:' in permission_renderer
-    assert 'strings["restart_required_note"]' in permission_renderer
-    assert 'self._button(strings["restart_app_button"], "restartApp:"' in permission_renderer
-    assert "microphone" not in permission_renderer.split("if step in", maxsplit=1)[1].split(
-        ":",
-        maxsplit=1,
-    )[0]
-
-
-def test_macos_app_restart_action_relaunches_then_terminates_current_process() -> None:
-    source = _macos_app_source()
-
-    assert "def restartApp_(self, _sender):" in source
-    assert "if app_relaunch.relaunch_app():" in source
-    assert "NSApplication.sharedApplication().terminate_(self)" in source
-
-
-def test_macos_app_creates_status_bar_menu() -> None:
+def test_macos_app_creates_native_status_bar_menu() -> None:
     source = _macos_app_source()
 
     assert "NSStatusBar" in source
@@ -382,57 +159,138 @@ def test_macos_app_creates_status_bar_menu() -> None:
     assert 'strings["edit_dictionary_menu"]' in source
     assert 'strings["login_at_startup_menu"]' in source
     assert 'strings["quit_menu"]' in source
-    assert '"Open Config"' not in source
 
 
-def test_macos_app_wires_settings_form_window() -> None:
+def test_macos_app_wires_web_bridge_to_existing_logic() -> None:
     source = _macos_app_source()
 
-    assert "from ptarmigan_flow.app_settings_model import (" in source
-    assert "AppSettingsModel" in source
-    assert "NSPopUpButton" in source
-    assert "def _build_settings_window(self) -> None:" in source
-    assert "def _render_settings_form(self) -> None:" in source
-    assert "def saveSettings_(self, _sender):" in source
-    assert "AppSettingsModel.load(default_config_path())" in source
-    assert "self.settings_model.validate()" in source
-    assert "self.settings_model.save(default_config_path())" in source
-    assert 'strings["open_config_advanced_button"]' in source
-    assert 'self._button(strings["settings_button"], "showSettings:"' in source
-    assert 'self._menu_item(strings["settings_menu"], "showSettings:")' in source
+    assert "from ptarmigan_flow.web_bridge import BridgeDependencies, WebBridgeDispatcher" in source
+    assert "self.bridge = WebBridgeDispatcher" in source
+    assert "BridgeDependencies(" in source
+    assert "config_path=default_config_path" in source
+    assert "check_permissions=check_all_permissions" in source
+    assert "available_model_entries=availability.available_model_entries" in source
+    assert "is_model_downloaded=model_download.is_model_downloaded" in source
+    assert "resolve_dictionary_path=self._dictionary_path" in source
+    assert "request_permission=self._request_permission" in source
+    assert "open_system_settings=self._open_system_settings" in source
+    assert "start_dictation=self._start_daemon_if_ready" in source
+    assert "stop_dictation=self._stop_daemon" in source
+    assert "login_is_enabled=login_item.is_enabled" in source
+    assert "login_register=login_item.register" in source
+    assert "login_unregister=login_item.unregister" in source
+    assert "restart_app=self._restart_app" in source
 
 
-def test_macos_app_wires_corrections_editor_window() -> None:
+def test_web_bridge_is_pyobjc_independent() -> None:
+    source = _web_bridge_source()
+
+    for forbidden in ("AppKit", "Foundation", "WebKit", "objc"):
+        assert forbidden not in source
+    assert "def handle_action(action: str, payload: dict)" in source
+    assert "class WebBridgeDispatcher" in source
+    assert "class BridgeDependencies" in source
+
+
+def test_macos_app_starts_onboarding_from_persisted_language_state() -> None:
     source = _macos_app_source()
 
-    assert "from ptarmigan_flow.corrections_editor_model import CorrectionsEditorModel" in source
-    assert "resolve_dictionary_path" in source
-    assert "self.corrections_model = CorrectionsEditorModel.load" in source
+    assert "language_was_selected()" in source
+    assert "self.onboarding_flow.start(" in source
+    assert "report=check_all_permissions()" in source
+    assert "language_already_selected=onboarding_flow_module.language_was_selected()" in source
+    assert "self.bridge.set_onboarding_flow(self.onboarding_flow)" in source
+
+
+def test_macos_app_polls_permissions_through_subprocess_and_pushes_changes() -> None:
+    source = _macos_app_source()
+
+    assert "NSTimer" in source
+    assert 'schedule_timer(1.75, self, "pollPermissions:", None, True)' in source
+    assert "check_all_permissions_subprocess" in source
+    assert "report = check_all_permissions_subprocess()" in source
+    assert "if report is None:" in source
+    assert "report = check_all_permissions()" in source
+    assert "threading.Thread(" in source
+    assert "daemon=True" in source
+    assert "performSelectorOnMainThread_withObject_waitUntilDone_" in source
+    assert "def applyPermissionCheckResult_(self, payload):" in source
+    assert 'self._push_event("permissionsChanged", self._state_payload())' in source
+
+
+def test_macos_app_permission_refresh_auto_advances_and_starts_daemon_when_ready() -> None:
+    source = _macos_app_source()
+    refresh_method = source.split("def _refresh_onboarding_permissions", maxsplit=1)[1].split(
+        "@objc.python_method",
+        maxsplit=1,
+    )[0]
+
+    assert "before_step = self.onboarding_flow.current_step" in refresh_method
+    assert "self.onboarding_flow.refresh(report)" in refresh_method
+    assert "after_step = self.onboarding_flow.current_step" in refresh_method
+    assert "if after_step != before_step:" in refresh_method
+    assert "if report.all_granted:" in refresh_method
+    assert "self._start_daemon_if_ready(" in refresh_method
+    assert 'success_message_key="all_permissions_granted_started_message"' in refresh_method
+
+
+def test_macos_app_downloads_model_with_jsonl_child_process_and_pushes_progress() -> None:
+    source = _macos_app_source()
+
+    assert "import json" in source
+    assert "subprocess.Popen(" in source
+    assert "sys.executable" in source
+    assert '"-m"' in source
+    assert '"ptarmigan_flow.cli"' in source
+    assert '"download-model"' in source
+    assert "stdout=subprocess.PIPE" in source
+    assert "stderr=subprocess.STDOUT" in source
+    assert "text=True" in source
+    assert "target=self._read_model_download_progress" in source
+    assert "json.loads(line)" in source
+    assert 'self._push_event("downloadProgress", payload)' in source
+    assert 'self._push_event("daemonState", self._state_payload())' in source
+    assert "NSProgressIndicator" not in source
+
+
+def test_macos_app_guards_daemon_start_by_permissions_backend_and_model_download() -> None:
+    source = _macos_app_source()
+    start_method = source.split("def _start_daemon_if_ready", maxsplit=1)[1].split(
+        "@objc.python_method",
+        maxsplit=1,
+    )[0]
+
+    assert "check_all_permissions()" in start_method
+    assert "if not report.all_granted:" in start_method
+    assert "if not self._configured_backend_is_available():" in start_method
+    assert "model_token = self._configured_model_token()" in start_method
+    assert "model_download.is_model_downloaded(model_token)" in start_method
+    assert "self._start_model_download(model_token, success_message_key)" in start_method
+    assert "self.daemon_controller.start()" in start_method
+    assert "self._push_daemon_state()" in start_method
+
+
+def test_macos_app_exposes_menu_actions_to_web_routes_and_bridge_side_effects() -> None:
+    source = _macos_app_source()
+
+    assert "def startDictation_(self, _sender):" in source
+    assert "def stopDictation_(self, _sender):" in source
+    assert "def showSettings_(self, _sender):" in source
     assert "def showDictionaryEditor_(self, _sender):" in source
-    assert "self._build_dictionary_window()" in source
-    assert 'strings["dictionary_editor_title"]' in source
-    assert "NSTableView" in source or "dictionary_row_controls" in source
-    assert "addExactCorrectionRow:" in source
-    assert "addRegexCorrectionRow:" in source
-    assert "deleteDictionaryRow:" in source
-
-
-def test_macos_app_dictionary_editor_validates_and_saves() -> None:
-    source = _macos_app_source()
-
-    assert "def saveDictionary_(self, _sender):" in source
-    assert "self._sync_dictionary_model_from_controls()" in source
-    assert "self.corrections_model.validate()" in source
-    assert "self.corrections_model.save(self.dictionary_path)" in source
-    assert 'strings["dictionary_invalid_rule_message"].format(' in source
-    assert 'strings["dictionary_saved_message"]' in source
+    assert "def toggleLoginAtStartup_(self, _sender):" in source
+    assert "def restartApp_(self, _sender):" in source
+    assert "def _restart_app(self) -> bool:" in source
+    assert "self._start_daemon_if_ready()" in source
+    assert "self._stop_daemon()" in source
+    assert "self._set_route(\"settings\")" in source
+    assert "self._set_route(\"dictionary\")" in source
+    assert "self._toggle_login()" in source
+    assert "NSApplication.sharedApplication().terminate_(self)" in source
 
 
 def test_macos_app_wires_login_item_toggle_with_checkmark() -> None:
     source = _macos_app_source()
 
-    assert "from ptarmigan_flow import app_relaunch, login_item, onboarding_strings" in source
-    assert "def toggleLoginAtStartup_(self, _sender):" in source
     assert "login_item.is_enabled()" in source
     assert "login_item.register()" in source
     assert "login_item.unregister()" in source
