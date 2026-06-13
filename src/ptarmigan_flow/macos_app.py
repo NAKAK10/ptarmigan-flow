@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.resources
+import json
 import multiprocessing
 import subprocess
 import sys
@@ -38,7 +39,7 @@ from ptarmigan_flow.permissions import (
     request_input_monitoring_permission,
     request_microphone_permission,
 )
-from ptarmigan_flow.stt import availability
+from ptarmigan_flow.stt import availability, model_download
 from ptarmigan_flow.stt.factory import parse_stt_model
 from ptarmigan_flow.transcription_corrections import resolve_dictionary_path
 
@@ -109,6 +110,7 @@ def _run_appkit_app() -> int:
         NSMenu,
         NSMenuItem,
         NSPopUpButton,
+        NSProgressIndicator,
         NSStatusBar,
         NSTextField,
         NSVariableStatusItemLength,
@@ -131,6 +133,10 @@ def _run_appkit_app() -> int:
         dictionary_window: object | None
         dictionary_menu_item: object
         dictation_status_menu_item: object
+        download_content_view: object
+        download_message_label: object
+        download_progress_indicator: object
+        download_window: object | None
         login_menu_item: object
         message_label: object
         permission_timer: object | None
@@ -151,6 +157,9 @@ def _run_appkit_app() -> int:
         _permission_check_generation: int
         _permission_check_in_progress: bool
         _permission_check_thread: threading.Thread | None
+        _model_download_process: subprocess.Popen[str] | None
+        _model_download_success_message_key: str
+        _model_download_thread: threading.Thread | None
         ui_language: str
         window: object
 
@@ -206,6 +215,10 @@ def _run_appkit_app() -> int:
             self.dictionary_window = None
             self.dictionary_row_controls = []
             self.settings_window = None
+            self.download_window = None
+            self._model_download_process = None
+            self._model_download_success_message_key = "voice_input_started_message"
+            self._model_download_thread = None
             return self
 
         def applicationDidFinishLaunching_(self, _notification):  # noqa: N802
@@ -222,6 +235,7 @@ def _run_appkit_app() -> int:
 
         def applicationWillTerminate_(self, _notification):  # noqa: N802
             self._stop_permission_timer()
+            self._terminate_model_download_process()
             self.daemon_controller.stop()
 
         def applicationDidBecomeActive_(self, _notification):  # noqa: N802
@@ -540,6 +554,70 @@ def _run_appkit_app() -> int:
         def _set_message(self, message: str) -> None:
             if hasattr(self, "message_label"):
                 self.message_label.setStringValue_(message)
+
+        @objc.python_method
+        def _build_model_download_window(self) -> None:
+            if self.download_window is not None:
+                return
+            style = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable
+            self.download_window = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
+                NSMakeRect(0, 0, 460, 150),
+                style,
+                NSBackingStoreBuffered,
+                False,
+            )
+            self.download_window.setTitle_(APP_NAME)
+            self.download_content_view = self.download_window.contentView()
+            strings = self._strings()
+            self.download_message_label = self._label(
+                strings["download_preparing_message"],
+                28,
+                92,
+                404,
+                26,
+            )
+            self.download_content_view.addSubview_(self.download_message_label)
+            self.download_progress_indicator = NSProgressIndicator.alloc().initWithFrame_(
+                NSMakeRect(28, 54, 404, 20)
+            )
+            self.download_progress_indicator.setMinValue_(0.0)
+            self.download_progress_indicator.setMaxValue_(100.0)
+            self.download_progress_indicator.setIndeterminate_(True)
+            self.download_content_view.addSubview_(self.download_progress_indicator)
+            self.download_window.center()
+
+        @objc.python_method
+        def _show_model_download_progress(
+            self,
+            fraction: float | None,
+            message: str,
+        ) -> None:
+            self._build_model_download_window()
+            self.download_message_label.setStringValue_(message)
+            if fraction is None:
+                self.download_progress_indicator.setIndeterminate_(True)
+                self.download_progress_indicator.startAnimation_(None)
+            else:
+                self.download_progress_indicator.stopAnimation_(None)
+                self.download_progress_indicator.setIndeterminate_(False)
+                self.download_progress_indicator.setDoubleValue_(
+                    max(0.0, min(float(fraction), 1.0)) * 100.0
+                )
+            self.download_window.makeKeyAndOrderFront_(None)
+
+        @objc.python_method
+        def _hide_model_download_progress(self) -> None:
+            if self.download_window is not None:
+                self.download_window.orderOut_(None)
+
+        @objc.python_method
+        def _terminate_model_download_process(self) -> None:
+            process = self._model_download_process
+            if process is None:
+                return
+            if process.poll() is None:
+                process.terminate()
+            self._model_download_process = None
 
         @objc.python_method
         def _text_field(self, text: str, x: float, y: float, w: float, h: float = 26):
@@ -934,6 +1012,156 @@ def _run_appkit_app() -> int:
             return report
 
         @objc.python_method
+        def _configured_model_token(self) -> str | None:
+            strings = self._strings()
+            try:
+                config = load_config(default_config_path())
+                model_token = str(config.stt.model)
+                parse_stt_model(model_token)
+            except Exception as exc:
+                self._set_message(strings["daemon_start_failed_message"].format(error=exc))
+                return None
+            return model_token
+
+        @objc.python_method
+        def _start_model_download(self, model_token: str, success_message_key: str) -> None:
+            strings = self._strings()
+            process = self._model_download_process
+            if process is not None and process.poll() is None:
+                self._show_model_download_progress(None, strings["download_preparing_message"])
+                return
+
+            self._model_download_success_message_key = success_message_key
+            self._show_model_download_progress(None, strings["download_preparing_message"])
+            try:
+                process = subprocess.Popen(
+                    [
+                        sys.executable,
+                        "-m",
+                        "ptarmigan_flow.cli",
+                        "download-model",
+                        "--model",
+                        model_token,
+                    ],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1,
+                )
+            except Exception as exc:
+                self._hide_model_download_progress()
+                self._set_message(strings["download_failed_message"].format(error=exc))
+                self._update_status_menu()
+                return
+
+            self._model_download_process = process
+            thread = threading.Thread(
+                target=self._read_model_download_progress,
+                args=(process, success_message_key),
+                daemon=True,
+            )
+            self._model_download_thread = thread
+            try:
+                thread.start()
+            except RuntimeError as exc:
+                self._terminate_model_download_process()
+                self._hide_model_download_progress()
+                self._set_message(strings["download_failed_message"].format(error=exc))
+                self._update_status_menu()
+
+        @objc.python_method
+        def _read_model_download_progress(
+            self,
+            process: subprocess.Popen[str],
+            success_message_key: str,
+        ) -> None:
+            saw_terminal_event = False
+            stream = process.stdout
+            if stream is not None:
+                for line in stream:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        payload = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if not isinstance(payload, dict):
+                        continue
+                    payload["success_message_key"] = success_message_key
+                    if payload.get("type") in {"done", "error"}:
+                        saw_terminal_event = True
+                    self._send_model_download_event(payload)
+            return_code = process.wait()
+            if saw_terminal_event:
+                return
+            if return_code == 0:
+                self._send_model_download_event(
+                    {"type": "done", "success_message_key": success_message_key}
+                )
+                return
+            self._send_model_download_event(
+                {
+                    "type": "error",
+                    "message": f"download-model exited with status {return_code}",
+                    "success_message_key": success_message_key,
+                }
+            )
+
+        @objc.python_method
+        def _send_model_download_event(self, payload: dict[str, object]) -> None:
+            try:
+                self.performSelectorOnMainThread_withObject_waitUntilDone_(
+                    "applyModelDownloadProgress:",
+                    payload,
+                    False,
+                )
+            except Exception:
+                return
+
+        @objc.python_method
+        def _model_download_progress_message(self, fraction: float | None) -> str:
+            strings = self._strings()
+            if fraction is None:
+                return strings["download_preparing_message"]
+            clamped = max(0.0, min(float(fraction), 1.0))
+            percent = f"{int(round(clamped * 100.0))}%"
+            return strings["download_in_progress_message"].format(percent=percent)
+
+        def applyModelDownloadProgress_(self, payload):  # noqa: N802
+            strings = self._strings()
+            try:
+                event_type = str(payload.get("type", ""))
+            except Exception:
+                return
+            if event_type == "progress":
+                raw_fraction = payload.get("fraction")
+                fraction = None if raw_fraction is None else float(raw_fraction)
+                self._show_model_download_progress(
+                    fraction,
+                    self._model_download_progress_message(fraction),
+                )
+                return
+            if event_type == "done":
+                self._model_download_process = None
+                self._hide_model_download_progress()
+                self._set_message(strings["download_complete_message"])
+                success_key = str(
+                    payload.get(
+                        "success_message_key",
+                        self._model_download_success_message_key,
+                    )
+                )
+                self._start_daemon_if_ready(success_message_key=success_key)
+                return
+            if event_type == "error":
+                self._model_download_process = None
+                self._hide_model_download_progress()
+                error = str(payload.get("message", "unknown error"))
+                self._set_message(strings["download_failed_message"].format(error=error))
+                self._update_status_menu()
+
+        @objc.python_method
         def _start_daemon_if_ready(
             self,
             report: PermissionReport | None = None,
@@ -948,6 +1176,14 @@ def _run_appkit_app() -> int:
                 self._update_status_menu()
                 return
             if not self._configured_backend_is_available():
+                self._update_status_menu()
+                return
+            model_token = self._configured_model_token()
+            if model_token is None:
+                self._update_status_menu()
+                return
+            if not model_download.is_model_downloaded(model_token):
+                self._start_model_download(model_token, success_message_key)
                 self._update_status_menu()
                 return
             if not self.daemon_controller.is_running:

@@ -16,6 +16,10 @@ REQUIRED_KEYS = {
     "dictation_running_menu",
     "dictation_stopped_message",
     "dictation_stopped_menu",
+    "download_complete_message",
+    "download_failed_message",
+    "download_in_progress_message",
+    "download_preparing_message",
     "dictionary_add_exact_button",
     "dictionary_add_regex_button",
     "dictionary_canonical_label",
@@ -125,6 +129,12 @@ def test_required_japanese_translations_are_exact() -> None:
     )
     assert strings["daemon_not_running_message"] == "音声入力デーモンはまだ起動していません。"
     assert strings["daemon_start_failed_message"] == "音声入力を開始できませんでした: {error}"
+    assert strings["download_preparing_message"] == "モデルを準備中..."
+    assert strings["download_in_progress_message"] == "モデルをダウンロード中... {percent}"
+    assert strings["download_complete_message"] == "ダウンロードが完了しました。"
+    assert strings["download_failed_message"] == (
+        "モデルのダウンロードに失敗しました: {error}"
+    )
     assert strings["voice_input_started_message"] == "音声入力を開始しました。"
     assert strings["all_permissions_granted_started_message"] == (
         "すべての権限が許可されました。音声入力を開始しました。"
@@ -178,6 +188,10 @@ def test_chinese_translations_are_simplified_and_complete() -> None:
     assert strings["edit_dictionary_menu"] == "编辑转换词典"
     assert strings["dictionary_editor_title"] == "转换词典"
     assert strings["dictionary_saved_message"] == "已保存。请重启语音输入以应用更改。"
+    assert strings["download_preparing_message"] == "正在准备模型..."
+    assert strings["download_in_progress_message"] == "正在下载模型... {percent}"
+    assert strings["download_complete_message"] == "下载完成。"
+    assert strings["download_failed_message"] == "模型下载失败: {error}"
     assert strings["model_unavailable_message"] == (
         "此应用版本无法使用当前设置的模型 {model}。请在设置中选择模型。"
     )
