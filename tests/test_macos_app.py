@@ -178,9 +178,53 @@ def test_macos_app_polls_current_permission_step_without_manual_refresh() -> Non
     assert "scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_" in source
     assert "def pollPermissions_(self, _timer):" in source
     assert "def applicationDidBecomeActive_(self, _notification):" in source
-    assert "self._refresh_onboarding_permissions()" in source
+    assert "self._start_permission_check()" in source
     assert '"Refresh"' not in source
     assert "refreshStatus_" not in source
+
+
+def test_macos_app_polls_permissions_through_subprocess_probe() -> None:
+    source = _macos_app_source()
+
+    assert "check_all_permissions_subprocess" in source
+    assert "report = check_all_permissions_subprocess()" in source
+    assert 'schedule_timer(1.75, self, "pollPermissions:", None, True)' in source
+
+
+def test_macos_app_runs_permission_subprocess_probe_off_main_thread() -> None:
+    source = _macos_app_source()
+
+    assert "import threading" in source
+    assert "self._permission_check_in_progress" in source
+    assert "if self._permission_check_in_progress:" in source
+    assert "threading.Thread(" in source
+    assert "daemon=True" in source
+    assert "performSelectorOnMainThread_withObject_waitUntilDone_" in source
+    assert "def applyPermissionCheckResult_(self, payload):" in source
+    assert "self._refresh_onboarding_permissions(report)" in source
+
+
+def test_macos_app_permission_subprocess_probe_falls_back_to_in_process_check() -> None:
+    source = _macos_app_source()
+    worker = source.split("def _check_permissions_in_background", maxsplit=1)[1].split(
+        "def applyPermissionCheckResult_",
+        maxsplit=1,
+    )[0]
+
+    assert "report = check_all_permissions_subprocess()" in worker
+    assert "if report is None:" in worker
+    assert "report = check_all_permissions()" in worker
+
+
+def test_macos_app_active_refresh_uses_background_permission_check() -> None:
+    source = _macos_app_source()
+    active_method = source.split("def applicationDidBecomeActive_", maxsplit=1)[1].split(
+        "@objc.python_method",
+        maxsplit=1,
+    )[0]
+
+    assert "self._start_permission_check()" in active_method
+    assert "self._refresh_onboarding_permissions()" not in active_method
 
 
 def test_macos_app_language_selection_saves_supported_codes_to_config() -> None:
