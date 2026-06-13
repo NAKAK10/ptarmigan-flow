@@ -12,11 +12,12 @@ import platform
 import shutil
 import subprocess
 import sys
+from collections.abc import Callable
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
 from importlib.util import find_spec
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin
 from urllib.request import Request, urlopen
@@ -36,13 +37,29 @@ from ptarmigan_flow.app_bundle import (
 from ptarmigan_flow.app_daemon_controller import build_daemon
 from ptarmigan_flow.application.use_cases.llm_runtime import (
     build_llm_settings_from_config as build_llm_settings_from_config_use_case,
+)
+from ptarmigan_flow.application.use_cases.llm_runtime import (
     build_runtime_post_processor as build_runtime_post_processor_use_case,
+)
+from ptarmigan_flow.application.use_cases.llm_runtime import (
     launchd_llm_enabled_override_from_env as launchd_llm_enabled_override_from_env_use_case,
+)
+from ptarmigan_flow.application.use_cases.llm_runtime import (
     launchd_llm_enabled_override_from_payload as launchd_llm_enabled_override_from_payload_use_case,
+)
+from ptarmigan_flow.application.use_cases.llm_runtime import (
     llm_enabled_for_this_run as llm_enabled_for_this_run_use_case,
+)
+from ptarmigan_flow.application.use_cases.llm_runtime import (
     normalize_optional_secret as normalize_optional_secret_use_case,
+)
+from ptarmigan_flow.application.use_cases.llm_runtime import (
     parse_bool_token as parse_bool_token_use_case,
+)
+from ptarmigan_flow.application.use_cases.llm_runtime import (
     runtime_language_from_config as runtime_language_from_config_use_case,
+)
+from ptarmigan_flow.application.use_cases.llm_runtime import (
     should_enable_llm_correction_for_this_run as should_enable_llm_correction_for_this_run_use_case,
 )
 from ptarmigan_flow.application.use_cases.load_corrections import (
@@ -80,6 +97,7 @@ from ptarmigan_flow.permissions import (
     request_microphone_permission,
     reset_app_bundle_tcc,
 )
+from ptarmigan_flow.stt import model_download
 from ptarmigan_flow.stt.factory import create_stt_backend, parse_stt_model
 from ptarmigan_flow.stt.model_catalog import (
     search_hub_models,
@@ -590,7 +608,12 @@ def _query_input_devices() -> tuple[list[dict[str, Any]], int | None]:
     return devices, default_input_index
 
 
-def _matches_configured_input_device(configured: int | str | None, *, index: int, name: str) -> bool:
+def _matches_configured_input_device(
+    configured: int | str | None,
+    *,
+    index: int,
+    name: str,
+) -> bool:
     if configured is None:
         return False
     if isinstance(configured, int):
@@ -768,31 +791,11 @@ def cmd_list(args: argparse.Namespace) -> int:
 
 
 def _huggingface_cache_hub_dir() -> Path:
-    hf_home = os.environ.get("HF_HOME")
-    if hf_home:
-        return Path(hf_home).expanduser() / "hub"
-    xdg_cache_home = os.environ.get("XDG_CACHE_HOME")
-    if xdg_cache_home:
-        return Path(xdg_cache_home).expanduser() / "huggingface" / "hub"
-    return Path.home() / ".cache" / "huggingface" / "hub"
+    return model_download.huggingface_cache_hub_dir()
 
 
 def _is_huggingface_model_downloaded(model_id: str) -> bool:
-    snapshots_dir = _huggingface_cache_hub_dir() / f"models--{model_id.replace('/', '--')}" / "snapshots"
-    if not snapshots_dir.is_dir():
-        return False
-    try:
-        for snapshot in snapshots_dir.iterdir():
-            if not snapshot.is_dir():
-                continue
-            try:
-                next(snapshot.iterdir())
-                return True
-            except StopIteration:
-                continue
-    except OSError:
-        return False
-    return False
+    return model_download.is_huggingface_repo_downloaded(model_id)
 
 
 def _stt_model_downloaded_display(model_token: str) -> str:
@@ -832,6 +835,38 @@ def _log_stt_startup_download_if_needed(model_token: str) -> None:
         "Selected %s model is not downloaded yet; startup preflight will download it now",
         backend_label,
     )
+
+
+def _emit_download_json(payload: dict[str, object]) -> None:
+    print(json.dumps(payload), flush=True)
+
+
+def cmd_download_model(args: argparse.Namespace) -> int:
+    try:
+        model_token = str(getattr(args, "model", "") or "").strip()
+        if not model_token:
+            config_path = _resolve_config_path(getattr(args, "config", None))
+            model_token = _stt_model_from_config(load_config(config_path))
+
+        if model_download.is_model_downloaded(model_token):
+            _emit_download_json({"type": "done"})
+            return 0
+
+        def progress_callback(fraction: float | None, message: str) -> None:
+            _emit_download_json(
+                {
+                    "type": "progress",
+                    "fraction": None if fraction is None else float(fraction),
+                    "message": str(message),
+                }
+            )
+
+        model_download.download_model(model_token, progress_callback=progress_callback)
+    except Exception as exc:
+        _emit_download_json({"type": "error", "message": str(exc)})
+        return 1
+    _emit_download_json({"type": "done"})
+    return 0
 
 
 def _stt_model_presets() -> list[str]:
@@ -1208,7 +1243,11 @@ def cmd_list_devices(args: argparse.Namespace) -> int:
         print(f"  {menu_index}. [{index}] {name} (inputs={max_input_channels}){marker_text}")
 
     if default_choice is None:
-        print(_yellow("Warning: current audio.input_device is not in the detected input device list."))
+        print(
+            _yellow(
+                "Warning: current audio.input_device is not in the detected input device list."
+            )
+        )
 
     try:
         while True:
@@ -1486,7 +1525,10 @@ def _edit_output_section(config: object) -> None:
         output_mode_choices,
     )
     config.output.mode = type(config.output.mode)(selected_output_mode)
-    config.output.paste_shortcut = _prompt_text("output.paste_shortcut", config.output.paste_shortcut)
+    config.output.paste_shortcut = _prompt_text(
+        "output.paste_shortcut",
+        config.output.paste_shortcut,
+    )
 
 
 def _edit_runtime_section(config: object) -> None:
@@ -2250,7 +2292,9 @@ def cmd_install_launch_agent(args: argparse.Namespace) -> int:
     config_path = _resolve_config_path(args.config)
     config = load_config(config_path)
     current_launchd_payload = read_launch_agent_plist()
-    current_launchd_llm_override = _launchd_llm_enabled_override_from_payload(current_launchd_payload)
+    current_launchd_llm_override = _launchd_llm_enabled_override_from_payload(
+        current_launchd_payload
+    )
     desired_launchd_llm_override = _resolve_launchd_llm_enabled_override_for_command(
         current_override=current_launchd_llm_override,
         preflight_func=lambda: _preflight_llm_for_launchd(config),
@@ -2361,7 +2405,9 @@ def cmd_restart_launch_agent(args: argparse.Namespace) -> int:
         return 2
 
     current_launchd_payload = read_launch_agent_plist()
-    current_launchd_llm_override = _launchd_llm_enabled_override_from_payload(current_launchd_payload)
+    current_launchd_llm_override = _launchd_llm_enabled_override_from_payload(
+        current_launchd_payload
+    )
 
     def _preflight_for_restart() -> tuple[bool, str | None]:
         config = load_config(_resolve_config_path(None))

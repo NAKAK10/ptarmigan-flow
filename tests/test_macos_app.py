@@ -147,6 +147,53 @@ def test_macos_app_guards_auto_start_by_configured_backend_availability() -> Non
     assert "self.daemon_controller.start()" in start_method
 
 
+def test_macos_app_guards_daemon_start_by_model_download_status() -> None:
+    source = _macos_app_source()
+    start_method = source.split("def _start_daemon_if_ready", maxsplit=1)[1].split(
+        "def pollPermissions_",
+        maxsplit=1,
+    )[0]
+
+    assert "from ptarmigan_flow.stt import availability, model_download" in source
+    assert "model_token = self._configured_model_token()" in start_method
+    assert "model_download.is_model_downloaded(model_token)" in start_method
+    assert "self._start_model_download(model_token, success_message_key)" in start_method
+    assert "self.daemon_controller.start()" in start_method
+
+
+def test_macos_app_downloads_model_with_jsonl_child_process_off_main_thread() -> None:
+    source = _macos_app_source()
+
+    assert "import json" in source
+    assert "subprocess.Popen(" in source
+    assert "sys.executable" in source
+    assert '"-m"' in source
+    assert '"ptarmigan_flow.cli"' in source
+    assert '"download-model"' in source
+    assert "stdout=subprocess.PIPE" in source
+    assert "stderr=subprocess.STDOUT" in source
+    assert "text=True" in source
+    assert "threading.Thread(" in source
+    assert "target=self._read_model_download_progress" in source
+    assert "json.loads(line)" in source
+    assert "performSelectorOnMainThread_withObject_waitUntilDone_(" in source
+    assert "applyModelDownloadProgress_" in source
+
+
+def test_macos_app_updates_progress_indicator_for_download_events() -> None:
+    source = _macos_app_source()
+
+    assert "NSProgressIndicator" in source
+    assert "self.download_progress_indicator" in source
+    assert "setIndeterminate_(True)" in source
+    assert "setIndeterminate_(False)" in source
+    assert "setDoubleValue_(" in source
+    assert '"download_preparing_message"' in source
+    assert '"download_in_progress_message"' in source
+    assert '"download_complete_message"' in source
+    assert '"download_failed_message"' in source
+
+
 def test_macos_app_uses_onboarding_flow_for_step_wizard() -> None:
     source = _macos_app_source()
 

@@ -103,6 +103,18 @@ def build_parser() -> argparse.ArgumentParser:
     list_lmstudio_parser.add_argument("--config", default=None, help="Path to config TOML")
     list_lmstudio_parser.set_defaults(func=commands.cmd_list_lmstudio)
 
+    download_model_parser = subparsers.add_parser(
+        "download-model",
+        help="Download the configured STT model snapshot",
+    )
+    download_model_parser.add_argument("--config", default=None, help="Path to config TOML")
+    download_model_parser.add_argument(
+        "--model",
+        default=None,
+        help="STT model token to download (default: stt.model from config)",
+    )
+    download_model_parser.set_defaults(func=commands.cmd_download_model)
+
     check_parser = subparsers.add_parser("check-permissions", help="Check macOS permissions")
     check_parser.add_argument(
         "--request",
