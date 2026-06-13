@@ -15,6 +15,7 @@ from ptarmigan_flow.stt.vllm_realtime import VLLMRealtimeSTTBackend
 _ECHO_FACTORY = "ptarmigan_flow.stt._test_support:build_echo_backend"
 _TIMEOUT_FACTORY = "ptarmigan_flow.stt._test_support:build_timeout_backend"
 _CRASH_FACTORY = "ptarmigan_flow.stt._test_support:build_crash_backend"
+_TEST_CHILD_STARTUP_TIMEOUT_SECONDS = 5.0
 
 
 class _SuffixProcessor:
@@ -47,7 +48,10 @@ def test_create_runtime_stt_backend_keeps_vllm_direct() -> None:
 
 
 def test_isolated_backend_applies_parent_post_processing(monkeypatch) -> None:
-    monkeypatch.setattr("ptarmigan_flow.stt.runtime_backend._CHILD_STARTUP_TIMEOUT_SECONDS", 1.0)
+    monkeypatch.setattr(
+        "ptarmigan_flow.stt.runtime_backend._CHILD_STARTUP_TIMEOUT_SECONDS",
+        _TEST_CHILD_STARTUP_TIMEOUT_SECONDS,
+    )
     backend = IsolatedSpeechToTextBackend(
         _config(),
         backend_prefix="granite",
@@ -69,7 +73,10 @@ def test_isolated_backend_applies_parent_post_processing(monkeypatch) -> None:
 
 
 def test_isolated_backend_times_out_and_accepts_next_request(monkeypatch) -> None:
-    monkeypatch.setattr("ptarmigan_flow.stt.runtime_backend._CHILD_STARTUP_TIMEOUT_SECONDS", 1.0)
+    monkeypatch.setattr(
+        "ptarmigan_flow.stt.runtime_backend._CHILD_STARTUP_TIMEOUT_SECONDS",
+        _TEST_CHILD_STARTUP_TIMEOUT_SECONDS,
+    )
     monkeypatch.setattr(
         "ptarmigan_flow.stt.runtime_backend._MIN_TRANSCRIPTION_TIMEOUT_SECONDS",
         0.05,
@@ -102,7 +109,10 @@ def test_isolated_backend_times_out_and_accepts_next_request(monkeypatch) -> Non
 
 
 def test_isolated_backend_recovers_after_child_crash(monkeypatch) -> None:
-    monkeypatch.setattr("ptarmigan_flow.stt.runtime_backend._CHILD_STARTUP_TIMEOUT_SECONDS", 1.0)
+    monkeypatch.setattr(
+        "ptarmigan_flow.stt.runtime_backend._CHILD_STARTUP_TIMEOUT_SECONDS",
+        _TEST_CHILD_STARTUP_TIMEOUT_SECONDS,
+    )
     backend = IsolatedSpeechToTextBackend(
         _config(),
         backend_prefix="granite",
