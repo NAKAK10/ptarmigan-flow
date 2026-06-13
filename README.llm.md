@@ -130,16 +130,17 @@ Correction dictionary:
 
 ## Installation and Runtime Notes
 - Recommended install: `brew install ptarmigan-flow`
-- Download release app: `PtarmiganFlow-macos-arm64.zip` from GitHub Releases.
+- Download release app: `PtarmiganFlow-macos-arm64.zip` for Apple Silicon or `PtarmiganFlow-macos-x86_64.zip` for Intel from GitHub Releases.
 - Optional helper (legacy migration + retry): `./scripts/install_brew.sh`
 - Update: `pflow update`
 - Uninstall: `brew uninstall ptarmigan-flow`
 - `pflow update` runs `brew upgrade ptarmigan-flow` and refreshes the installed launch agent when present.
 
 Release app notes:
-- The downloadable Mac app is built by `.github/workflows/release-macos-app.yml` with PyInstaller on `macos-15`.
+- The downloadable Mac app is built by `.github/workflows/release-macos-app.yml` with PyInstaller on `macos-15` for arm64 and `macos-15-intel` for x86_64.
 - The app release build uses `packaging/macos/requirements-release.txt` and intentionally ships the compact Moonshine runtime only. Optional Torch/Transformers/MLX/MLX-audio/VoxMLX backends remain for the normal CLI/Homebrew environment.
-- The workflow signs with a Developer ID Application certificate, notarizes, staples, zips `PtarmiganFlow.app`, and attaches `PtarmiganFlow-macos-arm64.zip` to a draft GitHub Release.
+- The workflow signs with a Developer ID Application certificate, notarizes, staples, zips `PtarmiganFlow.app`, and attaches `PtarmiganFlow-macos-arm64.zip` plus `PtarmiganFlow-macos-x86_64.zip` to a draft GitHub Release.
+- The arm64 workflow leg repackages the pinned `moonshine-voice==0.0.49` PyPI wheel. The Intel leg checks out `moonshine-ai/moonshine` with Git LFS, source-builds Moonshine, downloads the official `onnxruntime-osx-x86_64` binary, repackages the local wheel as `py3-none-any`, and validates that `moonshine_voice/libmoonshine.dylib` plus `libonnxruntime` include x86_64 before signing.
 - The app setup window checks Microphone, Accessibility, and Input Monitoring permissions and provides buttons for permission requests, login startup, restart, and config editing.
 - This path is separate from the Homebrew `install-app-bundle` runtime wrapper.
 - Required GitHub Secrets: `APPLE_CERTIFICATE_BASE64`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_TEAM_ID`, `APPLE_ID`, and `APPLE_APP_SPECIFIC_PASSWORD`.

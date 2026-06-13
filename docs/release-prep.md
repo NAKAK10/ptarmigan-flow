@@ -68,10 +68,23 @@ gh workflow run release-macos-app.yml \
   -f tag=v0.0.0
 ```
 
-The workflow checks out the tag, builds `PtarmiganFlow.app` with PyInstaller,
-codesigns it with the Developer ID certificate, notarizes it with Apple,
-staples the notarization ticket, zips it as
-`PtarmiganFlow-macos-arm64.zip`, and attaches the zip to a draft GitHub Release.
+The workflow checks out the tag and builds `PtarmiganFlow.app` twice with
+PyInstaller:
+
+- `PtarmiganFlow-macos-arm64.zip` on the Apple Silicon `macos-15` runner
+- `PtarmiganFlow-macos-x86_64.zip` on the Intel `macos-15-intel` runner
+
+Each app is codesigned with the Developer ID certificate, notarized with Apple,
+stapled, zipped, uploaded as a workflow artifact, and then attached to one draft
+GitHub Release.
+
+Before signing, the workflow validates that `moonshine_voice/libmoonshine.dylib`
+and `libonnxruntime` contain the target architecture. The arm64 job repackages
+the pinned `moonshine-voice==0.0.49` PyPI wheel. The Intel job checks out
+`moonshine-ai/moonshine` at the matching tag with Git LFS, downloads the
+official `onnxruntime-osx-x86_64` binary, source-builds Moonshine on
+`macos-15-intel`, and packages the resulting dylibs into the release wheel
+before the same native-library validation runs.
 
 The downloadable app is a compact Moonshine build. It uses the release-only
 dependency list in `packaging/macos/requirements-release.txt`, defaults new
@@ -80,6 +93,6 @@ Torch, Transformers, MLX, MLX-audio, VoxMLX, Granite, or Voxtral runtime
 stacks. Those larger backends remain available through the normal CLI/Homebrew
 environment.
 
-Publish the draft release only after downloading the zip and checking the app on
-a clean Apple Silicon Mac. Publishing the release keeps the existing Homebrew
-formula update workflow responsible for formula changes.
+Publish the draft release only after downloading the zips and checking the app on
+clean Apple Silicon and Intel Macs. Publishing the release keeps the existing
+Homebrew formula update workflow responsible for formula changes.

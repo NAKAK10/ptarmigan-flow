@@ -32,11 +32,17 @@ ptarmigan-flow run
 `audio.input_device` を未設定のまま `audio.input_device_policy = "playback_friendly"` を使ってください。
 
 ## Mac アプリのダウンロード
-GitHub Releases から Apple Silicon 向けの署名・公証済みビルドをダウンロードできます。
+GitHub Releases から利用中の Mac 向けの署名・公証済みビルドをダウンロードできます。
 
-https://github.com/NAKAK10/ptarmigan-flow/releases/latest/download/PtarmiganFlow-macos-arm64.zip
+- Apple Silicon: https://github.com/NAKAK10/ptarmigan-flow/releases/latest/download/PtarmiganFlow-macos-arm64.zip
+- Intel: https://github.com/NAKAK10/ptarmigan-flow/releases/latest/download/PtarmiganFlow-macos-x86_64.zip
 
-`PtarmiganFlow-macos-arm64.zip` を展開し、`PtarmiganFlow.app` をアプリケーションフォルダへ移動して開いてください。セットアップ画面からマイク、アクセシビリティ、入力監視の権限状態を確認できます。
+Intel 向けビルドは、固定している `moonshine-voice==0.0.49` に合わせて
+`moonshine-ai/moonshine` をチェックアウトし、Moonshine を source-build したうえで
+公式の `onnxruntime-osx-x86_64` バイナリを同梱します。リリース workflow はその後で
+ネイティブライブラリのアーキテクチャを検証します。
+
+`PtarmiganFlow-macos-arm64.zip` または `PtarmiganFlow-macos-x86_64.zip` を展開し、`PtarmiganFlow.app` をアプリケーションフォルダへ移動して開いてください。セットアップ画面からマイク、アクセシビリティ、入力監視の権限状態を確認できます。
 
 Pages と Apple 署名 secret を含むメンテナー向け配布準備は [docs/release-prep.md](docs/release-prep.md) にまとめています。
 

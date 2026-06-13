@@ -1,6 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 import os
+import platform
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _dist_version
 from pathlib import Path
@@ -18,9 +19,20 @@ def _app_version() -> str:
         return "0.0.0"
 
 
+def _target_arch() -> str:
+    requested = os.environ.get("PYINSTALLER_TARGET_ARCH")
+    if requested:
+        if requested not in {"arm64", "x86_64", "universal2"}:
+            raise ValueError(f"Unsupported PYINSTALLER_TARGET_ARCH: {requested}")
+        return requested
+    machine = platform.machine()
+    return "arm64" if machine == "arm64" else "x86_64"
+
+
 block_cipher = None
 ROOT = Path(SPECPATH).parents[1]
 APP_VERSION = _app_version()
+TARGET_ARCH = _target_arch()
 datas = [(str(ROOT / "config.example.toml"), ".")]
 binaries = []
 
@@ -128,7 +140,7 @@ exe = EXE(
     strip=False,
     upx=False,
     console=False,
-    target_arch='arm64',
+    target_arch=TARGET_ARCH,
 )
 coll = COLLECT(
     exe,

@@ -32,11 +32,17 @@ If playback audio quality drops while recording (for example with Bluetooth head
 set `audio.input_device_policy = "playback_friendly"` and keep `audio.input_device` unset.
 
 ## Download the Mac App
-Download the signed and notarized Apple Silicon build from GitHub Releases:
+Download the signed and notarized build for your Mac from GitHub Releases:
 
-https://github.com/NAKAK10/ptarmigan-flow/releases/latest/download/PtarmiganFlow-macos-arm64.zip
+- Apple Silicon: https://github.com/NAKAK10/ptarmigan-flow/releases/latest/download/PtarmiganFlow-macos-arm64.zip
+- Intel: https://github.com/NAKAK10/ptarmigan-flow/releases/latest/download/PtarmiganFlow-macos-x86_64.zip
 
-Unzip `PtarmiganFlow-macos-arm64.zip`, move `PtarmiganFlow.app` to Applications, open it, and use the setup window to check Microphone, Accessibility, and Input Monitoring permissions.
+The Intel build uses the pinned `moonshine-voice==0.0.49` version by checking
+out `moonshine-ai/moonshine`, building Moonshine from source, and bundling the
+official `onnxruntime-osx-x86_64` binary before the release workflow validates
+the native libraries.
+
+Unzip `PtarmiganFlow-macos-arm64.zip` or `PtarmiganFlow-macos-x86_64.zip`, move `PtarmiganFlow.app` to Applications, open it, and use the setup window to check Microphone, Accessibility, and Input Monitoring permissions.
 
 Maintainer release setup, including Pages and Apple signing secrets, is documented in [docs/release-prep.md](docs/release-prep.md).
 

@@ -19,11 +19,22 @@ def test_readmes_document_distribution_paths() -> None:
     for path in [Path("README.md"), Path("README.ja.md"), Path("README.llm.md")]:
         text = path.read_text(encoding="utf-8")
         assert "PtarmiganFlow-macos-arm64.zip" in text
+        assert "PtarmiganFlow-macos-x86_64.zip" in text
         assert "Homebrew" in text
         assert "Microphone" in text or "マイク" in text
         assert "Accessibility" in text or "アクセシビリティ" in text
         assert "Input Monitoring" in text or "入力監視" in text
         assert "docs/release-prep.md" in text
+
+
+def test_public_readmes_note_intel_release_source_build() -> None:
+    for path in [Path("README.md"), Path("README.ja.md")]:
+        text = path.read_text(encoding="utf-8")
+        assert "moonshine-voice==0.0.49" in text
+        assert "moonshine-ai/moonshine" in text
+        assert "onnxruntime-osx-x86_64" in text
+        assert "upstream" not in text.lower()
+        assert "arm64-only dylibs" not in text
 
 
 def test_release_prep_doc_lists_required_secrets_and_commands() -> None:
@@ -40,5 +51,11 @@ def test_release_prep_doc_lists_required_secrets_and_commands() -> None:
 
     assert "gh secret set" in text
     assert "base64" in text
+    assert "PtarmiganFlow-macos-arm64.zip" in text
+    assert "PtarmiganFlow-macos-x86_64.zip" in text
     assert "release-macos-app.yml" in text
     assert "pages.yml" in text
+    assert "moonshine-ai/moonshine" in text
+    assert "onnxruntime-osx-x86_64" in text
+    assert "source-build" in text
+    assert "upstream x86_64 macOS dylibs" not in text

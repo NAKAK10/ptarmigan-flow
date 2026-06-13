@@ -16,8 +16,20 @@ env:
 
 jobs:
   build:
-    name: Build arm64 app and draft release
-    runs-on: macos-15
+    name: Build ${{ matrix.arch }} app
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-15
+            moonshine_platform: macosx_15_0_arm64
+            moonshine_source: pypi
+          - arch: x86_64
+            runner: macos-15-intel
+            moonshine_platform: macosx_15_0_x86_64
+            moonshine_source: source
     steps:
       - name: Validate Apple release secrets
         env:
@@ -59,39 +71,96 @@ jobs:
       - name: Setup uv
         uses: astral-sh/setup-uv@v5
 
-      - name: Install dependencies
+      - name: Read Moonshine version
+        id: moonshine-version
         run: |
           set -euo pipefail
-          # moonshine-voice only ships macosx_15_0_* wheels; our Python binary
-          # reports macosx_14_0_arm64 (its compile-time MACOSX_DEPLOYMENT_TARGET)
-          # even though the runner OS is macOS 15. Build the app from a minimal
-          # release venv instead of the full project/dev dependency set, then
-          # manually fetch and repackage moonshine-voice as py3-none-any so uv
-          # will install it (the dylibs work fine at runtime on macOS 15).
+          MOONSHINE_VER=$(awk -F'"' '/name = "moonshine-voice"/{f=1} f && /version = /{print $2; exit}' uv.lock)
+          test -n "$MOONSHINE_VER"
+          echo "MOONSHINE_VER=$MOONSHINE_VER" >> "$GITHUB_ENV"
+          echo "version=$MOONSHINE_VER" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout Moonshine source
+        if: ${{ matrix.moonshine_source == 'source' }}
+        uses: actions/checkout@v4
+        with:
+          repository: moonshine-ai/moonshine
+          ref: v${{ steps.moonshine-version.outputs.version }}
+          lfs: true
+          path: moonshine-src
+
+      - name: Install dependencies
+        env:
+          MOONSHINE_WHEEL_DIR: ${{ runner.temp }}/moonshine-wheel-${{ matrix.arch }}
+          MOONSHINE_WHEEL_PLATFORM: ${{ matrix.moonshine_platform }}
+          MOONSHINE_SOURCE: ${{ matrix.moonshine_source }}
+          MACOSX_DEPLOYMENT_TARGET: "13.0"
+        run: |
+          set -euo pipefail
+          # moonshine-voice macOS wheels are tagged for macosx_15_0_* while
+          # Python may report an older compile-time MACOSX_DEPLOYMENT_TARGET.
+          # Build from a minimal release venv and manually repackage the
+          # selected wheel as py3-none-any so uv will install the native payload.
           uv venv .release-venv --python 3.11 --managed-python
           uv pip install --python .release-venv/bin/python \
             -r packaging/macos/requirements-release.txt
 
-          MOONSHINE_VER=$(awk -F'"' '/name = "moonshine-voice"/{f=1} f && /version = /{print $2; exit}' uv.lock)
-          echo "Fetching moonshine-voice==$MOONSHINE_VER for macosx_15_0_arm64"
+          rm -rf "$MOONSHINE_WHEEL_DIR"
+          mkdir -p "$MOONSHINE_WHEEL_DIR"
+          if [ "$MOONSHINE_SOURCE" = "pypi" ]; then
+            echo "Fetching moonshine-voice==$MOONSHINE_VER for $MOONSHINE_WHEEL_PLATFORM"
+            python3 -m pip download \
+              "moonshine-voice==$MOONSHINE_VER" \
+              --platform "$MOONSHINE_WHEEL_PLATFORM" --python-version 311 --only-binary :all: \
+              -d "$MOONSHINE_WHEEL_DIR"
+          elif [ "$MOONSHINE_SOURCE" = "source" ]; then
+            echo "Building moonshine-voice==$MOONSHINE_VER from source for ${{ matrix.arch }}"
+            moonshine_ort_dir="moonshine-src/core/third-party/onnxruntime/lib/macos/arm64"
+            moonshine_ort_dylib="$(find "$moonshine_ort_dir" -maxdepth 1 -name 'libonnxruntime.*.dylib' | sort | head -n 1)"
+            test -n "$moonshine_ort_dylib"
+            onnxruntime_version="$(basename "$moonshine_ort_dylib")"
+            onnxruntime_version="${onnxruntime_version#libonnxruntime.}"
+            onnxruntime_version="${onnxruntime_version%.dylib}"
+            onnxruntime_url="https://github.com/microsoft/onnxruntime/releases/download/v${onnxruntime_version}/onnxruntime-osx-x86_64-${onnxruntime_version}.tgz"
 
-          mkdir -p /tmp/mw
-          python3 -m pip download \
-            "moonshine-voice==$MOONSHINE_VER" \
-            --platform macosx_15_0_arm64 --python-version 311 --only-binary :all: \
-            -d /tmp/mw
+            curl -L "$onnxruntime_url" -o "$RUNNER_TEMP/onnxruntime-osx-x86_64.tgz"
+            tar -xzf "$RUNNER_TEMP/onnxruntime-osx-x86_64.tgz" -C "$RUNNER_TEMP"
+            downloaded_ort_dylib="$(find "$RUNNER_TEMP/onnxruntime-osx-x86_64-${onnxruntime_version}/lib" -maxdepth 1 -name 'libonnxruntime.*.dylib' | sort | head -n 1)"
+            test -n "$downloaded_ort_dylib"
+            cp "$downloaded_ort_dylib" "$moonshine_ort_dylib"
+
+            cmake -B build-moonshine -S moonshine-src/core \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DBUILD_TESTING=OFF
+            cmake --build build-moonshine --target moonshine -j 4
+
+            moonshine_package_dir="moonshine-src/python/src/moonshine_voice"
+            cp build-moonshine/libmoonshine.dylib "$moonshine_package_dir/"
+            cp "$moonshine_ort_dylib" "$moonshine_package_dir/"
+            uv build --wheel -o "$MOONSHINE_WHEEL_DIR" moonshine-src/python
+          else
+            echo "::error::Unsupported moonshine source: $MOONSHINE_SOURCE"
+            exit 1
+          fi
 
           # Repackage the wheel as py3-none-any with a correct RECORD (sha256 hashes).
-          # The dylib content is unchanged; macOS 15 arm64 runner runs them fine.
+          # The dylib content is unchanged; a later validation step checks the
+          # installed dylibs before a signed artifact can be uploaded.
           python3 - <<'PYEOF'
-          import base64, glob, hashlib, os, zipfile
+          import base64
+          import glob
+          import hashlib
+          import os
+          import re
+          import zipfile
 
           def sha256_digest(data: bytes) -> str:
               return "sha256=" + base64.urlsafe_b64encode(hashlib.sha256(data).digest()).decode().rstrip("=")
 
-          src = glob.glob("/tmp/mw/moonshine_voice-*.whl")[0]
+          wheel_dir = os.environ["MOONSHINE_WHEEL_DIR"]
+          src = glob.glob(os.path.join(wheel_dir, "moonshine_voice-*.whl"))[0]
           ver = os.path.basename(src).split("-")[1]
-          dst = f"/tmp/mw/moonshine_voice-{ver}-py3-none-any.whl"
+          dst = os.path.join(wheel_dir, f"moonshine_voice-{ver}-py3-none-any.whl")
 
           files: dict[str, tuple] = {}
           with zipfile.ZipFile(src) as zin:
@@ -104,8 +173,7 @@ jobs:
                       continue
                   data = zin.read(fname)
                   if fname.endswith(".dist-info/WHEEL"):
-                      data = data.replace(b"macosx_15_0_universal2", b"any")
-                      data = data.replace(b"macosx_15_0_arm64", b"any")
+                      data = re.sub(rb"macosx_[0-9A-Za-z_]+", b"any", data)
                   files[fname] = (item, data)
 
           record_fname = next(f for f in files if f.endswith("/RECORD"))
@@ -124,12 +192,62 @@ jobs:
           PYEOF
 
           uv pip install --python .release-venv/bin/python \
-            "/tmp/mw/moonshine_voice-${MOONSHINE_VER}-py3-none-any.whl" \
+            "$MOONSHINE_WHEEL_DIR/moonshine_voice-${MOONSHINE_VER}-py3-none-any.whl" \
             --no-deps
+
+      - name: Validate Moonshine native libraries
+        env:
+          TARGET_ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          .release-venv/bin/python - <<'PYEOF'
+          import os
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          import moonshine_voice
+
+          target_arch = os.environ["TARGET_ARCH"]
+          package_dir = Path(moonshine_voice.__file__).resolve().parent
+          required = [
+              package_dir / "libmoonshine.dylib",
+              package_dir / "libonnxruntime.1.23.2.dylib",
+          ]
+          failed = False
+          for path in required:
+              if not path.exists():
+                  print(f"::error::Moonshine native library missing: {path}")
+                  failed = True
+                  continue
+              result = subprocess.run(
+                  ["lipo", "-archs", str(path)],
+                  text=True,
+                  capture_output=True,
+                  check=False,
+              )
+              if result.returncode != 0:
+                  print(f"::error::Could not inspect {path}: {result.stderr.strip()}")
+                  failed = True
+                  continue
+              archs = result.stdout.split()
+              if target_arch not in archs:
+                  available = ", ".join(archs) or "none"
+                  print(
+                      f"::error::{path} does not contain {target_arch}; "
+                      f"available architectures: {available}"
+                  )
+                  failed = True
+              else:
+                  print(f"{path.name}: {', '.join(archs)}")
+          if failed:
+              sys.exit(1)
+          PYEOF
 
       - name: Build PyInstaller app
         env:
           TAG_NAME: ${{ inputs.tag }}
+          PYINSTALLER_TARGET_ARCH: ${{ matrix.arch }}
         run: |
           set -euo pipefail
           export APP_VERSION="${TAG_NAME#v}"
@@ -186,14 +304,40 @@ jobs:
           set -euo pipefail
           ditto -c -k --sequesterRsrc --keepParent \
             dist/PtarmiganFlow.app \
-            dist/PtarmiganFlow-macos-arm64.zip
+            "dist/PtarmiganFlow-macos-${{ matrix.arch }}.zip"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: PtarmiganFlow-macos-arm64
-          path: dist/PtarmiganFlow-macos-arm64.zip
+          name: PtarmiganFlow-macos-${{ matrix.arch }}
+          path: dist/PtarmiganFlow-macos-${{ matrix.arch }}.zip
           if-no-files-found: error
+
+  draft-release:
+    name: Create draft release
+    runs-on: ubuntu-latest
+    needs: build
+    if: ${{ !cancelled() }}
+    steps:
+      - name: Download signed app artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Validate release artifacts
+        run: |
+          set -euo pipefail
+          arm64_zip="artifacts/PtarmiganFlow-macos-arm64/PtarmiganFlow-macos-arm64.zip"
+          x86_64_zip="artifacts/PtarmiganFlow-macos-x86_64/PtarmiganFlow-macos-x86_64.zip"
+
+          if [ ! -f "$arm64_zip" ]; then
+            echo "::error::Mandatory arm64 release artifact is missing: $arm64_zip"
+            exit 1
+          fi
+
+          if [ ! -f "$x86_64_zip" ]; then
+            echo "::warning::Optional x86_64 release artifact is missing: $x86_64_zip"
+          fi
 
       - name: Create draft release
         uses: softprops/action-gh-release@v2
@@ -203,4 +347,6 @@ jobs:
           draft: true
           prerelease: false
           generate_release_notes: true
-          files: dist/PtarmiganFlow-macos-arm64.zip
+          files: |
+            artifacts/PtarmiganFlow-macos-arm64/PtarmiganFlow-macos-arm64.zip
+            artifacts/PtarmiganFlow-macos-x86_64/PtarmiganFlow-macos-x86_64.zip
