@@ -39,13 +39,30 @@ def test_pyinstaller_spec_builds_ptarmiganflow_app() -> None:
 
     assert "src/ptarmigan_flow/macos_app.py" in spec
     assert "ROOT = Path(SPECPATH).parents[1]" in spec
+    assert 'APP_ICON = ROOT / "assets/icon/PtarmiganFlow.icns"' in spec
     assert "str(ROOT / \"src/ptarmigan_flow/macos_app.py\")" in spec
     assert "name='PtarmiganFlow'" in spec
+    assert "icon=str(APP_ICON)" in spec
     assert "bundle_identifier='com.ptarmiganflow.app'" in spec
+    assert '"CFBundleIconFile": "PtarmiganFlow.icns"' in spec
     assert "NSMicrophoneUsageDescription" in spec
     assert "LSMinimumSystemVersion" in spec
     assert 'PYINSTALLER_TARGET_ARCH' in spec
     assert "target_arch=TARGET_ARCH" in spec
+
+
+def test_macos_release_icon_asset_exists() -> None:
+    assert (ROOT / "assets/icon/ptarmigan-logo.png").is_file()
+    assert (ROOT / "assets/icon/PtarmiganFlow.icns").is_file()
+    assert (ROOT / "src/ptarmigan_flow/resources/PtarmiganFlow.icns").is_file()
+
+
+def test_pyproject_packages_icon_resource_in_wheel() -> None:
+    payload = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+
+    wheel_target = payload["tool"]["hatch"]["build"]["targets"]["wheel"]
+
+    assert "src/ptarmigan_flow" in wheel_target["packages"]
 
 
 def test_macos_app_pyobjc_helpers_are_python_only() -> None:

@@ -11,6 +11,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from ptarmigan_flow.app_icon import APP_ICON_FILE, app_icon_bytes
+
 LOGGER = logging.getLogger(__name__)
 
 APP_BUNDLE_NAME = "PtarmiganFlow.app"
@@ -87,6 +89,25 @@ def _sha256_file(path: Path) -> str | None:
         return None
 
 
+def _copy_app_icon(resources_dir: Path) -> bool:
+    icon_path = resources_dir / APP_ICON_FILE
+    new_icon_bytes = app_icon_bytes()
+    existing_icon_bytes: bytes | None = None
+    if icon_path.exists():
+        try:
+            existing_icon_bytes = icon_path.read_bytes()
+        except OSError:
+            pass
+
+    if existing_icon_bytes == new_icon_bytes:
+        LOGGER.debug("app bundle: icon unchanged, skipping copy")
+        return False
+
+    icon_path.write_bytes(new_icon_bytes)
+    LOGGER.debug("app bundle: icon updated (%s)", icon_path)
+    return True
+
+
 def install_app_bundle_from_env(app_bundle_path: Path | None = None) -> Path | None:
     values = _environment_values()
     if values is None:
@@ -116,12 +137,17 @@ def install_app_bundle_from_env(app_bundle_path: Path | None = None) -> Path | N
     else:
         LOGGER.debug("app bundle: executable unchanged, skipping copy")
 
+    # --- app icon: copy only when content differs ---
+    if _copy_app_icon(resources_dir):
+        any_changed = True
+
     # --- Info.plist: write only when content differs ---
     info_plist_path = bundle_path / "Contents" / "Info.plist"
     info_payload = {
         "CFBundleDevelopmentRegion": "en",
         "CFBundleDisplayName": "PtarmiganFlow",
         "CFBundleExecutable": APP_EXECUTABLE_NAME,
+        "CFBundleIconFile": APP_ICON_FILE,
         "CFBundleIdentifier": APP_BUNDLE_IDENTIFIER,
         "CFBundleInfoDictionaryVersion": "6.0",
         "CFBundleName": "PtarmiganFlow",
