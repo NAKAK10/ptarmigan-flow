@@ -151,6 +151,7 @@ def test_macos_app_uses_onboarding_flow_for_step_wizard() -> None:
     source = _macos_app_source()
 
     assert "from ptarmigan_flow.onboarding_flow import OnboardingFlow" in source
+    assert "from ptarmigan_flow import onboarding_flow as onboarding_flow_module" in source
     assert "from ptarmigan_flow import app_relaunch, login_item, onboarding_strings" in source
     assert "self.onboarding_flow = OnboardingFlow()" in source
     assert "self.onboarding_flow.current_step" in source
@@ -159,6 +160,15 @@ def test_macos_app_uses_onboarding_flow_for_step_wizard() -> None:
     assert "onboarding_strings.strings_for(self.ui_language)" in source
     assert 'if step == "language":' in source
     assert 'elif step == "done":' in source
+
+
+def test_macos_app_starts_onboarding_from_persisted_language_state() -> None:
+    source = _macos_app_source()
+
+    assert "language_was_selected()" in source
+    assert "self.onboarding_flow.start(" in source
+    assert "report=check_all_permissions()" in source
+    assert "language_already_selected=onboarding_flow_module.language_was_selected()" in source
 
 
 def test_macos_app_polls_current_permission_step_without_manual_refresh() -> None:
@@ -187,7 +197,25 @@ def test_macos_app_language_selection_saves_supported_codes_to_config() -> None:
     assert 'self._choose_language("ja")' in source
     assert 'self._choose_language("zh")' in source
     assert "self.ui_language = code" in source
+    assert "onboarding_flow_module.mark_language_selected()" in source
     assert "self._render_current_step()" in source
+
+
+def test_macos_app_does_not_front_completed_onboarding_window_on_launch() -> None:
+    source = _macos_app_source()
+    build_window = source.split("def _build_window", maxsplit=1)[1].split(
+        "@objc.python_method",
+        maxsplit=1,
+    )[0]
+    launch_tail = source.split("delegate = OnboardingController.alloc().init()", maxsplit=1)[
+        1
+    ].split("app.run()", maxsplit=1)[0]
+
+    assert "self._show_onboarding_window_if_needed()" in source
+    assert "if not self.onboarding_flow.is_complete:" in source
+    assert "self.window.makeKeyAndOrderFront_(None)" not in build_window
+    assert "activateIgnoringOtherApps_" not in build_window
+    assert "activateIgnoringOtherApps_" not in launch_tail
 
 
 def test_macos_app_resolves_onboarding_copy_from_selected_language() -> None:

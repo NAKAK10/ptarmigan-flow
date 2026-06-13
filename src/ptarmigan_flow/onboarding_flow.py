@@ -2,9 +2,36 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 from ptarmigan_flow.permissions import PermissionReport
 
 SUPPORTED_LANGUAGES = frozenset({"en", "ja", "zh"})
+
+
+def onboarding_state_path() -> Path:
+    return Path("~/Library/Application Support/ptarmigan-flow/onboarding_state.json").expanduser()
+
+
+def mark_language_selected() -> None:
+    try:
+        path = onboarding_state_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"language_selected": True}), encoding="utf-8")
+    except Exception:
+        return
+
+
+def language_was_selected() -> bool:
+    try:
+        path = onboarding_state_path()
+        if not path.is_file():
+            return False
+        state = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    return isinstance(state, dict) and state.get("language_selected") is True
 
 
 class OnboardingFlow:
@@ -33,7 +60,14 @@ class OnboardingFlow:
         if self._step_index < len(self.steps) - 1:
             self._step_index += 1
 
-    def start(self, report: PermissionReport | None = None) -> None:
+    def start(
+        self,
+        report: PermissionReport | None = None,
+        *,
+        language_already_selected: bool = False,
+    ) -> None:
+        if language_already_selected and self.current_step == "language":
+            self.advance()
         if report is not None:
             self.refresh(report)
 
@@ -53,4 +87,10 @@ class OnboardingFlow:
             self.advance()
 
 
-__all__ = ["OnboardingFlow", "SUPPORTED_LANGUAGES"]
+__all__ = [
+    "OnboardingFlow",
+    "SUPPORTED_LANGUAGES",
+    "language_was_selected",
+    "mark_language_selected",
+    "onboarding_state_path",
+]
