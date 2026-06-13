@@ -19,6 +19,7 @@ from ptarmigan_flow.config import (
     load_config,
     write_config,
 )
+from ptarmigan_flow.corrections_editor_model import CorrectionsEditorModel
 from ptarmigan_flow.onboarding_flow import OnboardingFlow
 from ptarmigan_flow.permissions import (
     PermissionReport,
@@ -27,6 +28,7 @@ from ptarmigan_flow.permissions import (
     request_input_monitoring_permission,
     request_microphone_permission,
 )
+from ptarmigan_flow.transcription_corrections import resolve_dictionary_path
 
 APP_NAME = "PtarmiganFlow"
 
@@ -109,6 +111,11 @@ def _run_appkit_app() -> int:
         """Native step-by-step onboarding window."""
 
         content_view: object
+        dictionary_content_view: object
+        dictionary_message_label: object
+        dictionary_path: Path
+        dictionary_row_controls: list[dict[str, object]]
+        dictionary_window: object | None
         dictation_status_menu_item: object
         login_menu_item: object
         message_label: object
@@ -160,6 +167,10 @@ def _run_appkit_app() -> int:
             self.daemon_controller = DaemonController(
                 lambda: build_daemon_from_config(default_config_path())
             )
+            self.dictionary_path, _explicit = resolve_dictionary_path(None)
+            self.corrections_model = CorrectionsEditorModel()
+            self.dictionary_window = None
+            self.dictionary_row_controls = []
             return self
 
         def applicationDidFinishLaunching_(self, _notification):  # noqa: N802
@@ -215,6 +226,7 @@ def _run_appkit_app() -> int:
             self.status_menu.addItem_(self.stop_menu_item)
             self.status_menu.addItem_(NSMenuItem.separatorItem())
             self.status_menu.addItem_(self._menu_item("Settings", "showSettings:"))
+            self.status_menu.addItem_(self._menu_item("Edit Dictionary", "showDictionaryEditor:"))
             self.status_menu.addItem_(self._menu_item("Open Config", "openConfig:"))
             self.login_menu_item = self._menu_item("Login at Startup", "toggleLoginAtStartup:")
             self.status_menu.addItem_(self.login_menu_item)
@@ -374,6 +386,151 @@ def _run_appkit_app() -> int:
                 self.message_label.setStringValue_(message)
 
         @objc.python_method
+        def _text_field(self, text: str, x: float, y: float, w: float, h: float = 26):
+            field = NSTextField.alloc().initWithFrame_(NSMakeRect(x, y, w, h))
+            field.setStringValue_(text)
+            return field
+
+        @objc.python_method
+        def _build_dictionary_window(self) -> None:
+            if self.dictionary_window is not None:
+                return
+            style = (
+                NSWindowStyleMaskTitled
+                | NSWindowStyleMaskClosable
+                | NSWindowStyleMaskMiniaturizable
+            )
+            self.dictionary_window = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
+                NSMakeRect(0, 0, 760, 620),
+                style,
+                NSBackingStoreBuffered,
+                False,
+            )
+            self.dictionary_window.setTitle_("Dictionary Editor")
+            self.dictionary_content_view = self.dictionary_window.contentView()
+            self.dictionary_window.center()
+
+        @objc.python_method
+        def _clear_dictionary_view(self) -> None:
+            for subview in list(self.dictionary_content_view.subviews()):
+                subview.removeFromSuperview()
+
+        @objc.python_method
+        def _load_dictionary_model(self) -> None:
+            self.dictionary_path, _explicit = resolve_dictionary_path(None)
+            self.corrections_model = CorrectionsEditorModel.load(self.dictionary_path)
+
+        @objc.python_method
+        def _render_dictionary_editor(self) -> None:
+            self._clear_dictionary_view()
+            self.dictionary_row_controls = []
+            self.dictionary_content_view.addSubview_(
+                self._label("Dictionary Editor", 28, 570, 700, 30, size=22.0)
+            )
+            self.dictionary_content_view.addSubview_(
+                self._label(str(self.dictionary_path), 30, 542, 700, 22)
+            )
+            y = self._render_dictionary_section(
+                "exact",
+                "Exact Rules",
+                self.corrections_model.exact,
+                492,
+            )
+            self._render_dictionary_section(
+                "regex",
+                "Regex Rules",
+                self.corrections_model.regex,
+                y - 26,
+            )
+            self.dictionary_content_view.addSubview_(
+                self._button("Add Exact", "addExactCorrectionRow:", 30, 56, 118)
+            )
+            self.dictionary_content_view.addSubview_(
+                self._button("Add Regex", "addRegexCorrectionRow:", 162, 56, 118)
+            )
+            self.dictionary_content_view.addSubview_(
+                self._button("Save", "saveDictionary:", 626, 56, 90)
+            )
+            self.dictionary_message_label = self._label("", 30, 22, 700, 24)
+            self.dictionary_content_view.addSubview_(self.dictionary_message_label)
+
+        @objc.python_method
+        def _render_dictionary_section(
+            self,
+            section: str,
+            title: str,
+            entries: dict[str, list[str]],
+            y: float,
+        ) -> float:
+            self.dictionary_content_view.addSubview_(self._label(title, 30, y, 200, 24, size=17.0))
+            y -= 30
+            self.dictionary_content_view.addSubview_(self._label("Canonical", 32, y, 180, 20))
+            self.dictionary_content_view.addSubview_(
+                self._label("Candidates / Patterns (comma-separated)", 240, y, 360, 20)
+            )
+            y -= 32
+            if not entries:
+                self.dictionary_content_view.addSubview_(
+                    self._label("No rules yet.", 32, y, 300, 24)
+                )
+                return y - 38
+            for key, values in entries.items():
+                key_field = self._text_field(key, 30, y, 190)
+                values_field = self._text_field(", ".join(values), 238, y, 360)
+                delete_button = self._button("Delete", "deleteDictionaryRow:", 616, y - 3, 88)
+                delete_button.setTag_(len(self.dictionary_row_controls))
+                self.dictionary_content_view.addSubview_(key_field)
+                self.dictionary_content_view.addSubview_(values_field)
+                self.dictionary_content_view.addSubview_(delete_button)
+                self.dictionary_row_controls.append(
+                    {
+                        "section": section,
+                        "key_field": key_field,
+                        "values_field": values_field,
+                    }
+                )
+                y -= 36
+            return y - 20
+
+        @objc.python_method
+        def _set_dictionary_message(self, message: str) -> None:
+            if hasattr(self, "dictionary_message_label"):
+                self.dictionary_message_label.setStringValue_(message)
+
+        @objc.python_method
+        def _split_dictionary_values(self, text: str) -> list[str]:
+            return [part.strip() for part in text.replace("\n", ",").split(",") if part.strip()]
+
+        @objc.python_method
+        def _sync_dictionary_model_from_controls(self) -> None:
+            exact: dict[str, list[str]] = {}
+            regex: dict[str, list[str]] = {}
+            for row in self.dictionary_row_controls:
+                section = row["section"]
+                key = str(row["key_field"].stringValue())
+                values = self._split_dictionary_values(str(row["values_field"].stringValue()))
+                if section == "exact":
+                    exact[key] = values
+                else:
+                    regex[key] = values
+            self.corrections_model = CorrectionsEditorModel(exact=exact, regex=regex)
+
+        @objc.python_method
+        def _new_dictionary_key(self, section: str) -> str:
+            if section == "exact":
+                table = self.corrections_model.exact
+                base = "New Exact Rule"
+            else:
+                table = self.corrections_model.regex
+                base = "New Regex Rule"
+            if base not in table:
+                return base
+            index = 2
+            while f"{base} {index}" in table:
+                index += 1
+            return f"{base} {index}"
+
+        @objc.python_method
         def _save_language(self, code: str) -> Path:
             config_path = default_config_path()
             ensure_config_exists(config_path)
@@ -481,6 +638,62 @@ def _run_appkit_app() -> int:
             self.window.makeKeyAndOrderFront_(None)
             NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
             self._refresh_onboarding_permissions()
+
+        def showDictionaryEditor_(self, _sender):  # noqa: N802
+            self._build_dictionary_window()
+            try:
+                self._load_dictionary_model()
+                load_error = None
+            except Exception as exc:
+                self.corrections_model = CorrectionsEditorModel()
+                load_error = exc
+            self._render_dictionary_editor()
+            if load_error is not None:
+                self._set_dictionary_message(f"Could not load dictionary: {load_error}")
+            self.dictionary_window.makeKeyAndOrderFront_(None)
+            NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+
+        def addExactCorrectionRow_(self, _sender):  # noqa: N802
+            self._sync_dictionary_model_from_controls()
+            self.corrections_model.add_exact(self._new_dictionary_key("exact"), ["candidate"])
+            self._render_dictionary_editor()
+
+        def addRegexCorrectionRow_(self, _sender):  # noqa: N802
+            self._sync_dictionary_model_from_controls()
+            self.corrections_model.add_regex(self._new_dictionary_key("regex"), ["pattern"])
+            self._render_dictionary_editor()
+
+        def deleteDictionaryRow_(self, sender):  # noqa: N802
+            index = int(sender.tag())
+            self._sync_dictionary_model_from_controls()
+            if index >= len(self.dictionary_row_controls):
+                self._render_dictionary_editor()
+                return
+            row = self.dictionary_row_controls[index]
+            key = str(row["key_field"].stringValue())
+            if row["section"] == "exact":
+                self.corrections_model.remove_exact(key)
+            else:
+                self.corrections_model.remove_regex(key)
+            self._render_dictionary_editor()
+
+        def saveDictionary_(self, _sender):  # noqa: N802
+            self._sync_dictionary_model_from_controls()
+            errors = self.corrections_model.validate()
+            if errors:
+                error = errors[0]
+                self._set_dictionary_message(
+                    "Invalid dictionary rule: "
+                    f"[{error.section}] {error.key} {error.pattern}: {error.message}"
+                )
+                return
+            try:
+                self.corrections_model.save(self.dictionary_path)
+            except Exception as exc:
+                self._set_dictionary_message(f"Could not save dictionary: {exc}")
+                return
+            self._set_dictionary_message("Dictionary saved. Restart dictation to apply changes.")
+            self._set_message("Dictionary saved. Restart dictation to apply changes.")
 
         def openConfig_(self, _sender):  # noqa: N802
             config_path = open_config()
