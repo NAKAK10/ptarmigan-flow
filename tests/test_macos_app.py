@@ -110,14 +110,14 @@ def test_macos_app_wires_in_process_daemon_controller() -> None:
 def test_macos_app_exposes_start_stop_dictation_actions() -> None:
     source = _macos_app_source()
 
-    assert "Start Dictation" in source
-    assert "Stop Dictation" in source
     assert 'self._button(strings["start_dictation_button"], "startDictation:"' in source
     assert 'self._button(strings["stop_dictation_button"], "stopDictation:"' in source
     assert "def startDictation_(self, _sender):" in source
     assert "def stopDictation_(self, _sender):" in source
     assert "self.daemon_controller.start()" in source
     assert "self.daemon_controller.stop()" in source
+    assert '"Start Dictation"' not in source
+    assert '"Stop Dictation"' not in source
 
 
 def test_macos_app_auto_starts_daemon_and_stops_on_termination() -> None:
@@ -125,9 +125,25 @@ def test_macos_app_auto_starts_daemon_and_stops_on_termination() -> None:
 
     assert "if report.all_granted:" in source
     assert "self._start_daemon_if_ready(" in source
-    assert 'success_message="All permissions granted. Dictation started."' in source
+    assert 'success_message_key="all_permissions_granted_started_message"' in source
     assert "def applicationWillTerminate_(self, _notification):" in source
     assert "self.daemon_controller.stop()" in source
+
+
+def test_macos_app_guards_auto_start_by_configured_backend_availability() -> None:
+    source = _macos_app_source()
+
+    assert "from ptarmigan_flow.stt import availability" in source
+    assert "from ptarmigan_flow.stt.factory import parse_stt_model" in source
+    assert "backend, _model_id = parse_stt_model(model_token)" in source
+    assert "availability.is_backend_available(backend)" in source
+    assert 'strings["model_unavailable_message"].format(model=model_token)' in source
+    start_method = source.split("def _start_daemon_if_ready", maxsplit=1)[1].split(
+        "def pollPermissions_",
+        maxsplit=1,
+    )[0]
+    assert "if not self._configured_backend_is_available():" in start_method
+    assert "self.daemon_controller.start()" in start_method
 
 
 def test_macos_app_uses_onboarding_flow_for_step_wizard() -> None:
@@ -161,9 +177,9 @@ def test_macos_app_language_selection_saves_supported_codes_to_config() -> None:
 
     assert "load_config" in source
     assert "write_config" in source
-    assert '"English"' in source
-    assert '"日本語"' in source
-    assert '"中文"' in source
+    assert 'strings["language_english"]' in source
+    assert 'strings["language_japanese"]' in source
+    assert 'strings["language_chinese"]' in source
     assert '"Japanese"' not in source
     assert '"Chinese"' not in source
     assert 'self._choose_language("en")' in source
@@ -183,7 +199,7 @@ def test_macos_app_resolves_onboarding_copy_from_selected_language() -> None:
     assert 'strings["done_body"]' in source
     assert 'strings["start_dictation_button"]' in source
     assert 'strings["stop_dictation_button"]' in source
-    assert 'strings["open_config_button"]' in source
+    assert 'strings["settings_button"]' in source
     assert 'strings["login_at_startup_button"]' in source
     assert '"title_key": "microphone_title"' in source
     assert '"body_key": "microphone_body"' in source
@@ -239,14 +255,31 @@ def test_macos_app_creates_status_bar_menu() -> None:
     assert "statusItemWithLength_" in source
     assert "self.status_item" in source
     assert "self.status_menu" in source
-    assert '"Dictation Stopped"' in source
-    assert '"Start Dictation"' in source
-    assert '"Stop Dictation"' in source
-    assert '"Settings"' in source
-    assert '"Edit Dictionary"' in source
-    assert '"Open Config"' in source
-    assert '"Login at Startup"' in source
-    assert '"Quit"' in source
+    assert 'strings["dictation_stopped_menu"]' in source
+    assert 'strings["start_dictation_button"]' in source
+    assert 'strings["stop_dictation_button"]' in source
+    assert 'strings["settings_menu"]' in source
+    assert 'strings["edit_dictionary_menu"]' in source
+    assert 'strings["login_at_startup_menu"]' in source
+    assert 'strings["quit_menu"]' in source
+    assert '"Open Config"' not in source
+
+
+def test_macos_app_wires_settings_form_window() -> None:
+    source = _macos_app_source()
+
+    assert "from ptarmigan_flow.app_settings_model import (" in source
+    assert "AppSettingsModel" in source
+    assert "NSPopUpButton" in source
+    assert "def _build_settings_window(self) -> None:" in source
+    assert "def _render_settings_form(self) -> None:" in source
+    assert "def saveSettings_(self, _sender):" in source
+    assert "AppSettingsModel.load(default_config_path())" in source
+    assert "self.settings_model.validate()" in source
+    assert "self.settings_model.save(default_config_path())" in source
+    assert 'strings["open_config_advanced_button"]' in source
+    assert 'self._button(strings["settings_button"], "showSettings:"' in source
+    assert 'self._menu_item(strings["settings_menu"], "showSettings:")' in source
 
 
 def test_macos_app_wires_corrections_editor_window() -> None:
@@ -257,7 +290,7 @@ def test_macos_app_wires_corrections_editor_window() -> None:
     assert "self.corrections_model = CorrectionsEditorModel.load" in source
     assert "def showDictionaryEditor_(self, _sender):" in source
     assert "self._build_dictionary_window()" in source
-    assert "Dictionary Editor" in source
+    assert 'strings["dictionary_editor_title"]' in source
     assert "NSTableView" in source or "dictionary_row_controls" in source
     assert "addExactCorrectionRow:" in source
     assert "addRegexCorrectionRow:" in source
@@ -271,8 +304,8 @@ def test_macos_app_dictionary_editor_validates_and_saves() -> None:
     assert "self._sync_dictionary_model_from_controls()" in source
     assert "self.corrections_model.validate()" in source
     assert "self.corrections_model.save(self.dictionary_path)" in source
-    assert "Invalid dictionary rule" in source
-    assert "Dictionary saved. Restart dictation to apply changes." in source
+    assert 'strings["dictionary_invalid_rule_message"].format(' in source
+    assert 'strings["dictionary_saved_message"]' in source
 
 
 def test_macos_app_wires_login_item_toggle_with_checkmark() -> None:
@@ -286,6 +319,39 @@ def test_macos_app_wires_login_item_toggle_with_checkmark() -> None:
     assert "self.login_menu_item.setState_(" in source
     assert "NSControlStateValueOn" in source
     assert "NSControlStateValueOff" in source
+
+
+def test_macos_app_routes_user_messages_through_localized_strings() -> None:
+    source = _macos_app_source()
+
+    for literal in (
+        "Grant all permissions before starting dictation.",
+        "Dictation daemon is not running yet.",
+        "Could not start dictation:",
+        "Dictation started.",
+        "All permissions granted. Dictation started.",
+        "Dictation stopped.",
+        "Could not restart app.",
+        "Saved language to",
+        "Could not save language:",
+        "Opened config:",
+        "Login at startup enabled.",
+        "Login at startup disabled.",
+        "Could not enable login at startup.",
+        "Could not disable login at startup.",
+        "Dictionary Editor",
+        "Exact Rules",
+        "Regex Rules",
+        "Canonical",
+        "Candidates / Patterns (comma-separated)",
+        "No rules yet.",
+        "Add Exact",
+        "Add Regex",
+        "Delete",
+        "Dictionary saved. Restart dictation to apply changes.",
+        "Invalid dictionary rule:",
+    ):
+        assert literal not in source
 
 
 def test_macos_app_removes_launchd_buttons_from_app_ui() -> None:
