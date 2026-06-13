@@ -31,6 +31,7 @@ def _target_arch() -> str:
 
 block_cipher = None
 ROOT = Path(SPECPATH).parents[1]
+APP_ICON = ROOT / "assets/icon/PtarmiganFlow.icns"
 APP_VERSION = _app_version()
 TARGET_ARCH = _target_arch()
 datas = [(str(ROOT / "config.example.toml"), ".")]
@@ -140,6 +141,7 @@ exe = EXE(
     strip=False,
     upx=False,
     console=False,
+    icon=str(APP_ICON),
     target_arch=TARGET_ARCH,
 )
 coll = COLLECT(
@@ -155,10 +157,11 @@ coll = COLLECT(
 app = BUNDLE(
     coll,
     name='PtarmiganFlow.app',
-    icon=None,
+    icon=str(APP_ICON),
     bundle_identifier='com.ptarmiganflow.app',
     info_plist={
         "CFBundleDisplayName": "PtarmiganFlow",
+        "CFBundleIconFile": "PtarmiganFlow.icns",
         "CFBundleName": "PtarmiganFlow",
         "CFBundleShortVersionString": APP_VERSION,
         "CFBundleVersion": APP_VERSION,

@@ -53,7 +53,11 @@ def test_install_app_bundle_from_env_creates_bundle(tmp_path: Path, monkeypatch)
         payload = plistlib.load(fp)
     assert payload["CFBundleExecutable"] == app_bundle.APP_EXECUTABLE_NAME
     assert payload["CFBundleIdentifier"] == app_bundle.APP_BUNDLE_IDENTIFIER
+    assert payload["CFBundleIconFile"] == app_bundle.APP_ICON_FILE
     assert "NSMicrophoneUsageDescription" in payload
+    assert (
+        destination / "Contents" / "Resources" / app_bundle.APP_ICON_FILE
+    ).read_bytes() == app_bundle.app_icon_bytes()
 
 
 def test_resolve_launch_agent_app_command_uses_default_bundle_path(
