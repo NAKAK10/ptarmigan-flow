@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.resources
+import multiprocessing
 import subprocess
 import sys
 from pathlib import Path
@@ -772,6 +773,12 @@ def _run_appkit_app() -> int:
 
 def main() -> int:
     """Run the native onboarding app."""
+    # Must run before anything else: in the PyInstaller bundle the STT backend
+    # spawns multiprocessing workers by re-executing this frozen binary. Without
+    # freeze_support() those children would fall through to _run_appkit_app() and
+    # launch a second GUI instead of running their worker, breaking app startup.
+    multiprocessing.freeze_support()
+
     cli_result = _dispatch_cli_args(sys.argv[1:])
     if cli_result is not None:
         return cli_result
