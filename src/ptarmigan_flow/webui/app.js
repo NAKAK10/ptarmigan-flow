@@ -75,8 +75,13 @@ function shell(content) {
   app.innerHTML = `
     <div class="topbar">
       <div class="brand">
-        <div class="brand-title">PtarmiganFlow</div>
-        <div class="brand-status">${escapeHtml(running)}</div>
+        <img class="brand-logo" src="./ptarmigan-logo.png" alt="" />
+        <div class="brand-text">
+          <div class="brand-title">PtarmiganFlow</div>
+          <div class="brand-status ${state?.daemon_running ? "running" : ""}">
+            <span class="status-dot" aria-hidden="true"></span>${escapeHtml(running)}
+          </div>
+        </div>
       </div>
       <nav class="nav">
         ${navButton("onboarding", "route_onboarding")}
@@ -128,6 +133,7 @@ function renderOnboarding() {
     })
     .join("");
   if (current === "language") {
+    const language = state.language || "en";
     return `
       <section class="onboarding-wrap">
         <div class="card">
@@ -135,9 +141,9 @@ function renderOnboarding() {
           <h1>${escapeHtml(t("choose_language_title"))}</h1>
           <p>${escapeHtml(t("choose_language_body"))}</p>
           <div class="actions">
-            <button class="button primary" data-language="en">${escapeHtml(t("language_english"))}</button>
-            <button class="button" data-language="ja">${escapeHtml(t("language_japanese"))}</button>
-            <button class="button" data-language="zh">${escapeHtml(t("language_chinese"))}</button>
+            <button class="button ${language === "en" ? "primary" : ""}" data-language="en">${escapeHtml(t("language_english"))}</button>
+            <button class="button ${language === "ja" ? "primary" : ""}" data-language="ja">${escapeHtml(t("language_japanese"))}</button>
+            <button class="button ${language === "zh" ? "primary" : ""}" data-language="zh">${escapeHtml(t("language_chinese"))}</button>
           </div>
         </div>
       </section>
@@ -254,9 +260,9 @@ function renderSettings() {
         ${inputRow("llm_model", "settings_llm_model_label", llm.model)}
         ${inputRow("llm_base_url", "settings_llm_base_url_label", llm.base_url)}
       </div>
-      <div class="panel full">
-        <button class="button primary" data-action="save-settings">${escapeHtml(t("settings_save_button"))}</button>
+      <div class="panel full action-bar">
         <div id="settings-error" class="error"></div>
+        <button class="button primary" data-action="save-settings">${escapeHtml(t("settings_save_button"))}</button>
       </div>
     </section>
   `;
@@ -268,21 +274,30 @@ function renderModelCard(model, selected) {
   const selectedClass = isSelected ? "selected" : "";
   const progress = downloadProgress.get(model.token);
   const fraction = Math.max(0, Math.min(1, Number(progress?.fraction || 0)));
+  const percent = Math.round(fraction * 100);
+  const downloadingText =
+    progress && !model.downloaded
+      ? t("download_in_progress_message").replace("{percent}", percent + "%")
+      : "";
   return `
     <div class="model-card ${selectedClass}" data-select-model="${escapeHtml(model.token)}">
-      <div>
+      <div class="model-info">
         <h3>${escapeHtml(model.label)}</h3>
         <div class="model-meta">${escapeHtml(model.description)}</div>
-        <div class="model-meta">${escapeHtml(model.token)}</div>
+        <div class="model-token">${escapeHtml(model.token)}</div>
+      </div>
+      <div class="model-action">
+        ${
+          model.downloaded
+            ? `<span class="badge">${escapeHtml(t("settings_model_downloaded_badge"))}</span>`
+            : progress
+              ? `<span class="model-downloading">${escapeHtml(downloadingText)}</span>`
+              : `<button class="button ${active}" data-download-model="${escapeHtml(model.token)}">${escapeHtml(t("settings_model_download_button"))}</button>`
+        }
       </div>
       ${
-        model.downloaded
-          ? `<span class="badge">${escapeHtml(t("settings_model_downloaded_badge"))}</span>`
-          : `<button class="button ${active}" data-download-model="${escapeHtml(model.token)}">${escapeHtml(t("settings_model_download_button"))}</button>`
-      }
-      ${
         progress
-          ? `<div class="progress"><span style="--value: ${Math.round(fraction * 100)}%"></span></div>`
+          ? `<div class="progress"><span style="--value: ${percent}%"></span></div>`
           : ""
       }
     </div>
