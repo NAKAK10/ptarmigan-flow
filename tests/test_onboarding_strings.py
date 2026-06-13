@@ -3,25 +3,81 @@ from __future__ import annotations
 from ptarmigan_flow import onboarding_strings
 
 REQUIRED_KEYS = {
-    "app_setup_title",
-    "choose_language_title",
-    "choose_language_body",
-    "microphone_title",
-    "microphone_body",
-    "accessibility_title",
     "accessibility_body",
-    "input_monitoring_title",
-    "input_monitoring_body",
+    "accessibility_title",
     "allow_button",
-    "open_system_settings_button",
-    "restart_app_button",
-    "restart_required_note",
-    "done_title",
+    "all_permissions_granted_started_message",
+    "app_setup_title",
+    "choose_language_body",
+    "choose_language_title",
+    "config_opened_message",
+    "daemon_not_running_message",
+    "daemon_start_failed_message",
+    "dictation_running_menu",
+    "dictation_stopped_message",
+    "dictation_stopped_menu",
+    "dictionary_add_exact_button",
+    "dictionary_add_regex_button",
+    "dictionary_canonical_label",
+    "dictionary_candidates_patterns_label",
+    "dictionary_default_candidate",
+    "dictionary_default_pattern",
+    "dictionary_delete_button",
+    "dictionary_editor_title",
+    "dictionary_exact_rules_title",
+    "dictionary_invalid_rule_message",
+    "dictionary_load_failed_message",
+    "dictionary_new_exact_rule",
+    "dictionary_new_regex_rule",
+    "dictionary_no_rules",
+    "dictionary_regex_rules_title",
+    "dictionary_save_button",
+    "dictionary_save_failed_message",
+    "dictionary_saved_message",
     "done_body",
+    "done_title",
+    "edit_dictionary_menu",
+    "grant_permissions_message",
+    "input_monitoring_body",
+    "input_monitoring_title",
+    "language_chinese",
+    "language_english",
+    "language_japanese",
+    "language_save_failed_message",
+    "language_saved_message",
+    "login_at_startup_button",
+    "login_at_startup_menu",
+    "login_disable_failed_message",
+    "login_disabled_message",
+    "login_enable_failed_message",
+    "login_enabled_message",
+    "microphone_body",
+    "microphone_title",
+    "model_unavailable_message",
+    "open_config_advanced_button",
+    "open_system_settings_button",
+    "output_clipboard_paste",
+    "output_direct_typing",
+    "quit_menu",
+    "restart_app_button",
+    "restart_failed_message",
+    "restart_required_note",
+    "settings_button",
+    "settings_hotkey_label",
+    "settings_language_label",
+    "settings_load_failed_message",
+    "settings_menu",
+    "settings_model_label",
+    "settings_no_models_message",
+    "settings_output_mode_label",
+    "settings_save_button",
+    "settings_save_failed_message",
+    "settings_saved_message",
+    "settings_validation_error",
+    "settings_window_title",
     "start_dictation_button",
     "stop_dictation_button",
-    "open_config_button",
-    "login_at_startup_button",
+    "voice_input_started_message",
 }
 
 
@@ -57,48 +113,71 @@ def test_strings_for_missing_key_falls_back_to_english(monkeypatch) -> None:
 def test_required_japanese_translations_are_exact() -> None:
     strings = onboarding_strings.strings_for("ja")
 
-    assert strings["app_setup_title"] == "PtarmiganFlow セットアップ"
-    assert strings["choose_language_title"] == "言語を選択"
-    assert strings["choose_language_body"] == "文字起こしに使う言語を選択して設定に保存します。"
-    assert strings["microphone_title"] == "マイクへのアクセス"
-    assert strings["microphone_body"] == (
-        "ホットキーを押している間、PtarmiganFlow が音声を取得することを許可します。"
+    assert strings["start_dictation_button"] == "音声入力を開始"
+    assert strings["stop_dictation_button"] == "音声入力を停止"
+    assert strings["dictation_running_menu"] == "音声入力 実行中"
+    assert strings["dictation_stopped_menu"] == "音声入力 停止中"
+    assert strings["settings_menu"] == "設定"
+    assert strings["edit_dictionary_menu"] == "変換辞書を編集"
+    assert strings["quit_menu"] == "終了"
+    assert strings["grant_permissions_message"] == (
+        "音声入力を開始する前にすべての権限を許可してください。"
     )
-    assert strings["accessibility_title"] == "アクセシビリティへのアクセス"
-    assert strings["accessibility_body"] == (
-        "ディクテーション結果を入力するため、PtarmiganFlow が"
-        "アクティブなテキスト欄を操作することを許可します。"
+    assert strings["daemon_not_running_message"] == "音声入力デーモンはまだ起動していません。"
+    assert strings["daemon_start_failed_message"] == "音声入力を開始できませんでした: {error}"
+    assert strings["voice_input_started_message"] == "音声入力を開始しました。"
+    assert strings["all_permissions_granted_started_message"] == (
+        "すべての権限が許可されました。音声入力を開始しました。"
     )
-    assert strings["input_monitoring_title"] == "入力監視"
-    assert strings["input_monitoring_body"] == (
-        "プッシュトゥトーク用のホットキーを検出するため、"
-        "PtarmiganFlow に入力監視を許可します。"
+    assert strings["dictation_stopped_message"] == "音声入力を停止しました。"
+    assert strings["restart_failed_message"] == "アプリを再起動できませんでした。"
+    assert strings["language_saved_message"] == "{path} に言語設定を保存しました。"
+    assert strings["language_save_failed_message"] == "言語設定を保存できませんでした: {error}"
+    assert strings["config_opened_message"] == "設定ファイルを開きました: {path}"
+    assert strings["login_at_startup_menu"] == "ログイン時に起動"
+    assert strings["login_enabled_message"] == "ログイン時に起動する設定を有効にしました。"
+    assert strings["login_disabled_message"] == "ログイン時に起動する設定を無効にしました。"
+    assert strings["login_enable_failed_message"] == (
+        "ログイン時に起動する設定を有効にできませんでした。"
     )
-    assert strings["allow_button"] == "許可する"
-    assert strings["open_system_settings_button"] == "システム設定を開く"
-    assert strings["restart_app_button"] == "アプリを再起動"
-    assert strings["restart_required_note"] == (
-        "システム設定で許可した直後は、反映のためアプリの再起動が必要な場合があります。"
+    assert strings["login_disable_failed_message"] == (
+        "ログイン時に起動する設定を無効にできませんでした。"
     )
-    assert strings["done_title"] == "ディクテーションの準備完了"
-    assert strings["done_body"] == (
-        "セットアップが完了しました。ディクテーションを開始するか、設定ファイルを開けます。"
+    assert strings["dictionary_editor_title"] == "変換辞書"
+    assert strings["dictionary_exact_rules_title"] == "完全一致ルール"
+    assert strings["dictionary_regex_rules_title"] == "正規表現ルール"
+    assert strings["dictionary_canonical_label"] == "正規表記"
+    assert strings["dictionary_candidates_patterns_label"] == "候補/パターン(カンマ区切り)"
+    assert strings["dictionary_no_rules"] == "ルールがありません"
+    assert strings["dictionary_add_exact_button"] == "完全一致を追加"
+    assert strings["dictionary_add_regex_button"] == "正規表現を追加"
+    assert strings["dictionary_save_button"] == "保存"
+    assert strings["dictionary_delete_button"] == "削除"
+    assert strings["dictionary_saved_message"] == (
+        "保存しました。反映には音声入力を再起動してください。"
     )
-    assert strings["start_dictation_button"] == "ディクテーション開始"
-    assert strings["stop_dictation_button"] == "ディクテーション停止"
-    assert strings["open_config_button"] == "設定を開く"
-    assert strings["login_at_startup_button"] == "ログイン時に起動"
+    assert strings["dictionary_load_failed_message"] == "変換辞書を読み込めませんでした: {error}"
+    assert strings["dictionary_save_failed_message"] == "変換辞書を保存できませんでした: {error}"
+    assert strings["dictionary_invalid_rule_message"] == (
+        "無効な辞書ルール: [{section}] {key} {pattern}: {message}"
+    )
+    assert strings["model_unavailable_message"] == (
+        "このアプリ版では設定中のモデル {model} は利用できません。"
+        "設定からモデルを選択してください。"
+    )
 
 
 def test_chinese_translations_are_simplified_and_complete() -> None:
     strings = onboarding_strings.strings_for("zh")
 
-    assert strings["app_setup_title"] == "PtarmiganFlow 设置"
-    assert strings["choose_language_title"] == "选择语言"
-    assert strings["microphone_title"] == "麦克风访问权限"
-    assert strings["accessibility_title"] == "辅助功能访问权限"
-    assert strings["input_monitoring_title"] == "输入监控"
-    assert strings["restart_app_button"] == "重新启动应用"
-    assert strings["restart_required_note"] == (
-        "如果刚刚在系统设置中授予了此权限，可能需要重新启动应用才能生效。"
+    assert strings["start_dictation_button"] == "开始语音输入"
+    assert strings["stop_dictation_button"] == "停止语音输入"
+    assert strings["dictation_running_menu"] == "语音输入 运行中"
+    assert strings["dictation_stopped_menu"] == "语音输入 已停止"
+    assert strings["settings_menu"] == "设置"
+    assert strings["edit_dictionary_menu"] == "编辑转换词典"
+    assert strings["dictionary_editor_title"] == "转换词典"
+    assert strings["dictionary_saved_message"] == "已保存。请重启语音输入以应用更改。"
+    assert strings["model_unavailable_message"] == (
+        "此应用版本无法使用当前设置的模型 {model}。请在设置中选择模型。"
     )
