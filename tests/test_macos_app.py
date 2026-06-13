@@ -154,3 +154,44 @@ def test_macos_app_permission_steps_have_allow_and_system_settings_actions() -> 
     assert '"requestInputMonitoring:"' in source
     assert "def openSystemSettings_(self, _sender):" in source
     assert "x-apple.systempreferences:com.apple.preference.security" in source
+
+
+def test_macos_app_creates_status_bar_menu() -> None:
+    source = _macos_app_source()
+
+    assert "NSStatusBar" in source
+    assert "NSVariableStatusItemLength" in source
+    assert "statusItemWithLength_" in source
+    assert "self.status_item" in source
+    assert "self.status_menu" in source
+    assert '"Dictation Stopped"' in source
+    assert '"Start Dictation"' in source
+    assert '"Stop Dictation"' in source
+    assert '"Settings"' in source
+    assert '"Open Config"' in source
+    assert '"Login at Startup"' in source
+    assert '"Quit"' in source
+
+
+def test_macos_app_wires_login_item_toggle_with_checkmark() -> None:
+    source = _macos_app_source()
+
+    assert "from ptarmigan_flow import login_item" in source
+    assert "def toggleLoginAtStartup_(self, _sender):" in source
+    assert "login_item.is_enabled()" in source
+    assert "login_item.register()" in source
+    assert "login_item.unregister()" in source
+    assert "self.login_menu_item.setState_(" in source
+    assert "NSControlStateValueOn" in source
+    assert "NSControlStateValueOff" in source
+
+
+def test_macos_app_removes_launchd_buttons_from_app_ui() -> None:
+    source = _macos_app_source()
+
+    assert 'self._button("Install Login Startup", "installLaunchAgent:"' not in source
+    assert 'self._button("Restart Daemon", "restartLaunchAgent:"' not in source
+    assert "def installLaunchAgent_(self, _sender):" not in source
+    assert "def restartLaunchAgent_(self, _sender):" not in source
+    assert "install_launch_agent" not in source
+    assert "restart_launch_agent" not in source

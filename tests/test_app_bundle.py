@@ -54,6 +54,7 @@ def test_install_app_bundle_from_env_creates_bundle(tmp_path: Path, monkeypatch)
     assert payload["CFBundleExecutable"] == app_bundle.APP_EXECUTABLE_NAME
     assert payload["CFBundleIdentifier"] == app_bundle.APP_BUNDLE_IDENTIFIER
     assert payload["CFBundleIconFile"] == app_bundle.APP_ICON_FILE
+    assert payload["LSUIElement"] is True
     assert "NSMicrophoneUsageDescription" in payload
     assert (
         destination / "Contents" / "Resources" / app_bundle.APP_ICON_FILE
@@ -117,7 +118,12 @@ def test_resolve_real_python_binary_falls_back_when_python_app_missing(tmp_path:
     assert resolved == launcher
 
 
-def _make_bundle_env(tmp_path: Path, monkeypatch, *, python_content: bytes = b"pythonbin-v1") -> Path:
+def _make_bundle_env(
+    tmp_path: Path,
+    monkeypatch,
+    *,
+    python_content: bytes = b"pythonbin-v1",
+) -> Path:
     """Set up env vars and file fixtures for install_app_bundle_from_env tests."""
     bootstrap_script = tmp_path / "libexec" / "src" / "ptarmigan_flow" / "homebrew_bootstrap.py"
     bootstrap_script.parent.mkdir(parents=True, exist_ok=True)

@@ -27,7 +27,7 @@ def test_macos_app_entrypoint_contains_onboarding_controls() -> None:
     assert "request_microphone_permission" in source
     assert "request_accessibility_permission" in source
     assert "request_input_monitoring_permission" in source
-    assert "install_launch_agent" in source
+    assert "login_item" in source
     assert "open_config" in source
     assert "Microphone" in source
     assert "Accessibility" in source
@@ -47,6 +47,7 @@ def test_pyinstaller_spec_builds_ptarmiganflow_app() -> None:
     assert '"CFBundleIconFile": "PtarmiganFlow.icns"' in spec
     assert "NSMicrophoneUsageDescription" in spec
     assert "LSMinimumSystemVersion" in spec
+    assert '"LSUIElement": True' in spec
     assert 'PYINSTALLER_TARGET_ARCH' in spec
     assert "target_arch=TARGET_ARCH" in spec
 
