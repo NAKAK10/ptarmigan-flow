@@ -168,9 +168,36 @@ def test_macos_app_creates_status_bar_menu() -> None:
     assert '"Start Dictation"' in source
     assert '"Stop Dictation"' in source
     assert '"Settings"' in source
+    assert '"Edit Dictionary"' in source
     assert '"Open Config"' in source
     assert '"Login at Startup"' in source
     assert '"Quit"' in source
+
+
+def test_macos_app_wires_corrections_editor_window() -> None:
+    source = _macos_app_source()
+
+    assert "from ptarmigan_flow.corrections_editor_model import CorrectionsEditorModel" in source
+    assert "resolve_dictionary_path" in source
+    assert "self.corrections_model = CorrectionsEditorModel.load" in source
+    assert "def showDictionaryEditor_(self, _sender):" in source
+    assert "self._build_dictionary_window()" in source
+    assert "Dictionary Editor" in source
+    assert "NSTableView" in source or "dictionary_row_controls" in source
+    assert "addExactCorrectionRow:" in source
+    assert "addRegexCorrectionRow:" in source
+    assert "deleteDictionaryRow:" in source
+
+
+def test_macos_app_dictionary_editor_validates_and_saves() -> None:
+    source = _macos_app_source()
+
+    assert "def saveDictionary_(self, _sender):" in source
+    assert "self._sync_dictionary_model_from_controls()" in source
+    assert "self.corrections_model.validate()" in source
+    assert "self.corrections_model.save(self.dictionary_path)" in source
+    assert "Invalid dictionary rule" in source
+    assert "Dictionary saved. Restart dictation to apply changes." in source
 
 
 def test_macos_app_wires_login_item_toggle_with_checkmark() -> None:
