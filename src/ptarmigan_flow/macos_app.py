@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 from ptarmigan_flow import app_relaunch, login_item, onboarding_strings
+from ptarmigan_flow import onboarding_flow as onboarding_flow_module
 from ptarmigan_flow.app_daemon_controller import (
     DaemonController,
     daemon_run_command,
@@ -202,7 +203,12 @@ def _run_appkit_app() -> int:
         def applicationDidFinishLaunching_(self, _notification):  # noqa: N802
             self._build_status_item()
             self._build_window()
+            self.onboarding_flow.start(
+                report=check_all_permissions(),
+                language_already_selected=onboarding_flow_module.language_was_selected(),
+            )
             self._render_current_step()
+            self._show_onboarding_window_if_needed()
             self._refresh_onboarding_permissions()
 
         def applicationWillTerminate_(self, _notification):  # noqa: N802
@@ -323,7 +329,12 @@ def _run_appkit_app() -> int:
             self.window.setTitle_(APP_NAME)
             self.content_view = self.window.contentView()
             self.window.center()
-            self.window.makeKeyAndOrderFront_(None)
+
+        @objc.python_method
+        def _show_onboarding_window_if_needed(self) -> None:
+            if not self.onboarding_flow.is_complete:
+                self.window.makeKeyAndOrderFront_(None)
+                NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
 
         @objc.python_method
         def _clear_content_view(self) -> None:
@@ -832,6 +843,7 @@ def _run_appkit_app() -> int:
                 config_path = self._save_language(code)
                 self.ui_language = code
                 self.onboarding_flow.choose_language(code)
+                onboarding_flow_module.mark_language_selected()
             except Exception as exc:
                 self._set_message(strings["language_save_failed_message"].format(error=exc))
                 return
@@ -848,6 +860,7 @@ def _run_appkit_app() -> int:
             after_step = self.onboarding_flow.current_step
             if after_step != before_step:
                 self._render_current_step()
+                self._show_onboarding_window_if_needed()
             if report.all_granted:
                 if self.onboarding_flow.is_complete:
                     self._start_daemon_if_ready(
@@ -1111,7 +1124,6 @@ def _run_appkit_app() -> int:
     app.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
     delegate = OnboardingController.alloc().init()
     app.setDelegate_(delegate)
-    app.activateIgnoringOtherApps_(True)
     app.run()
     return 0
 

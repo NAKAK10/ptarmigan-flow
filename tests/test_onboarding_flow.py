@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
+from ptarmigan_flow import onboarding_flow as onboarding_flow_module
 from ptarmigan_flow.onboarding_flow import OnboardingFlow
 from ptarmigan_flow.permissions import PermissionReport
 
@@ -110,3 +113,58 @@ def test_start_does_not_skip_language_selection() -> None:
 
     assert flow.current_step == "language"
     assert flow.is_complete is False
+
+
+def test_start_skips_language_when_language_was_already_selected() -> None:
+    flow = OnboardingFlow()
+
+    flow.start(
+        _report(microphone=True, accessibility=True, input_monitoring=True),
+        language_already_selected=True,
+    )
+
+    assert flow.current_step == "done"
+    assert flow.is_complete is True
+
+
+def test_start_keeps_language_when_language_was_not_already_selected() -> None:
+    flow = OnboardingFlow()
+
+    flow.start(
+        _report(microphone=True, accessibility=True, input_monitoring=True),
+        language_already_selected=False,
+    )
+
+    assert flow.current_step == "language"
+    assert flow.is_complete is False
+
+
+def test_language_selection_state_round_trips_through_persisted_file(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    state_path = tmp_path / "Library" / "Application Support" / "ptarmigan-flow" / "state.json"
+    monkeypatch.setattr(
+        onboarding_flow_module,
+        "onboarding_state_path",
+        lambda: state_path,
+        raising=False,
+    )
+
+    assert onboarding_flow_module.language_was_selected() is False
+
+    onboarding_flow_module.mark_language_selected()
+
+    assert json.loads(state_path.read_text(encoding="utf-8")) == {"language_selected": True}
+    assert onboarding_flow_module.language_was_selected() is True
+
+
+def test_language_was_selected_returns_false_for_malformed_state(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    state_path = tmp_path / "onboarding_state.json"
+    state_path.write_text("[]", encoding="utf-8")
+    monkeypatch.setattr(onboarding_flow_module, "onboarding_state_path", lambda: state_path)
+
+    assert onboarding_flow_module.language_was_selected() is False
