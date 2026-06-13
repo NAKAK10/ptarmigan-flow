@@ -66,6 +66,27 @@ def test_dispatch_cli_args_ignores_unknown_module() -> None:
     assert macos_app._dispatch_cli_args(["-m", "ptarmigan_flow.unknown"]) is None
 
 
+def test_main_calls_freeze_support_before_dispatch(monkeypatch) -> None:
+    calls: list[str] = []
+
+    monkeypatch.setattr(
+        macos_app.multiprocessing,
+        "freeze_support",
+        lambda: calls.append("freeze_support"),
+    )
+
+    def fake_dispatch(_argv):
+        calls.append("dispatch")
+        return 0
+
+    monkeypatch.setattr(macos_app, "_dispatch_cli_args", fake_dispatch)
+
+    assert macos_app.main() == 0
+    # freeze_support must run before any CLI dispatch / GUI launch so that
+    # multiprocessing worker children never fall through to the GUI entry point.
+    assert calls == ["freeze_support", "dispatch"]
+
+
 def test_macos_app_sets_runtime_application_icon() -> None:
     source = _macos_app_source()
 
