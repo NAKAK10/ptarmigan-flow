@@ -37,21 +37,17 @@ TARGET_ARCH = _target_arch()
 datas = [(str(ROOT / "config.example.toml"), ".")]
 binaries = []
 
+# Backends kept out of the app build. The MLX engines are bundled (below) so
+# Apple Silicon users can run Moonshine + MLX-Whisper + Granite(MLX) + Voxtral(MLX)
+# locally; only the heavy Torch/Transformers fallbacks (used on non-MLX systems)
+# and the test helper stay excluded.
 OPTIONAL_BACKEND_MODULE_PREFIXES = (
-    "ptarmigan_flow.stt.granite_mlx",
     "ptarmigan_flow.stt.granite_transformers",
-    "ptarmigan_flow.stt.mlx_whisper",
-    "ptarmigan_flow.stt.voxtral_mlx",
     "ptarmigan_flow.stt.voxtral_transformers",
     "ptarmigan_flow.stt._test_support",
 )
 
 OPTIONAL_BACKEND_PACKAGE_EXCLUDES = (
-    "mlx",
-    "mlx_audio",
-    "mlx_whisper",
-    "voxmlx",
-    "mistral_common",
     "torch",
     "transformers",
     "scipy",
@@ -63,6 +59,11 @@ OPTIONAL_BACKEND_PACKAGE_EXCLUDES = (
 
 RELEASE_BACKEND_PACKAGES = (
     "moonshine_voice",
+    "mlx",
+    "mlx_audio",
+    "mlx_whisper",
+    "voxmlx",
+    "mistral_common",
 )
 
 MOONSHINE_EXCLUDED_BASENAMES = {
@@ -94,9 +95,9 @@ hiddenimports = [
     if _keep_release_module(name)
 ]
 
-# The downloadable app is intentionally a compact Moonshine build. Larger
-# MLX/Granite/Voxtral/Torch backends remain available through the CLI/Homebrew
-# environment, but are not shipped in this small app artifact.
+# The app bundles the MLX inference engines so any supported MLX model works
+# locally; model weights themselves are downloaded on demand at runtime. Torch /
+# Transformers fallbacks remain CLI/Homebrew-only to keep the artifact smaller.
 for package in RELEASE_BACKEND_PACKAGES:
     pkg_datas, pkg_binaries, pkg_hiddenimports = collect_all(package)
     if package == "moonshine_voice":

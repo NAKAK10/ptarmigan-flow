@@ -76,21 +76,28 @@ def test_macos_app_pyobjc_helpers_are_python_only() -> None:
         ), f"{method_name} should not be exposed as an Objective-C selector"
 
 
-def test_pyinstaller_spec_collects_only_release_backend_packages() -> None:
+def test_pyinstaller_spec_bundles_mlx_backends() -> None:
     spec = (ROOT / "packaging/macos/PtarmiganFlow.spec").read_text(encoding="utf-8")
 
     assert "RELEASE_BACKEND_PACKAGES" in spec
     release_packages_block = spec.split("RELEASE_BACKEND_PACKAGES", 1)[1].split(")", 1)[0]
-    assert '"moonshine_voice"' in spec
-    assert '"mlx_audio"' not in release_packages_block
-    assert '"mlx_whisper"' not in release_packages_block
-    assert '"voxmlx"' not in release_packages_block
-    assert '"mistral_common"' not in release_packages_block
+    # Moonshine plus the MLX inference engines are bundled so any supported MLX
+    # model works locally; weights download on demand at runtime.
+    assert '"moonshine_voice"' in release_packages_block
+    assert '"mlx"' in release_packages_block
+    assert '"mlx_audio"' in release_packages_block
+    assert '"mlx_whisper"' in release_packages_block
+    assert '"voxmlx"' in release_packages_block
+    assert '"mistral_common"' in release_packages_block
+    # The heavy Torch/Transformers fallbacks stay excluded (CLI/Homebrew only).
     assert '"torch"' in spec
     assert '"transformers"' in spec
-    assert "OPTIONAL_BACKEND_MODULE_PREFIXES" in spec
-    assert "ptarmigan_flow.stt.granite_mlx" in spec
-    assert "ptarmigan_flow.stt.granite_transformers" in spec
+    # MLX backend modules are now shipped; only the Transformers fallbacks and
+    # the test helper remain excluded.
+    module_excludes_block = spec.split("OPTIONAL_BACKEND_MODULE_PREFIXES", 1)[1].split(")", 1)[0]
+    assert "ptarmigan_flow.stt.granite_mlx" not in module_excludes_block
+    assert "ptarmigan_flow.stt.granite_transformers" in module_excludes_block
+    assert "ptarmigan_flow.stt.voxtral_transformers" in module_excludes_block
     assert "MOONSHINE_EXCLUDED_HIDDENIMPORTS" in spec
     assert "moonshine_voice.libmoonshine" in spec
 

@@ -97,14 +97,15 @@ def test_macos_app_sets_runtime_application_icon() -> None:
     assert APP_ICON_FILE == "PtarmiganFlow.icns"
 
 
-def test_macos_app_wires_in_process_daemon_controller() -> None:
+def test_macos_app_wires_subprocess_daemon_controller() -> None:
     source = _macos_app_source()
 
     assert "from ptarmigan_flow.app_daemon_controller import (" in source
     assert "DaemonController" in source
-    assert "build_daemon_from_config" in source
+    assert "daemon_run_command" in source
+    assert "build_daemon_from_config" not in source
     assert "self.daemon_controller = DaemonController" in source
-    assert "lambda: build_daemon_from_config(default_config_path())" in source
+    assert "lambda: daemon_run_command(default_config_path())" in source
 
 
 def test_macos_app_exposes_start_stop_dictation_actions() -> None:

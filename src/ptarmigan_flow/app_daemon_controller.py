@@ -1,8 +1,10 @@
-"""In-process daemon lifecycle helpers for the macOS app."""
+"""Daemon lifecycle helpers for the macOS app."""
 
 from __future__ import annotations
 
 import logging
+import subprocess
+import sys
 import threading
 from collections.abc import Callable
 from pathlib import Path
@@ -24,27 +26,50 @@ class DaemonLike(Protocol):
         """Request daemon shutdown."""
 
 
+class ProcessLike(Protocol):
+    """Small subprocess protocol used by the app controller."""
+
+    returncode: int | None
+
+    def poll(self) -> int | None:
+        """Return the process exit code when it has exited."""
+
+    def terminate(self) -> None:
+        """Request graceful process termination."""
+
+    def wait(self, timeout: float | None = None) -> int | None:
+        """Wait for process exit."""
+
+    def kill(self) -> None:
+        """Force process termination."""
+
+
 class DaemonController:
-    """Start and stop a daemon on a background thread."""
+    """Start and stop the daemon as a signed child process."""
 
     def __init__(
         self,
-        daemon_factory: Callable[[], DaemonLike],
+        command_builder: Callable[[], list[str]],
         *,
+        runner: Callable[[list[str]], ProcessLike] = subprocess.Popen,
         join_timeout: float | None = 5.0,
     ) -> None:
-        self._daemon_factory = daemon_factory
+        self._command_builder = command_builder
+        self._runner = runner
         self._join_timeout = join_timeout
         self._lock = threading.Lock()
-        self._daemon: DaemonLike | None = None
-        self._thread: threading.Thread | None = None
-        self._is_running = False
+        self._process: ProcessLike | None = None
         self._last_error: Exception | None = None
 
     @property
     def is_running(self) -> bool:
         with self._lock:
-            return self._is_running
+            process = self._process
+            if process is None:
+                return False
+            returncode = process.poll()
+            self._record_exit_error_locked(returncode)
+            return returncode is None
 
     @property
     def last_error(self) -> Exception | None:
@@ -54,56 +79,72 @@ class DaemonController:
     def start(self) -> None:
         """Start the daemon worker unless one is already active."""
         with self._lock:
-            if self._thread is not None and self._thread.is_alive():
+            if self._process is not None and self._process.poll() is None:
                 return
-            self._is_running = True
             self._last_error = None
-            thread = threading.Thread(
-                target=self._run_daemon,
-                daemon=True,
-                name="ptarmigan-flow-app-daemon",
-            )
-            self._thread = thread
-        thread.start()
+
+        try:
+            command = self._command_builder()
+            process = self._runner(command)
+        except Exception as exc:
+            LOGGER.exception("Failed to start app daemon subprocess")
+            with self._lock:
+                self._process = None
+                self._last_error = exc
+            return
+
+        with self._lock:
+            self._process = process
+            self._record_exit_error_locked(process.poll())
 
     def stop(self) -> None:
-        """Stop the daemon and wait briefly for the worker thread to exit."""
+        """Stop the daemon subprocess and wait briefly for it to exit."""
         with self._lock:
-            daemon = self._daemon
-            thread = self._thread
+            process = self._process
+        if process is None:
+            return
 
-        if daemon is not None:
-            try:
-                daemon.stop()
-            except Exception as exc:
-                LOGGER.exception("Failed to stop app daemon")
-                with self._lock:
-                    self._last_error = exc
-
-        if thread is not None and thread is not threading.current_thread():
-            thread.join(timeout=self._join_timeout)
-
-        with self._lock:
-            if thread is None or not thread.is_alive():
-                if self._thread is thread:
-                    self._thread = None
-                self._daemon = None
-                self._is_running = False
-
-    def _run_daemon(self) -> None:
         try:
-            daemon = self._daemon_factory()
-            with self._lock:
-                self._daemon = daemon
-            daemon.run_forever()
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=self._join_timeout)
+                except subprocess.TimeoutExpired:
+                    pass
+            if process.poll() is None:
+                process.kill()
+                try:
+                    process.wait(timeout=self._join_timeout)
+                except subprocess.TimeoutExpired as exc:
+                    LOGGER.exception("Timed out waiting for app daemon subprocess to exit")
+                    with self._lock:
+                        self._last_error = exc
         except Exception as exc:
-            LOGGER.exception("App daemon exited with an error")
+            LOGGER.exception("Failed to stop app daemon subprocess")
             with self._lock:
                 self._last_error = exc
         finally:
             with self._lock:
-                self._daemon = None
-                self._is_running = False
+                if self._process is process:
+                    self._process = None
+
+    def _record_exit_error_locked(self, returncode: int | None) -> None:
+        if returncode is not None and returncode != 0:
+            self._last_error = RuntimeError(
+                f"App daemon subprocess exited with return code {returncode}"
+            )
+
+
+def daemon_run_command(config_path: Path | str) -> list[str]:
+    """Build the child-process command that runs the daemon through the CLI."""
+    return [
+        sys.executable,
+        "-m",
+        "ptarmigan_flow.cli",
+        "run",
+        "--config",
+        str(Path(config_path).expanduser()),
+    ]
 
 
 def build_daemon(

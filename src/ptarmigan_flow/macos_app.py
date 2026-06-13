@@ -11,7 +11,7 @@ from pathlib import Path
 from ptarmigan_flow import app_relaunch, login_item, onboarding_strings
 from ptarmigan_flow.app_daemon_controller import (
     DaemonController,
-    build_daemon_from_config,
+    daemon_run_command,
 )
 from ptarmigan_flow.app_icon import APP_ICON_FILE, APP_ICON_RESOURCE_PACKAGE
 from ptarmigan_flow.app_settings_model import (
@@ -190,7 +190,7 @@ def _run_appkit_app() -> int:
             except Exception:
                 self.ui_language = "en"
             self.daemon_controller = DaemonController(
-                lambda: build_daemon_from_config(default_config_path())
+                lambda: daemon_run_command(default_config_path())
             )
             self.dictionary_path, _explicit = resolve_dictionary_path(None)
             self.corrections_model = CorrectionsEditorModel()
