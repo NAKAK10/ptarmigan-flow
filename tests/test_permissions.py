@@ -1,12 +1,12 @@
 import sys
-from pathlib import Path
 from types import SimpleNamespace
 
 from ptarmigan_flow.permissions import (
-    _parse_permission_report_from_text,
     LaunchdPermissionProbe,
     PermissionReport,
+    _parse_permission_report_from_text,
     check_accessibility_permission,
+    check_all_permissions_subprocess,
     check_permissions_in_launchd_context,
     format_permission_guidance,
     recommended_permission_target,
@@ -201,6 +201,122 @@ def test_parse_permission_report_from_text_returns_none_when_incomplete() -> Non
 
     report = _parse_permission_report_from_text(text)
     assert report is None
+
+
+def test_check_all_permissions_subprocess_parses_stdout_and_uses_module_command() -> None:
+    called: dict[str, object] = {}
+
+    def fake_run(command, *, capture_output, text):
+        called["command"] = command
+        called["capture_output"] = capture_output
+        called["text"] = text
+        return SimpleNamespace(
+            returncode=0,
+            stdout="\n".join(
+                [
+                    "Microphone: OK",
+                    "Accessibility: OK",
+                    "Input Monitoring: OK",
+                ]
+            ),
+            stderr="",
+        )
+
+    report = check_all_permissions_subprocess(runner=fake_run, executable="/tmp/PtarmiganFlow")
+
+    assert report == PermissionReport(
+        microphone=True,
+        accessibility=True,
+        input_monitoring=True,
+    )
+    assert called == {
+        "command": [
+            "/tmp/PtarmiganFlow",
+            "-m",
+            "ptarmigan_flow.cli",
+            "check-permissions",
+        ],
+        "capture_output": True,
+        "text": True,
+    }
+
+
+def test_check_all_permissions_subprocess_accepts_cli_incomplete_status_exit() -> None:
+    def fake_run(_command, *, capture_output, text):
+        assert capture_output is True
+        assert text is True
+        return SimpleNamespace(
+            returncode=2,
+            stdout="\n".join(
+                [
+                    "Microphone: OK",
+                    "Accessibility: OK",
+                    "Input Monitoring: MISSING",
+                ]
+            ),
+            stderr="",
+        )
+
+    report = check_all_permissions_subprocess(runner=fake_run, executable="/tmp/PtarmiganFlow")
+
+    assert report == PermissionReport(
+        microphone=True,
+        accessibility=True,
+        input_monitoring=False,
+    )
+
+
+def test_check_all_permissions_subprocess_returns_none_for_failed_exit_or_empty_output() -> None:
+    failed = check_all_permissions_subprocess(
+        runner=lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=1,
+            stdout="Microphone: OK\nAccessibility: OK\nInput Monitoring: OK",
+            stderr="",
+        ),
+        executable="/tmp/PtarmiganFlow",
+    )
+    empty = check_all_permissions_subprocess(
+        runner=lambda *_args, **_kwargs: SimpleNamespace(returncode=0, stdout="", stderr=""),
+        executable="/tmp/PtarmiganFlow",
+    )
+
+    assert failed is None
+    assert empty is None
+
+
+def test_check_all_permissions_subprocess_uses_stderr_when_stdout_is_unparseable() -> None:
+    def fake_run(_command, *, capture_output, text):
+        assert capture_output is True
+        assert text is True
+        return SimpleNamespace(
+            returncode=0,
+            stdout="debug noise",
+            stderr="\n".join(
+                [
+                    "Microphone: MISSING",
+                    "Accessibility: OK",
+                    "Input Monitoring: OK",
+                ]
+            ),
+        )
+
+    report = check_all_permissions_subprocess(runner=fake_run, executable="/tmp/PtarmiganFlow")
+
+    assert report == PermissionReport(
+        microphone=False,
+        accessibility=True,
+        input_monitoring=True,
+    )
+
+
+def test_check_all_permissions_subprocess_returns_none_when_runner_raises() -> None:
+    def fake_run(_command, *, capture_output, text):
+        raise OSError("boom")
+
+    assert (
+        check_all_permissions_subprocess(runner=fake_run, executable="/tmp/PtarmiganFlow")
+        is None
+    )
 
 
 def test_check_permissions_in_launchd_context_short_circuits_on_non_macos(monkeypatch) -> None:

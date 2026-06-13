@@ -6,6 +6,7 @@ import importlib.resources
 import multiprocessing
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 from ptarmigan_flow import app_relaunch, login_item, onboarding_strings
@@ -32,6 +33,7 @@ from ptarmigan_flow.onboarding_flow import OnboardingFlow
 from ptarmigan_flow.permissions import (
     PermissionReport,
     check_all_permissions,
+    check_all_permissions_subprocess,
     request_accessibility_permission,
     request_input_monitoring_permission,
     request_microphone_permission,
@@ -146,6 +148,9 @@ def _run_appkit_app() -> int:
         status_item: object
         status_menu: object
         stop_menu_item: object
+        _permission_check_generation: int
+        _permission_check_in_progress: bool
+        _permission_check_thread: threading.Thread | None
         ui_language: str
         window: object
 
@@ -186,6 +191,9 @@ def _run_appkit_app() -> int:
                 return None
             self.onboarding_flow = OnboardingFlow()
             self.permission_timer = None
+            self._permission_check_generation = 0
+            self._permission_check_in_progress = False
+            self._permission_check_thread = None
             try:
                 self.ui_language = load_config(default_config_path()).language
             except Exception:
@@ -210,13 +218,14 @@ def _run_appkit_app() -> int:
             self._render_current_step()
             self._show_onboarding_window_if_needed()
             self._refresh_onboarding_permissions()
+            self._start_permission_check()
 
         def applicationWillTerminate_(self, _notification):  # noqa: N802
             self._stop_permission_timer()
             self.daemon_controller.stop()
 
         def applicationDidBecomeActive_(self, _notification):  # noqa: N802
-            self._refresh_onboarding_permissions()
+            self._start_permission_check()
 
         @objc.python_method
         def _label(self, text: str, x: float, y: float, w: float, h: float, *, size: float = 14.0):
@@ -463,6 +472,7 @@ def _run_appkit_app() -> int:
 
         @objc.python_method
         def _stop_permission_timer(self) -> None:
+            self._permission_check_generation += 1
             if self.permission_timer is not None:
                 self.permission_timer.invalidate()
                 self.permission_timer = None
@@ -475,7 +485,56 @@ def _run_appkit_app() -> int:
             schedule_timer = (
                 NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_
             )
-            self.permission_timer = schedule_timer(1.0, self, "pollPermissions:", None, True)
+            self.permission_timer = schedule_timer(1.75, self, "pollPermissions:", None, True)
+
+        @objc.python_method
+        def _start_permission_check(self) -> None:
+            if self.onboarding_flow.current_step not in self._permission_step_config:
+                return
+            if self._permission_check_in_progress:
+                return
+            self._permission_check_in_progress = True
+            generation = self._permission_check_generation
+            thread = threading.Thread(
+                target=self._check_permissions_in_background,
+                args=(generation,),
+                daemon=True,
+            )
+            self._permission_check_thread = thread
+            try:
+                thread.start()
+            except RuntimeError:
+                self._permission_check_in_progress = False
+
+        @objc.python_method
+        def _check_permissions_in_background(self, generation: int) -> None:
+            report = check_all_permissions_subprocess()
+            if report is None:
+                report = check_all_permissions()
+            payload = {"generation": generation, "report": report}
+            try:
+                self.performSelectorOnMainThread_withObject_waitUntilDone_(
+                    "applyPermissionCheckResult:",
+                    payload,
+                    False,
+                )
+            except Exception:
+                self._permission_check_in_progress = False
+
+        def applyPermissionCheckResult_(self, payload):  # noqa: N802
+            self._permission_check_in_progress = False
+            try:
+                generation = int(payload["generation"])
+                report = payload["report"]
+            except Exception:
+                return
+            if generation != self._permission_check_generation:
+                return
+            if self.onboarding_flow.current_step not in self._permission_step_config:
+                return
+            if not isinstance(report, PermissionReport):
+                return
+            self._refresh_onboarding_permissions(report)
 
         @objc.python_method
         def _set_message(self, message: str) -> None:
@@ -851,10 +910,15 @@ def _run_appkit_app() -> int:
             self._update_status_menu()
             self._set_message(strings["language_saved_message"].format(path=config_path))
             self._refresh_onboarding_permissions()
+            self._start_permission_check()
 
         @objc.python_method
-        def _refresh_onboarding_permissions(self) -> PermissionReport:
-            report = check_all_permissions()
+        def _refresh_onboarding_permissions(
+            self,
+            report: PermissionReport | None = None,
+        ) -> PermissionReport:
+            if report is None:
+                report = check_all_permissions()
             before_step = self.onboarding_flow.current_step
             self.onboarding_flow.refresh(report)
             after_step = self.onboarding_flow.current_step
@@ -922,7 +986,7 @@ def _run_appkit_app() -> int:
             return False
 
         def pollPermissions_(self, _timer):  # noqa: N802
-            self._refresh_onboarding_permissions()
+            self._start_permission_check()
 
         def chooseEnglish_(self, _sender):  # noqa: N802
             self._choose_language("en")
@@ -935,15 +999,15 @@ def _run_appkit_app() -> int:
 
         def requestMicrophone_(self, _sender):  # noqa: N802
             request_microphone_permission()
-            self._refresh_onboarding_permissions()
+            self._start_permission_check()
 
         def requestAccessibility_(self, _sender):  # noqa: N802
             request_accessibility_permission()
-            self._refresh_onboarding_permissions()
+            self._start_permission_check()
 
         def requestInputMonitoring_(self, _sender):  # noqa: N802
             request_input_monitoring_permission()
-            self._refresh_onboarding_permissions()
+            self._start_permission_check()
 
         def openSystemSettings_(self, _sender):  # noqa: N802
             step = self.onboarding_flow.current_step

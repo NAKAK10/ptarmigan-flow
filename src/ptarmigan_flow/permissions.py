@@ -8,10 +8,10 @@ import platform
 import shutil
 import subprocess
 import sys
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Event
-from typing import Sequence
 
 LOGGER = logging.getLogger(__name__)
 
@@ -80,6 +80,37 @@ def _parse_permission_report_from_text(text: str) -> PermissionReport | None:
         accessibility=values["accessibility"],
         input_monitoring=values["input_monitoring"],
     )
+
+
+def check_all_permissions_subprocess(
+    *,
+    runner=subprocess.run,
+    executable: str | os.PathLike[str] | None = None,
+) -> PermissionReport | None:
+    """Check permissions in a fresh process to avoid TCC cache in the GUI process."""
+    command = [
+        str(executable or sys.executable),
+        "-m",
+        "ptarmigan_flow.cli",
+        "check-permissions",
+    ]
+    try:
+        process = runner(command, capture_output=True, text=True)
+    except Exception as exc:
+        LOGGER.debug("Could not run subprocess permission check: %s", exc)
+        return None
+
+    returncode = getattr(process, "returncode", None)
+    if returncode not in {0, 2}:
+        return None
+
+    stdout = getattr(process, "stdout", "") or ""
+    stderr = getattr(process, "stderr", "") or ""
+    parse_source = "\n".join(part for part in (stdout, stderr) if part)
+    report = _parse_permission_report_from_text(parse_source)
+    if report is None:
+        LOGGER.debug("Could not parse subprocess permission check output")
+    return report
 
 
 def check_permissions_in_launchd_context(
