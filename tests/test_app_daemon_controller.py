@@ -1,23 +1,18 @@
 from __future__ import annotations
 
+import subprocess
 import threading
-import time
 from pathlib import Path
 from types import SimpleNamespace
 
 import ptarmigan_flow.app_daemon_controller as controller_module
-from ptarmigan_flow.app_daemon_controller import DaemonController, build_daemon_from_config
+from ptarmigan_flow.app_daemon_controller import (
+    DaemonController,
+    build_daemon_from_config,
+    daemon_run_command,
+)
 from ptarmigan_flow.config import AppConfig
 from ptarmigan_flow.presentation.cli import commands as cli_commands
-
-
-def _wait_until(predicate, *, timeout: float = 1.0) -> None:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if predicate():
-            return
-        time.sleep(0.01)
-    raise AssertionError("timed out waiting for condition")
 
 
 class _FakeDaemon:
@@ -41,64 +36,134 @@ class _FakeDaemon:
         self.stopped.set()
 
 
-def test_daemon_controller_starts_and_stops_daemon_on_background_thread() -> None:
-    daemon = _FakeDaemon()
-    controller = DaemonController(lambda: daemon)
+class _FakeProcess:
+    def __init__(self, *, returncode: int | None = None, wait_times_out: bool = False) -> None:
+        self.returncode = returncode
+        self.wait_times_out = wait_times_out
+        self.terminate_calls = 0
+        self.kill_calls = 0
+        self.wait_timeouts: list[float | None] = []
 
+    def poll(self) -> int | None:
+        return self.returncode
+
+    def terminate(self) -> None:
+        self.terminate_calls += 1
+        if not self.wait_times_out:
+            self.returncode = 0
+
+    def wait(self, timeout: float | None = None) -> int | None:
+        self.wait_timeouts.append(timeout)
+        if self.wait_times_out and self.kill_calls == 0:
+            raise subprocess.TimeoutExpired(cmd="ptarmigan-flow", timeout=timeout)
+        if self.returncode is None:
+            self.returncode = 0
+        return self.returncode
+
+    def kill(self) -> None:
+        self.kill_calls += 1
+        self.returncode = -9
+
+
+def test_daemon_run_command_routes_cli_run_through_current_executable(
+    monkeypatch, tmp_path
+) -> None:
+    executable = tmp_path / "PtarmiganFlow"
+    monkeypatch.setattr(controller_module.sys, "executable", str(executable))
+
+    assert daemon_run_command("~/ptarmigan/config.toml") == [
+        str(executable),
+        "-m",
+        "ptarmigan_flow.cli",
+        "run",
+        "--config",
+        str(Path("~/ptarmigan/config.toml").expanduser()),
+    ]
+
+
+def test_daemon_controller_starts_subprocess_with_built_command() -> None:
+    process = _FakeProcess()
+    commands: list[list[str]] = []
+
+    def runner(command: list[str]) -> _FakeProcess:
+        commands.append(command)
+        return process
+
+    controller = DaemonController(lambda: ["pflow", "run"], runner=runner)
     controller.start()
 
-    _wait_until(daemon.started.is_set)
     assert controller.is_running is True
-    assert daemon.run_calls == 1
-
-    controller.stop()
-
-    assert daemon.stop_calls == 1
-    assert controller.is_running is False
+    assert controller.last_error is None
+    assert commands == [["pflow", "run"]]
 
 
 def test_daemon_controller_ignores_second_start_while_running() -> None:
-    daemons: list[_FakeDaemon] = []
+    process = _FakeProcess()
+    commands: list[list[str]] = []
 
-    def factory() -> _FakeDaemon:
-        daemon = _FakeDaemon()
-        daemons.append(daemon)
-        return daemon
+    def runner(command: list[str]) -> _FakeProcess:
+        commands.append(command)
+        return process
 
-    controller = DaemonController(factory)
+    controller = DaemonController(lambda: ["pflow", "run"], runner=runner)
     controller.start()
-    _wait_until(lambda: len(daemons) == 1 and daemons[0].started.is_set())
-
     controller.start()
 
-    assert len(daemons) == 1
+    assert commands == [["pflow", "run"]]
+
+
+def test_daemon_controller_stop_terminates_subprocess_and_clears_reference() -> None:
+    process = _FakeProcess()
+    controller = DaemonController(lambda: ["pflow", "run"], runner=lambda _command: process)
+
+    controller.start()
     controller.stop()
 
-
-def test_daemon_controller_records_factory_error_without_raising() -> None:
-    expected = RuntimeError("factory failed")
-    controller = DaemonController(lambda: (_ for _ in ()).throw(expected))
-
-    controller.start()
-
-    _wait_until(lambda: controller.last_error is expected)
+    assert process.terminate_calls == 1
+    assert process.kill_calls == 0
+    assert process.wait_timeouts == [5.0]
     assert controller.is_running is False
 
 
-def test_daemon_controller_records_run_forever_error_without_raising() -> None:
-    expected = RuntimeError("run failed")
+def test_daemon_controller_stop_kills_subprocess_after_timeout() -> None:
+    process = _FakeProcess(wait_times_out=True)
+    controller = DaemonController(
+        lambda: ["pflow", "run"],
+        runner=lambda _command: process,
+        join_timeout=0.25,
+    )
 
-    class FailingDaemon(_FakeDaemon):
-        def run_forever(self) -> None:
-            self.started.set()
-            raise expected
+    controller.start()
+    controller.stop()
 
-    daemon = FailingDaemon()
-    controller = DaemonController(lambda: daemon)
+    assert process.terminate_calls == 1
+    assert process.kill_calls == 1
+    assert process.wait_timeouts == [0.25, 0.25]
+    assert controller.is_running is False
+
+
+def test_daemon_controller_records_runner_error_without_raising() -> None:
+    expected = RuntimeError("runner failed")
+
+    def runner(_command: list[str]) -> _FakeProcess:
+        raise expected
+
+    controller = DaemonController(lambda: ["pflow", "run"], runner=runner)
 
     controller.start()
 
-    _wait_until(lambda: controller.last_error is expected)
+    assert controller.last_error is expected
+    assert controller.is_running is False
+
+
+def test_daemon_controller_records_immediate_nonzero_exit() -> None:
+    process = _FakeProcess(returncode=2)
+    controller = DaemonController(lambda: ["pflow", "run"], runner=lambda _command: process)
+
+    controller.start()
+
+    assert isinstance(controller.last_error, RuntimeError)
+    assert "return code 2" in str(controller.last_error)
     assert controller.is_running is False
 
 
