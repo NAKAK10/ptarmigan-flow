@@ -33,6 +33,7 @@ from ptarmigan_flow.app_bundle import (
     get_app_bundle_codesign_info,
     install_app_bundle_from_env,
 )
+from ptarmigan_flow.app_daemon_controller import build_daemon
 from ptarmigan_flow.application.use_cases.llm_runtime import (
     build_llm_settings_from_config as build_llm_settings_from_config_use_case,
     build_runtime_post_processor as build_runtime_post_processor_use_case,
@@ -2076,8 +2077,6 @@ def _remove_stale_pyc_modules(module_names: list[str]) -> None:
 
 
 def cmd_run(args: argparse.Namespace) -> int:
-    from ptarmigan_flow.daemon import PtarmiganFlowDaemon
-
     _remove_stale_pyc_modules(["terminal_handoff"])
 
     config_path = _resolve_config_path(args.config)
@@ -2196,7 +2195,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     elif not output_supports_streaming:
         LOGGER.info("Output mode disables STT streaming for this run (%s)", output_mode)
     _log_stt_startup_download_if_needed(_stt_model_from_config(config))
-    daemon = PtarmiganFlowDaemon(
+    daemon = build_daemon(
         config,
         post_processor=post_processor,
         enable_streaming=enable_streaming,

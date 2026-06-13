@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
+import importlib.resources
 import subprocess
 import sys
 from pathlib import Path
 
+from ptarmigan_flow.app_daemon_controller import (
+    DaemonController,
+    build_daemon_from_config,
+)
+from ptarmigan_flow.app_icon import APP_ICON_FILE, APP_ICON_RESOURCE_PACKAGE
 from ptarmigan_flow.config import default_config_path, ensure_config_exists
 from ptarmigan_flow.launchd import install_launch_agent, restart_launch_agent
 from ptarmigan_flow.permissions import (
@@ -17,6 +23,19 @@ from ptarmigan_flow.permissions import (
 )
 
 APP_NAME = "PtarmiganFlow"
+
+
+def _set_application_icon(app: object, ns_image_cls: object, ns_data_cls: object) -> None:
+    try:
+        icon_resource = importlib.resources.files(APP_ICON_RESOURCE_PACKAGE).joinpath(APP_ICON_FILE)
+        icon_bytes = icon_resource.read_bytes()
+    except OSError:
+        return
+
+    icon_data = ns_data_cls.dataWithBytes_length_(icon_bytes, len(icon_bytes))
+    icon_image = ns_image_cls.alloc().initWithData_(icon_data)
+    if icon_image is not None:
+        app.setApplicationIconImage_(icon_image)
 
 
 def open_config() -> Path:
@@ -69,13 +88,14 @@ def _run_appkit_app() -> int:
         NSApplicationActivationPolicyRegular,
         NSBackingStoreBuffered,
         NSButton,
+        NSImage,
         NSTextField,
         NSWindow,
         NSWindowStyleMaskClosable,
         NSWindowStyleMaskMiniaturizable,
         NSWindowStyleMaskTitled,
     )
-    from Foundation import NSMakeRect, NSObject
+    from Foundation import NSData, NSMakeRect, NSObject
 
     class OnboardingController(NSObject):
         """Small native window for permissions, launch setup, and config access."""
@@ -89,11 +109,17 @@ def _run_appkit_app() -> int:
             if self is None:
                 return None
             self.status_labels = {}
+            self.daemon_controller = DaemonController(
+                lambda: build_daemon_from_config(default_config_path())
+            )
             return self
 
         def applicationDidFinishLaunching_(self, _notification):  # noqa: N802
             self._build_window()
             self.refreshStatus_(None)
+
+        def applicationWillTerminate_(self, _notification):  # noqa: N802
+            self.daemon_controller.stop()
 
         @objc.python_method
         def _label(self, text: str, x: float, y: float, w: float, h: float, *, size: float = 14.0):
@@ -149,6 +175,8 @@ def _run_appkit_app() -> int:
                 content.addSubview_(self._button("Allow", action, 366, y, 110))
 
             content.addSubview_(self._button("Refresh", "refreshStatus:", 500, 184, 94))
+            content.addSubview_(self._button("Start Dictation", "startDictation:", 36, 144, 150))
+            content.addSubview_(self._button("Stop Dictation", "stopDictation:", 204, 144, 140))
             content.addSubview_(
                 self._button("Install Login Startup", "installLaunchAgent:", 36, 104, 178)
             )
@@ -165,10 +193,39 @@ def _run_appkit_app() -> int:
         def _set_message(self, message: str) -> None:
             self.message_label.setStringValue_(message)
 
+        @objc.python_method
+        def _start_daemon_if_ready(
+            self,
+            report: PermissionReport | None = None,
+            *,
+            success_message: str = "Dictation started.",
+        ) -> None:
+            if report is None:
+                report = check_all_permissions()
+            if not report.all_granted:
+                self._set_message("Grant all permissions before starting dictation.")
+                return
+            if not self.daemon_controller.is_running:
+                self.daemon_controller.start()
+            if self.daemon_controller.is_running:
+                self._set_message(success_message)
+                return
+            error = self.daemon_controller.last_error
+            if error is None:
+                self._set_message("Dictation daemon is not running yet.")
+            else:
+                self._set_message(f"Could not start dictation: {error}")
+
         def refreshStatus_(self, _sender):  # noqa: N802
             report = check_all_permissions()
             for key, label in self.status_labels.items():
                 label.setStringValue_(_permission_status(report, key))
+            if report.all_granted:
+                self._start_daemon_if_ready(
+                    report,
+                    success_message="All permissions granted. Dictation started.",
+                )
+                return
             self._set_message("Permission status refreshed.")
 
         def requestMicrophone_(self, _sender):  # noqa: N802
@@ -182,6 +239,13 @@ def _run_appkit_app() -> int:
         def requestInputMonitoring_(self, _sender):  # noqa: N802
             request_input_monitoring_permission()
             self.refreshStatus_(None)
+
+        def startDictation_(self, _sender):  # noqa: N802
+            self._start_daemon_if_ready()
+
+        def stopDictation_(self, _sender):  # noqa: N802
+            self.daemon_controller.stop()
+            self._set_message("Dictation stopped.")
 
         def installLaunchAgent_(self, _sender):  # noqa: N802
             try:
@@ -205,6 +269,7 @@ def _run_appkit_app() -> int:
             self._set_message(f"Opened config: {config_path}")
 
     app = NSApplication.sharedApplication()
+    _set_application_icon(app, NSImage, NSData)
     app.setActivationPolicy_(NSApplicationActivationPolicyRegular)
     delegate = OnboardingController.alloc().init()
     app.setDelegate_(delegate)
