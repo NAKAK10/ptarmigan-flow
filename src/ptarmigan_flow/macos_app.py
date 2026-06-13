@@ -7,7 +7,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from ptarmigan_flow import login_item
+from ptarmigan_flow import app_relaunch, login_item, onboarding_strings
 from ptarmigan_flow.app_daemon_controller import (
     DaemonController,
     build_daemon_from_config,
@@ -124,12 +124,14 @@ def _run_appkit_app() -> int:
         status_item: object
         status_menu: object
         stop_menu_item: object
+        ui_language: str
         window: object
 
+        # Keep the macOS permission name discoverable for packaging smoke tests: Input Monitoring.
         _permission_step_config = {
             "microphone": {
-                "title": "Microphone Access",
-                "body": "Allow PtarmiganFlow to capture audio while you hold the hotkey.",
+                "title_key": "microphone_title",
+                "body_key": "microphone_body",
                 "request_action": "requestMicrophone:",
                 "settings_url": (
                     "x-apple.systempreferences:com.apple.preference.security"
@@ -137,10 +139,8 @@ def _run_appkit_app() -> int:
                 ),
             },
             "accessibility": {
-                "title": "Accessibility Access",
-                "body": (
-                    "Allow PtarmiganFlow to control the active text field for dictation output."
-                ),
+                "title_key": "accessibility_title",
+                "body_key": "accessibility_body",
                 "request_action": "requestAccessibility:",
                 "settings_url": (
                     "x-apple.systempreferences:com.apple.preference.security"
@@ -148,8 +148,8 @@ def _run_appkit_app() -> int:
                 ),
             },
             "input_monitoring": {
-                "title": "Input Monitoring",
-                "body": "Allow PtarmiganFlow to detect the push-to-talk hotkey.",
+                "title_key": "input_monitoring_title",
+                "body_key": "input_monitoring_body",
                 "request_action": "requestInputMonitoring:",
                 "settings_url": (
                     "x-apple.systempreferences:com.apple.preference.security"
@@ -164,6 +164,10 @@ def _run_appkit_app() -> int:
                 return None
             self.onboarding_flow = OnboardingFlow()
             self.permission_timer = None
+            try:
+                self.ui_language = load_config(default_config_path()).language
+            except Exception:
+                self.ui_language = "en"
             self.daemon_controller = DaemonController(
                 lambda: build_daemon_from_config(default_config_path())
             )
@@ -206,6 +210,10 @@ def _run_appkit_app() -> int:
             item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(title, action, "")
             item.setTarget_(self)
             return item
+
+        @objc.python_method
+        def _strings(self) -> dict[str, str]:
+            return onboarding_strings.strings_for(self.ui_language)
 
         @objc.python_method
         def _build_status_item(self) -> None:
@@ -276,8 +284,9 @@ def _run_appkit_app() -> int:
         @objc.python_method
         def _render_current_step(self) -> None:
             self._clear_content_view()
+            strings = self._strings()
             self.content_view.addSubview_(
-                self._label("PtarmiganFlow setup", 28, 374, 580, 32, size=22.0)
+                self._label(strings["app_setup_title"], 28, 374, 580, 32, size=22.0)
             )
             step = self.onboarding_flow.current_step
             if step == "language":
@@ -292,12 +301,13 @@ def _run_appkit_app() -> int:
 
         @objc.python_method
         def _render_language_step(self) -> None:
+            strings = self._strings()
             self.content_view.addSubview_(
-                self._label("Choose Language", 36, 306, 560, 30, size=20.0)
+                self._label(strings["choose_language_title"], 36, 306, 560, 30, size=20.0)
             )
             self.content_view.addSubview_(
                 self._label(
-                    "Select the transcription language to save into your config.",
+                    strings["choose_language_body"],
                     36,
                     270,
                     560,
@@ -306,16 +316,17 @@ def _run_appkit_app() -> int:
             )
             self.content_view.addSubview_(self._button("English", "chooseEnglish:", 36, 214, 150))
             self.content_view.addSubview_(
-                self._button("Japanese", "chooseJapanese:", 204, 214, 150)
+                self._button("日本語", "chooseJapanese:", 204, 214, 150)
             )
-            self.content_view.addSubview_(self._button("Chinese", "chooseChinese:", 372, 214, 150))
+            self.content_view.addSubview_(self._button("中文", "chooseChinese:", 372, 214, 150))
 
         @objc.python_method
         def _render_permission_step(self, step: str) -> None:
             config = self._permission_step_config[step]
+            strings = self._strings()
             self.content_view.addSubview_(
                 self._label(
-                    config["title"],
+                    strings[config["title_key"]],
                     36,
                     306,
                     560,
@@ -325,7 +336,7 @@ def _run_appkit_app() -> int:
             )
             self.content_view.addSubview_(
                 self._label(
-                    config["body"],
+                    strings[config["body_key"]],
                     28,
                     270,
                     580,
@@ -333,20 +344,34 @@ def _run_appkit_app() -> int:
                 )
             )
             self.content_view.addSubview_(
-                self._button("Allow", config["request_action"], 36, 214, 150)
+                self._button(strings["allow_button"], config["request_action"], 36, 214, 150)
             )
             self.content_view.addSubview_(
-                self._button("Open System Settings", "openSystemSettings:", 204, 214, 190)
+                self._button(
+                    strings["open_system_settings_button"],
+                    "openSystemSettings:",
+                    204,
+                    214,
+                    190,
+                )
             )
+            if step in {"accessibility", "input_monitoring"}:
+                self.content_view.addSubview_(
+                    self._label(strings["restart_required_note"], 36, 166, 560, 38)
+                )
+                self.content_view.addSubview_(
+                    self._button(strings["restart_app_button"], "restartApp:", 36, 124, 150)
+                )
 
         @objc.python_method
         def _render_done_step(self) -> None:
+            strings = self._strings()
             self.content_view.addSubview_(
-                self._label("Ready to Dictate", 36, 306, 560, 30, size=20.0)
+                self._label(strings["done_title"], 36, 306, 560, 30, size=20.0)
             )
             self.content_view.addSubview_(
                 self._label(
-                    "Setup is complete. Start dictation now or open the config file.",
+                    strings["done_body"],
                     36,
                     270,
                     560,
@@ -354,14 +379,22 @@ def _run_appkit_app() -> int:
                 )
             )
             self.content_view.addSubview_(
-                self._button("Start Dictation", "startDictation:", 36, 214, 150)
+                self._button(strings["start_dictation_button"], "startDictation:", 36, 214, 150)
             )
             self.content_view.addSubview_(
-                self._button("Stop Dictation", "stopDictation:", 204, 214, 140)
+                self._button(strings["stop_dictation_button"], "stopDictation:", 204, 214, 140)
             )
-            self.content_view.addSubview_(self._button("Open Config", "openConfig:", 362, 214, 128))
             self.content_view.addSubview_(
-                self._button("Login at Startup", "toggleLoginAtStartup:", 36, 160, 178)
+                self._button(strings["open_config_button"], "openConfig:", 362, 214, 128)
+            )
+            self.content_view.addSubview_(
+                self._button(
+                    strings["login_at_startup_button"],
+                    "toggleLoginAtStartup:",
+                    36,
+                    160,
+                    178,
+                )
             )
 
         @objc.python_method
@@ -543,6 +576,7 @@ def _run_appkit_app() -> int:
         def _choose_language(self, code: str) -> None:
             try:
                 config_path = self._save_language(code)
+                self.ui_language = code
                 self.onboarding_flow.choose_language(code)
             except Exception as exc:
                 self._set_message(f"Could not save language: {exc}")
@@ -625,6 +659,12 @@ def _run_appkit_app() -> int:
             url = NSURL.URLWithString_(settings_url)
             if url is not None:
                 NSWorkspace.sharedWorkspace().openURL_(url)
+
+        def restartApp_(self, _sender):  # noqa: N802
+            if app_relaunch.relaunch_app():
+                NSApplication.sharedApplication().terminate_(self)
+                return
+            self._set_message("Could not restart app.")
 
         def startDictation_(self, _sender):  # noqa: N802
             self._start_daemon_if_ready()

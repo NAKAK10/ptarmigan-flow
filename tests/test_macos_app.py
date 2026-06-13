@@ -91,8 +91,8 @@ def test_macos_app_exposes_start_stop_dictation_actions() -> None:
 
     assert "Start Dictation" in source
     assert "Stop Dictation" in source
-    assert 'self._button("Start Dictation", "startDictation:"' in source
-    assert 'self._button("Stop Dictation", "stopDictation:"' in source
+    assert 'self._button(strings["start_dictation_button"], "startDictation:"' in source
+    assert 'self._button(strings["stop_dictation_button"], "stopDictation:"' in source
     assert "def startDictation_(self, _sender):" in source
     assert "def stopDictation_(self, _sender):" in source
     assert "self.daemon_controller.start()" in source
@@ -113,8 +113,12 @@ def test_macos_app_uses_onboarding_flow_for_step_wizard() -> None:
     source = _macos_app_source()
 
     assert "from ptarmigan_flow.onboarding_flow import OnboardingFlow" in source
+    assert "from ptarmigan_flow import app_relaunch, login_item, onboarding_strings" in source
     assert "self.onboarding_flow = OnboardingFlow()" in source
     assert "self.onboarding_flow.current_step" in source
+    assert "self.ui_language" in source
+    assert "load_config(default_config_path()).language" in source
+    assert "onboarding_strings.strings_for(self.ui_language)" in source
     assert 'if step == "language":' in source
     assert 'elif step == "done":' in source
 
@@ -137,23 +141,73 @@ def test_macos_app_language_selection_saves_supported_codes_to_config() -> None:
     assert "load_config" in source
     assert "write_config" in source
     assert '"English"' in source
-    assert '"Japanese"' in source
-    assert '"Chinese"' in source
+    assert '"日本語"' in source
+    assert '"中文"' in source
+    assert '"Japanese"' not in source
+    assert '"Chinese"' not in source
     assert 'self._choose_language("en")' in source
     assert 'self._choose_language("ja")' in source
     assert 'self._choose_language("zh")' in source
+    assert "self.ui_language = code" in source
+    assert "self._render_current_step()" in source
+
+
+def test_macos_app_resolves_onboarding_copy_from_selected_language() -> None:
+    source = _macos_app_source()
+
+    assert 'strings["app_setup_title"]' in source
+    assert 'strings["choose_language_title"]' in source
+    assert 'strings["choose_language_body"]' in source
+    assert 'strings["done_title"]' in source
+    assert 'strings["done_body"]' in source
+    assert 'strings["start_dictation_button"]' in source
+    assert 'strings["stop_dictation_button"]' in source
+    assert 'strings["open_config_button"]' in source
+    assert 'strings["login_at_startup_button"]' in source
+    assert '"title_key": "microphone_title"' in source
+    assert '"body_key": "microphone_body"' in source
+    assert '"title_key": "accessibility_title"' in source
+    assert '"body_key": "accessibility_body"' in source
+    assert '"title_key": "input_monitoring_title"' in source
+    assert '"body_key": "input_monitoring_body"' in source
+    assert 'strings[config["title_key"]]' in source
+    assert 'strings[config["body_key"]]' in source
 
 
 def test_macos_app_permission_steps_have_allow_and_system_settings_actions() -> None:
     source = _macos_app_source()
 
-    assert '"Allow"' in source
-    assert '"Open System Settings"' in source
+    assert 'strings["allow_button"]' in source
+    assert 'strings["open_system_settings_button"]' in source
     assert '"requestMicrophone:"' in source
     assert '"requestAccessibility:"' in source
     assert '"requestInputMonitoring:"' in source
     assert "def openSystemSettings_(self, _sender):" in source
     assert "x-apple.systempreferences:com.apple.preference.security" in source
+
+
+def test_macos_app_wires_restart_only_for_restart_sensitive_permission_steps() -> None:
+    source = _macos_app_source()
+    permission_renderer = source.split("def _render_permission_step", maxsplit=1)[1].split(
+        "@objc.python_method",
+        maxsplit=1,
+    )[0]
+
+    assert 'if step in {"accessibility", "input_monitoring"}:' in permission_renderer
+    assert 'strings["restart_required_note"]' in permission_renderer
+    assert 'self._button(strings["restart_app_button"], "restartApp:"' in permission_renderer
+    assert "microphone" not in permission_renderer.split("if step in", maxsplit=1)[1].split(
+        ":",
+        maxsplit=1,
+    )[0]
+
+
+def test_macos_app_restart_action_relaunches_then_terminates_current_process() -> None:
+    source = _macos_app_source()
+
+    assert "def restartApp_(self, _sender):" in source
+    assert "if app_relaunch.relaunch_app():" in source
+    assert "NSApplication.sharedApplication().terminate_(self)" in source
 
 
 def test_macos_app_creates_status_bar_menu() -> None:
@@ -203,7 +257,7 @@ def test_macos_app_dictionary_editor_validates_and_saves() -> None:
 def test_macos_app_wires_login_item_toggle_with_checkmark() -> None:
     source = _macos_app_source()
 
-    assert "from ptarmigan_flow import login_item" in source
+    assert "from ptarmigan_flow import app_relaunch, login_item, onboarding_strings" in source
     assert "def toggleLoginAtStartup_(self, _sender):" in source
     assert "login_item.is_enabled()" in source
     assert "login_item.register()" in source
