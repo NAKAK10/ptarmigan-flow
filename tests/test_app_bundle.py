@@ -59,6 +59,9 @@ def test_install_app_bundle_from_env_creates_bundle(tmp_path: Path, monkeypatch)
     assert (
         destination / "Contents" / "Resources" / app_bundle.APP_ICON_FILE
     ).read_bytes() == app_bundle.app_icon_bytes()
+    assert (destination / "Contents" / "Resources" / "webui" / "index.html").is_file()
+    assert (destination / "Contents" / "Resources" / "webui" / "app.css").is_file()
+    assert (destination / "Contents" / "Resources" / "webui" / "app.js").is_file()
 
 
 def test_resolve_launch_agent_app_command_uses_default_bundle_path(

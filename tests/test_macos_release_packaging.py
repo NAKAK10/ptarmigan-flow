@@ -32,6 +32,8 @@ def test_macos_app_entrypoint_contains_onboarding_controls() -> None:
     assert "Microphone" in source
     assert "Accessibility" in source
     assert "Input Monitoring" in source
+    assert "WebUIController" in source
+    assert "WebBridgeDispatcher" in source
 
 
 def test_pyinstaller_spec_builds_ptarmiganflow_app() -> None:
@@ -40,6 +42,8 @@ def test_pyinstaller_spec_builds_ptarmiganflow_app() -> None:
     assert "src/ptarmigan_flow/macos_app.py" in spec
     assert "ROOT = Path(SPECPATH).parents[1]" in spec
     assert 'APP_ICON = ROOT / "assets/icon/PtarmiganFlow.icns"' in spec
+    assert 'WEBUI_SOURCE = ROOT / "src/ptarmigan_flow/webui"' in spec
+    assert '(str(WEBUI_SOURCE), "ptarmigan_flow/webui")' in spec
     assert "str(ROOT / \"src/ptarmigan_flow/macos_app.py\")" in spec
     assert "name='PtarmiganFlow'" in spec
     assert "icon=str(APP_ICON)" in spec
@@ -67,13 +71,38 @@ def test_pyproject_packages_icon_resource_in_wheel() -> None:
 
 
 def test_macos_app_pyobjc_helpers_are_python_only() -> None:
-    source = (ROOT / "src/ptarmigan_flow/macos_app.py").read_text(encoding="utf-8")
+    source = (ROOT / "src/ptarmigan_flow/web_ui.py").read_text(encoding="utf-8")
 
-    for method_name in ["_label", "_button", "_build_window", "_set_message"]:
+    for method_name in ["dispatch_to_javascript", "push_event", "show"]:
         assert re.search(
             rf"@objc\.python_method\n\s+def {method_name}\(",
             source,
         ), f"{method_name} should not be exposed as an Objective-C selector"
+
+
+def test_webui_assets_exist_and_do_not_hardcode_english_ui_copy() -> None:
+    webui = ROOT / "src/ptarmigan_flow/webui"
+
+    assert (webui / "index.html").is_file()
+    assert (webui / "app.css").is_file()
+    assert (webui / "app.js").is_file()
+    script = (webui / "app.js").read_text(encoding="utf-8")
+    assert "window.webkit.messageHandlers.bridge.postMessage" in script
+    assert "window.app.dispatch" in script
+    assert "strings." in script
+    assert "data-select-model" in script
+    assert "state.settings.model = button.dataset.selectModel" in script
+    assert "data-download-model" in script
+    for literal in (
+        "Start Voice Input",
+        "Settings",
+        "Dictionary Editor",
+        "Allow",
+        "Open System Settings",
+        "Download",
+    ):
+        assert f'"{literal}"' not in script
+        assert f"`{literal}`" not in script
 
 
 def test_pyinstaller_spec_bundles_mlx_backends() -> None:

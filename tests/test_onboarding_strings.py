@@ -66,12 +66,26 @@ REQUIRED_KEYS = {
     "restart_app_button",
     "restart_failed_message",
     "restart_required_note",
+    "route_dictionary",
+    "route_onboarding",
+    "route_settings",
     "settings_button",
     "settings_hotkey_label",
     "settings_language_label",
+    "settings_llm_base_url_label",
+    "settings_llm_mode_always",
+    "settings_llm_mode_ask",
+    "settings_llm_mode_label",
+    "settings_llm_mode_never",
+    "settings_llm_model_label",
+    "settings_llm_provider_label",
+    "settings_llm_section_title",
     "settings_load_failed_message",
     "settings_menu",
+    "settings_model_download_button",
+    "settings_model_downloaded_badge",
     "settings_model_label",
+    "settings_models_section_title",
     "settings_no_models_message",
     "settings_output_mode_label",
     "settings_save_button",
@@ -80,8 +94,11 @@ REQUIRED_KEYS = {
     "settings_validation_error",
     "settings_window_title",
     "start_dictation_button",
+    "status_granted",
+    "status_waiting",
     "stop_dictation_button",
     "voice_input_started_message",
+    "webui_error_title",
 }
 
 
@@ -175,6 +192,23 @@ def test_required_japanese_translations_are_exact() -> None:
         "このアプリ版では設定中のモデル {model} は利用できません。"
         "設定からモデルを選択してください。"
     )
+    assert strings["route_onboarding"] == "セットアップ"
+    assert strings["route_settings"] == "設定"
+    assert strings["route_dictionary"] == "変換辞書"
+    assert strings["status_waiting"] == "待機中"
+    assert strings["status_granted"] == "許可済み"
+    assert strings["settings_models_section_title"] == "モデル"
+    assert strings["settings_model_download_button"] == "ダウンロード"
+    assert strings["settings_model_downloaded_badge"] == "DL済み"
+    assert strings["settings_llm_section_title"] == "LLM補正"
+    assert strings["settings_llm_mode_label"] == "モード"
+    assert strings["settings_llm_mode_always"] == "常に使う"
+    assert strings["settings_llm_mode_never"] == "使わない"
+    assert strings["settings_llm_mode_ask"] == "毎回確認"
+    assert strings["settings_llm_provider_label"] == "プロバイダー"
+    assert strings["settings_llm_model_label"] == "モデル"
+    assert strings["settings_llm_base_url_label"] == "Base URL"
+    assert strings["webui_error_title"] == "エラー"
 
 
 def test_chinese_translations_are_simplified_and_complete() -> None:
@@ -195,3 +229,9 @@ def test_chinese_translations_are_simplified_and_complete() -> None:
     assert strings["model_unavailable_message"] == (
         "此应用版本无法使用当前设置的模型 {model}。请在设置中选择模型。"
     )
+    assert strings["route_onboarding"] == "设置"
+    assert strings["route_settings"] == "设置"
+    assert strings["route_dictionary"] == "转换词典"
+    assert strings["status_waiting"] == "等待中"
+    assert strings["status_granted"] == "已允许"
+    assert strings["settings_llm_section_title"] == "LLM 修正"
