@@ -131,6 +131,25 @@ def test_pyinstaller_spec_bundles_mlx_backends() -> None:
     assert "moonshine_voice.libmoonshine" in spec
 
 
+def test_pyinstaller_spec_uses_moonshine_only_backend_packages_on_x86_64() -> None:
+    spec = (ROOT / "packaging/macos/PtarmiganFlow.spec").read_text(encoding="utf-8")
+
+    assert "X86_64_BACKEND_PACKAGES" in spec
+    x86_packages_block = spec.split("X86_64_BACKEND_PACKAGES", 1)[1].split(")", 1)[0]
+    assert '"moonshine_voice"' in x86_packages_block
+    assert '"mlx"' not in x86_packages_block
+    assert '"mlx_audio"' not in x86_packages_block
+    assert '"mlx_whisper"' not in x86_packages_block
+    assert '"voxmlx"' not in x86_packages_block
+    assert '"mistral_common"' not in x86_packages_block
+    assert "def _release_backend_packages(arch: str)" in spec
+    assert 'if arch == "x86_64":' in spec
+    assert "return X86_64_BACKEND_PACKAGES" in spec
+    assert "return RELEASE_BACKEND_PACKAGES" in spec
+    assert "_backend_packages = _release_backend_packages(TARGET_ARCH)" in spec
+    assert "for package in _backend_packages:" in spec
+
+
 def test_stt_factory_import_does_not_import_optional_backend_modules() -> None:
     code = """
 import json

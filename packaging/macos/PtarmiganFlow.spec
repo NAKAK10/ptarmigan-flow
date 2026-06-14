@@ -70,6 +70,8 @@ RELEASE_BACKEND_PACKAGES = (
     "mistral_common",
 )
 
+X86_64_BACKEND_PACKAGES = ("moonshine_voice",)
+
 MOONSHINE_EXCLUDED_BASENAMES = {
     "libmoonshine.so",
     "beckett.wav",
@@ -83,6 +85,12 @@ MOONSHINE_EXCLUDED_HIDDENIMPORTS = {
 
 def _keep_release_module(name: str) -> bool:
     return not name.startswith(OPTIONAL_BACKEND_MODULE_PREFIXES)
+
+
+def _release_backend_packages(arch: str) -> tuple[str, ...]:
+    if arch == "x86_64":
+        return X86_64_BACKEND_PACKAGES
+    return RELEASE_BACKEND_PACKAGES
 
 
 def _drop_unneeded_moonshine_entries(entries):
@@ -102,7 +110,8 @@ hiddenimports = [
 # The app bundles the MLX inference engines so any supported MLX model works
 # locally; model weights themselves are downloaded on demand at runtime. Torch /
 # Transformers fallbacks remain CLI/Homebrew-only to keep the artifact smaller.
-for package in RELEASE_BACKEND_PACKAGES:
+_backend_packages = _release_backend_packages(TARGET_ARCH)
+for package in _backend_packages:
     pkg_datas, pkg_binaries, pkg_hiddenimports = collect_all(package)
     if package == "moonshine_voice":
         # moonshine-voice macOS wheels (≤0.0.59) ship a Linux ELF named
