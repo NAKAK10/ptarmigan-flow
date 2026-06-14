@@ -231,3 +231,14 @@ def test_release_workflow_builds_notarizes_and_uploads_draft_release() -> None:
     assert "APPLE_TEAM_ID" in workflow
     assert "APPLE_ID" in workflow
     assert "APPLE_APP_SPECIFIC_PASSWORD" in workflow
+
+
+def test_pyproject_includes_webkit_pyobjc_for_wkwebview_release_builds() -> None:
+    pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    dependencies_block = pyproject.split("dependencies = [", 1)[1].split("\n]", 1)[0]
+
+    assert re.search(
+        r"^\s+\"pyobjc-framework-WebKit>=11\.0; platform_system == 'Darwin'\",\s*$",
+        dependencies_block,
+        re.MULTILINE,
+    )
