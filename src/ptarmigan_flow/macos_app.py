@@ -163,6 +163,7 @@ def _run_appkit_app() -> int:
             self._permission_check_generation = 0
             self._permission_check_in_progress = False
             self._permission_check_thread: threading.Thread | None = None
+            self._last_permission_report: PermissionReport | None = None
             self._model_download_process: subprocess.Popen[str] | None = None
             self._model_download_success_message_key = "voice_input_started_message"
             self._model_download_thread: threading.Thread | None = None
@@ -402,15 +403,19 @@ def _run_appkit_app() -> int:
                 self._permission_check_in_progress = False
 
         @objc.python_method
-        def _check_permissions_in_background(self, generation: int) -> None:
+        def _combined_permission_report(self) -> PermissionReport:
             report = check_all_permissions_subprocess()
             if report is None:
                 report = check_all_permissions()
-            report = _combine_permission_reports(
+            return _combine_permission_reports(
                 report,
                 accessibility_in_process=check_accessibility_permission(),
                 input_monitoring_in_process=check_input_monitoring_permission(),
             )
+
+        @objc.python_method
+        def _check_permissions_in_background(self, generation: int) -> None:
+            report = self._combined_permission_report()
             payload = {"generation": generation, "report": report}
             try:
                 self.performSelectorOnMainThread_withObject_waitUntilDone_(
@@ -434,6 +439,7 @@ def _run_appkit_app() -> int:
                 return
             if not isinstance(report, PermissionReport):
                 return
+            self._last_permission_report = report
             self._refresh_onboarding_permissions(report)
 
         @objc.python_method
@@ -632,7 +638,7 @@ def _run_appkit_app() -> int:
             success_message_key: str = "voice_input_started_message",
         ) -> str | None:
             if report is None:
-                report = check_all_permissions()
+                report = self._last_permission_report or self._combined_permission_report()
             if not report.all_granted:
                 message = self._missing_permissions_message(report)
                 self._push_daemon_error(message)
