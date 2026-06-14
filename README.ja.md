@@ -46,6 +46,21 @@ Intel 向けビルドは、固定している `moonshine-voice==0.0.49` に合�
 
 Pages と Apple 署名 secret を含むメンテナー向け配布準備は [docs/release-prep.md](docs/release-prep.md) にまとめています。
 
+### System Settings では「ON」なのにアプリが「未許可」と言う場合
+
+これは **ローカルビルド／未署名（ad-hoc 署名）のアプリだけ**で起きます。上記の署名・公証済みリリースビルドでは発生しません。
+
+macOS はアクセシビリティ・入力監視の許可をアプリのコード署名に紐づけます。ad-hoc 署名のビルドは安定した識別子を持たないため、**リビルドのたびに変わるハッシュ（`cdhash`）**で照合されます。リビルド後も System Settings には「ON」と表示されますが、その許可は前のビルドに紐づいているため、新しいバイナリは実際には信頼されず、セットアップ画面はアクセシビリティ／入力監視のステップで止まります。
+
+現在のビルドに対して許可をやり直してください:
+
+```bash
+tccutil reset Accessibility com.ptarmiganflow.app
+tccutil reset ListenEvent com.ptarmiganflow.app
+```
+
+その後アプリを再起動し、**システム設定 → プライバシーとセキュリティ → アクセシビリティ／入力監視**で改めて許可します（一覧の項目を「−」で削除してから再追加すると確実）。これでオンボーディングが許可を検出して自動で進みます。安定した署名 ID で署名しない限り、リビルドのたびにこの作業が必要です。
+
 ## 利用サンプル動画
 
 https://github.com/user-attachments/assets/f763be1b-54af-4342-886d-016837be7884

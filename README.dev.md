@@ -128,6 +128,20 @@ open dist/PtarmiganFlow.app
 
 The spec at `packaging/macos/PtarmiganFlow.spec` collects native assets (Metal shaders, dylibs, tokenizer data) for `mlx`, `mlx_whisper`, `mlx_audio`, `voxmlx`, `moonshine_voice`, and `mistral_common` via `collect_all()`.
 
+This local build is **ad-hoc signed**, so its `cdhash` changes on every rebuild and macOS stops
+honoring previously-granted Accessibility / Input Monitoring permissions (System Settings keeps
+showing "ON" but `AXIsProcessTrusted()` returns `False`, so onboarding correctly refuses to
+advance). Re-grant for the new build after each rebuild:
+
+```bash
+tccutil reset Accessibility com.ptarmiganflow.app
+tccutil reset ListenEvent com.ptarmiganflow.app
+# then relaunch and re-allow in System Settings (remove the entry with "−" and re-add it)
+```
+
+A stable signing identity (see release signing below) avoids this by giving the app a fixed
+designated requirement so the grant survives rebuilds.
+
 For a signed + notarized release build, see `docs/release-prep.md` and trigger the `release-macos-app.yml` workflow manually with an existing tag.
 
 ### Required GitHub Secrets for release signing

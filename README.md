@@ -46,6 +46,29 @@ Unzip `PtarmiganFlow-macos-arm64.zip` or `PtarmiganFlow-macos-x86_64.zip`, move 
 
 Maintainer release setup, including Pages and Apple signing secrets, is documented in [docs/release-prep.md](docs/release-prep.md).
 
+### Permission shows "ON" in System Settings but the app still says it is not granted
+
+This affects **locally built / unsigned (ad-hoc signed) apps only** — the signed and
+notarized release builds above are not affected.
+
+macOS ties Accessibility and Input Monitoring permissions to the app's code signature. An
+ad-hoc signed build has no stable identity, so macOS matches by a hash (`cdhash`) that changes
+**every time you rebuild**. After a rebuild, System Settings keeps showing the app as "ON", but
+that grant is bound to the previous build, so the new binary is not actually trusted and the
+setup window stays on the Accessibility / Input Monitoring step.
+
+Re-grant the permission for the current build:
+
+```bash
+tccutil reset Accessibility com.ptarmiganflow.app
+tccutil reset ListenEvent com.ptarmiganflow.app
+```
+
+Then relaunch the app and allow it again in **System Settings → Privacy & Security →
+Accessibility / Input Monitoring** (removing the existing entry with "−" and re-adding it is the
+most reliable). The onboarding then detects the grant and advances on its own. You need to repeat
+this after each rebuild unless you sign the app with a stable signing identity.
+
 ## Usage Sample Video
 
 https://github.com/user-attachments/assets/f763be1b-54af-4342-886d-016837be7884
