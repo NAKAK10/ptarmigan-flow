@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import types
 from pathlib import Path
 
 import ptarmigan_flow.cli as cli_module
@@ -293,7 +294,7 @@ def test_macos_app_guards_daemon_start_by_permissions_backend_and_model_download
         maxsplit=1,
     )[0]
 
-    assert "check_all_permissions()" in start_method
+    assert "self._last_permission_report or self._combined_permission_report()" in start_method
     assert "if not report.all_granted:" in start_method
     assert "if not self._configured_backend_is_available():" in start_method
     assert "model_token = self._configured_model_token()" in start_method
@@ -316,6 +317,125 @@ def test_macos_app_surfaces_missing_permission_message_when_daemon_start_is_bloc
     assert 'strings["grant_permissions_message"]' in source
     assert 'strings["accessibility_title"]' in source
     assert 'strings["input_monitoring_title"]' in source
+
+
+def test_macos_app_daemon_start_reuses_latest_combined_permission_report(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeNSObject:
+        @classmethod
+        def alloc(cls):
+            return cls.__new__(cls)
+
+        def init(self):
+            return self
+
+    class FakeApp:
+        def setApplicationIconImage_(self, _image) -> None:
+            pass
+
+        def setActivationPolicy_(self, _policy) -> None:
+            pass
+
+        def setDelegate_(self, delegate) -> None:
+            captured["delegate"] = delegate
+
+        def run(self) -> None:
+            pass
+
+    fake_app = FakeApp()
+
+    class FakeNSApplication:
+        @staticmethod
+        def sharedApplication():
+            return fake_app
+
+    class FakeNSImage:
+        @classmethod
+        def alloc(cls):
+            return cls()
+
+        def initWithData_(self, _data):
+            return self
+
+    class FakeNSData:
+        @staticmethod
+        def dataWithBytes_length_(data, _length):
+            return data
+
+    class FakeDaemonController:
+        def __init__(self, _run_command) -> None:
+            self.is_running = False
+            self.start_calls = 0
+
+        def start(self) -> None:
+            self.start_calls += 1
+            self.is_running = True
+
+        def stop(self) -> None:
+            self.is_running = False
+
+    fake_objc = types.SimpleNamespace(
+        python_method=lambda method: method,
+        super=lambda cls, instance: super(cls, instance),
+    )
+    fake_appkit = types.SimpleNamespace(
+        NSApplication=FakeNSApplication,
+        NSApplicationActivationPolicyAccessory=0,
+        NSControlStateValueOff=0,
+        NSControlStateValueOn=1,
+        NSImage=FakeNSImage,
+        NSMenu=object,
+        NSMenuItem=object,
+        NSStatusBar=object,
+        NSVariableStatusItemLength=0,
+        NSWorkspace=object,
+    )
+    fake_foundation = types.SimpleNamespace(
+        NSURL=object,
+        NSData=FakeNSData,
+        NSObject=FakeNSObject,
+        NSTimer=object,
+    )
+    fake_web_ui = types.SimpleNamespace(WebUIController=object)
+
+    monkeypatch.setitem(sys.modules, "objc", fake_objc)
+    monkeypatch.setitem(sys.modules, "AppKit", fake_appkit)
+    monkeypatch.setitem(sys.modules, "Foundation", fake_foundation)
+    monkeypatch.setitem(sys.modules, "ptarmigan_flow.web_ui", fake_web_ui)
+    monkeypatch.setattr(macos_app, "DaemonController", FakeDaemonController)
+    monkeypatch.setattr(
+        macos_app,
+        "check_all_permissions",
+        lambda: macos_app.PermissionReport(
+            microphone=True,
+            accessibility=False,
+            input_monitoring=True,
+        ),
+    )
+    monkeypatch.setattr(macos_app.model_download, "is_model_downloaded", lambda _token: True)
+
+    assert macos_app._run_appkit_app() == 0
+    controller = captured["delegate"]
+    controller._last_permission_report = macos_app.PermissionReport(
+        microphone=True,
+        accessibility=True,
+        input_monitoring=True,
+    )
+    pushed_errors: list[str] = []
+    pushed_states: list[str] = []
+    controller._missing_permissions_message = lambda _report: "grant all permissions"
+    controller._push_daemon_error = lambda message: pushed_errors.append(message)
+    controller._push_daemon_state = lambda: pushed_states.append("daemonState")
+    controller._configured_backend_is_available = lambda: True
+    controller._configured_model_token = lambda: "moonshine/base"
+
+    result = controller._start_daemon_if_ready()
+
+    assert result is None
+    assert pushed_errors == []
+    assert controller.daemon_controller.start_calls == 1
+    assert pushed_states == ["daemonState"]
 
 
 def test_macos_app_exposes_menu_actions_to_web_routes_and_bridge_side_effects() -> None:
