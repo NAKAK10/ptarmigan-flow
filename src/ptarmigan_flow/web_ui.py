@@ -68,6 +68,7 @@ class WebUIController(NSObject):
             False,
         )
         self.window.setTitle_(title)
+        self.window.setReleasedWhenClosed_(False)
 
         content_controller = WKUserContentController.alloc().init()
         content_controller.addScriptMessageHandler_name_(self, "bridge")
@@ -125,4 +126,5 @@ class WebUIController(NSObject):
     def show(self, *, route: str = "onboarding") -> None:
         self.route = route
         self.window.makeKeyAndOrderFront_(None)
+        self.window.orderFrontRegardless()
         self.push_event("routeChanged", {"route": route})

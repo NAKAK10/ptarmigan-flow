@@ -80,6 +80,18 @@ def test_macos_app_pyobjc_helpers_are_python_only() -> None:
         ), f"{method_name} should not be exposed as an Objective-C selector"
 
 
+def test_webui_window_is_not_released_when_closed() -> None:
+    source = (ROOT / "src/ptarmigan_flow/web_ui.py").read_text(encoding="utf-8")
+
+    assert "setReleasedWhenClosed_(False)" in source
+
+
+def test_macos_app_handles_reopen_for_accessory_app() -> None:
+    source = (ROOT / "src/ptarmigan_flow/macos_app.py").read_text(encoding="utf-8")
+
+    assert "applicationShouldHandleReopen_hasVisibleWindows_" in source
+
+
 def test_webui_assets_exist_and_do_not_hardcode_english_ui_copy() -> None:
     webui = ROOT / "src/ptarmigan_flow/webui"
 
