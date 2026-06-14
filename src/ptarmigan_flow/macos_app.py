@@ -192,6 +192,17 @@ def _run_appkit_app() -> int:
         def applicationDidBecomeActive_(self, _notification):  # noqa: N802
             self._start_permission_check()
 
+        def applicationShouldHandleReopen_hasVisibleWindows_(  # noqa: N802
+            self,
+            _application,
+            _has_visible_windows,
+        ):
+            if self.onboarding_flow.is_complete:
+                self._set_route("settings")
+            else:
+                self._set_route("onboarding")
+            return True
+
         @objc.python_method
         def _strings(self) -> dict[str, str]:
             try:
