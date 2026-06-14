@@ -248,6 +248,9 @@ function renderSettings() {
           ["direct_typing", t("output_direct_typing")],
           ["clipboard_paste", t("output_clipboard_paste")],
         ])}
+        <div class="form-row">
+          <button class="button" data-action="open-config">${escapeHtml(t("settings_open_config_button"))}</button>
+        </div>
       </div>
       <div class="panel">
         <h2>${escapeHtml(t("settings_llm_section_title"))}</h2>
@@ -348,6 +351,9 @@ function settingsPayload(modelOverride = null) {
 function bindSettings() {
   app.querySelector("[data-action='save-settings']")?.addEventListener("click", async () => {
     await saveSettings();
+  });
+  app.querySelector("[data-action='open-config']")?.addEventListener("click", () => {
+    bridge("openConfigFile").catch(showError);
   });
   app.querySelectorAll("[data-select-model]").forEach((button) => {
     button.addEventListener("click", () => {

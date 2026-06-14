@@ -159,6 +159,7 @@ def _run_appkit_app() -> int:
                     resolve_dictionary_path=self._dictionary_path,
                     request_permission=self._request_permission,
                     open_system_settings=self._open_system_settings,
+                    open_config_file=open_config,
                     start_dictation=self._start_daemon_if_ready,
                     stop_dictation=self._stop_daemon,
                     daemon_is_running=lambda: self.daemon_controller.is_running,
