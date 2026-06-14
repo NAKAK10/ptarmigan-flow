@@ -11,7 +11,6 @@ REQUIRED_KEYS = {
     "choose_language_body",
     "choose_language_title",
     "config_opened_message",
-    "continue_anyway_button",
     "daemon_not_running_message",
     "daemon_start_failed_message",
     "dictation_running_menu",
@@ -172,7 +171,6 @@ def test_required_japanese_translations_are_exact() -> None:
     )
     assert strings["dictation_stopped_message"] == "音声入力を停止しました。"
     assert strings["restart_failed_message"] == "アプリを再起動できませんでした。"
-    assert strings["continue_anyway_button"] == "次へ進む"
     assert strings["language_saved_message"] == "{path} に言語設定を保存しました。"
     assert strings["language_save_failed_message"] == "言語設定を保存できませんでした: {error}"
     assert strings["config_opened_message"] == "設定ファイルを開きました: {path}"

@@ -198,29 +198,6 @@ def test_choose_language_writes_config_marks_persistence_and_advances_flow(
     assert result["strings"]["settings_window_title"] == "设置"
 
 
-def test_advance_onboarding_action_moves_current_permission_step(tmp_path: Path) -> None:
-    dispatcher = _dispatcher(
-        tmp_path,
-        permissions=PermissionReport(
-            microphone=True,
-            accessibility=False,
-            input_monitoring=False,
-        ),
-    )
-    dispatcher.onboarding_flow.refresh(
-        PermissionReport(microphone=True, accessibility=False, input_monitoring=False)
-    )
-
-    result = dispatcher.handle_action("advanceOnboarding", {})
-
-    assert result["onboarding_step"] == "input_monitoring"
-    assert result["permissions"] == {
-        "microphone": True,
-        "accessibility": False,
-        "input_monitoring": False,
-    }
-
-
 def test_save_settings_updates_core_fields_and_llm_correction(tmp_path: Path) -> None:
     config_path = tmp_path / "config.toml"
     _write_config(config_path, model="moonshine:tiny")

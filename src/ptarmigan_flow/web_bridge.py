@@ -127,7 +127,6 @@ class WebBridgeDispatcher:
         handlers = {
             "getState": self._get_state,
             "chooseLanguage": self._choose_language,
-            "advanceOnboarding": self._advance_onboarding,
             "requestPermission": self._request_permission,
             "openSystemSettings": self._open_system_settings,
             "openConfigFile": self._open_config_file,
@@ -190,10 +189,6 @@ class WebBridgeDispatcher:
             "onboarding_step": self.onboarding_flow.current_step,
             "strings": onboarding_strings.strings_for(code),
         }
-
-    def _advance_onboarding(self, _payload: dict[str, Any]) -> dict[str, Any]:
-        self.onboarding_flow.advance_permission_step()
-        return self._get_state({})
 
     def _request_permission(self, payload: dict[str, Any]) -> dict[str, str]:
         kind = _permission_kind(payload)

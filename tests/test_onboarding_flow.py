@@ -82,22 +82,6 @@ def test_refresh_advances_current_permission_step_when_permission_is_granted() -
     assert flow.current_step == "done"
 
 
-def test_advance_permission_step_moves_forward_without_permission_grant() -> None:
-    flow = OnboardingFlow()
-    flow.choose_language("en")
-    flow.refresh(_report(microphone=True, accessibility=False, input_monitoring=False))
-
-    assert flow.current_step == "accessibility"
-
-    flow.advance_permission_step()
-
-    assert flow.current_step == "input_monitoring"
-
-    flow.advance_permission_step()
-
-    assert flow.current_step == "done"
-
-
 def test_refresh_skips_consecutive_permission_steps_that_are_already_granted() -> None:
     flow = OnboardingFlow()
     flow.choose_language("zh")
