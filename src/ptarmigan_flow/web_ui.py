@@ -11,8 +11,10 @@ from ptarmigan_flow.web_bridge import WebBridgeDispatcher
 
 try:  # pragma: no cover - exercised only on macOS with PyObjC installed.
     import objc
-    from Foundation import NSObject
+    from Foundation import NSArray, NSDictionary, NSObject
 except ImportError:  # pragma: no cover - lets source-level tests import this module.
+    _NS_ARRAY_TYPES: tuple[type[Any], ...] = ()
+    _NS_DICT_TYPES: tuple[type[Any], ...] = ()
 
     class _ObjCShim:
         @staticmethod
@@ -27,6 +29,17 @@ except ImportError:  # pragma: no cover - lets source-level tests import this mo
         pass
 
     objc = _ObjCShim()  # type: ignore[assignment]
+else:
+    _NS_ARRAY_TYPES = (NSArray,)
+    _NS_DICT_TYPES = (NSDictionary,)
+
+
+def _ns_to_py(obj: Any) -> Any:
+    if isinstance(obj, _NS_DICT_TYPES):
+        return {_ns_to_py(key): _ns_to_py(value) for key, value in obj.items()}
+    if isinstance(obj, _NS_ARRAY_TYPES):
+        return [_ns_to_py(item) for item in obj]
+    return obj
 
 
 def webui_resource_dir() -> Path:
@@ -94,7 +107,7 @@ class WebUIController(NSObject):
         self.web_view.loadFileURL_allowingReadAccessToURL_(index_url, read_access_url)
 
     def userContentController_didReceiveScriptMessage_(self, _controller, message):  # noqa: N802
-        body = message.body()
+        body = _ns_to_py(message.body())
         if not isinstance(body, dict):
             self.dispatch_to_javascript(
                 {"id": None, "ok": False, "error": "Bridge message body must be an object."}
