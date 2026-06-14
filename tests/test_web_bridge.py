@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+import pytest
+
 from ptarmigan_flow.config import (
     AppConfig,
     LLMCorrectionMode,
@@ -15,6 +17,39 @@ from ptarmigan_flow.onboarding_flow import OnboardingFlow
 from ptarmigan_flow.permissions import PermissionReport
 from ptarmigan_flow.stt.model_catalog import CatalogEntry
 from ptarmigan_flow.web_bridge import BridgeDependencies, WebBridgeDispatcher, handle_action
+
+
+def test_ns_to_py_converts_foundation_collections_recursively() -> None:
+    Foundation = pytest.importorskip("Foundation")
+    from ptarmigan_flow import web_ui
+
+    assert hasattr(web_ui, "_ns_to_py")
+    body = Foundation.NSDictionary.dictionaryWithDictionary_(
+        {
+            "id": "message-1",
+            "payload": Foundation.NSDictionary.dictionaryWithDictionary_(
+                {
+                    "items": Foundation.NSArray.arrayWithArray_(
+                        [
+                            Foundation.NSDictionary.dictionaryWithDictionary_({"name": "tiny"}),
+                            "plain",
+                        ]
+                    )
+                }
+            ),
+        }
+    )
+
+    converted = web_ui._ns_to_py(body)
+
+    assert converted == {
+        "id": "message-1",
+        "payload": {"items": [{"name": "tiny"}, "plain"]},
+    }
+    assert type(converted) is dict
+    assert type(converted["payload"]) is dict
+    assert type(converted["payload"]["items"]) is list
+    assert type(converted["payload"]["items"][0]) is dict
 
 
 @dataclass(frozen=True)
