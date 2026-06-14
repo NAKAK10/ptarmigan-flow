@@ -162,6 +162,7 @@ function renderOnboarding() {
             <button class="button" data-route="settings">${escapeHtml(t("settings_button"))}</button>
             <button class="button" data-action="toggle-login">${escapeHtml(t("login_at_startup_button"))}</button>
           </div>
+          <div class="error">${escapeHtml(state.daemon_error_message || "")}</div>
         </div>
       </section>
     `;
@@ -174,6 +175,7 @@ function renderPermissionStep(kind, dots) {
   const titleKey = `${kind}_title`;
   const bodyKey = `${kind}_body`;
   const restart = kind === "accessibility" || kind === "input_monitoring";
+  const canContinue = kind === "accessibility" || kind === "input_monitoring";
   return `
     <section class="onboarding-wrap">
       <div class="card">
@@ -186,6 +188,7 @@ function renderPermissionStep(kind, dots) {
         <div class="actions">
           <button class="button primary" data-permission="${kind}">${escapeHtml(t("allow_button"))}</button>
           <button class="button" data-settings="${kind}">${escapeHtml(t("open_system_settings_button"))}</button>
+          ${canContinue ? `<button class="button" data-action="advance-onboarding">${escapeHtml(t("continue_anyway_button"))}</button>` : ""}
           ${restart ? `<button class="button" data-action="restart">${escapeHtml(t("restart_app_button"))}</button>` : ""}
         </div>
         ${restart ? `<p>${escapeHtml(t("restart_required_note"))}</p>` : ""}
@@ -501,8 +504,14 @@ async function saveDictionary() {
 
 function bindSharedActions() {
   app.querySelector("[data-action='start']")?.addEventListener("click", async () => {
-    await bridge("startDictation").catch(showError);
+    const result = await bridge("startDictation").catch(showError);
+    if (!result) {
+      return;
+    }
     state = await bridge("getState");
+    if (result.error_message) {
+      state.daemon_error_message = result.error_message;
+    }
     render();
   });
   app.querySelector("[data-action='stop']")?.addEventListener("click", async () => {
@@ -517,6 +526,14 @@ function bindSharedActions() {
   });
   app.querySelector("[data-action='restart']")?.addEventListener("click", () => {
     bridge("restartApp").catch(showError);
+  });
+  app.querySelector("[data-action='advance-onboarding']")?.addEventListener("click", async () => {
+    const result = await bridge("advanceOnboarding").catch(showError);
+    if (!result) {
+      return;
+    }
+    state = result;
+    render();
   });
 }
 

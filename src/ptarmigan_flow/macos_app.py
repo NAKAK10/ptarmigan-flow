@@ -25,8 +25,10 @@ from ptarmigan_flow.config import (
 from ptarmigan_flow.onboarding_flow import OnboardingFlow
 from ptarmigan_flow.permissions import (
     PermissionReport,
+    check_accessibility_permission,
     check_all_permissions,
     check_all_permissions_subprocess,
+    check_input_monitoring_permission,
     request_accessibility_permission,
     request_input_monitoring_permission,
     request_microphone_permission,
@@ -90,6 +92,21 @@ def _dispatch_cli_args(argv: list[str]) -> int | None:
     return None
 
 
+def _combine_permission_reports(
+    report: PermissionReport | None,
+    *,
+    accessibility_in_process: bool,
+    input_monitoring_in_process: bool,
+) -> PermissionReport | None:
+    if report is None:
+        return None
+    return PermissionReport(
+        microphone=report.microphone,
+        accessibility=report.accessibility or accessibility_in_process,
+        input_monitoring=report.input_monitoring or input_monitoring_in_process,
+    )
+
+
 def _run_appkit_app() -> int:
     import objc
     from AppKit import (
@@ -149,6 +166,7 @@ def _run_appkit_app() -> int:
             self._model_download_process: subprocess.Popen[str] | None = None
             self._model_download_success_message_key = "voice_input_started_message"
             self._model_download_thread: threading.Thread | None = None
+            self._daemon_error_message: str | None = None
             self.web_ui = None
             self.bridge = WebBridgeDispatcher(
                 deps=BridgeDependencies(
@@ -307,7 +325,10 @@ def _run_appkit_app() -> int:
 
         @objc.python_method
         def _state_payload(self) -> dict[str, Any]:
-            return self.bridge.handle_action("getState", {})
+            payload = self.bridge.handle_action("getState", {})
+            if self._daemon_error_message:
+                payload["daemon_error_message"] = self._daemon_error_message
+            return payload
 
         @objc.python_method
         def _push_event(self, event: str, payload: dict[str, Any]) -> None:
@@ -318,6 +339,26 @@ def _run_appkit_app() -> int:
         def _push_daemon_state(self) -> None:
             self._update_status_menu()
             self._push_event("daemonState", self._state_payload())
+
+        @objc.python_method
+        def _missing_permissions_message(self, report: PermissionReport) -> str:
+            strings = self._strings()
+            missing_labels: list[str] = []
+            if not report.microphone:
+                missing_labels.append(strings["microphone_title"])
+            if not report.accessibility:
+                missing_labels.append(strings["accessibility_title"])
+            if not report.input_monitoring:
+                missing_labels.append(strings["input_monitoring_title"])
+            message = strings["grant_permissions_message"]
+            if missing_labels:
+                message = f"{message} ({', '.join(missing_labels)})"
+            return message
+
+        @objc.python_method
+        def _push_daemon_error(self, message: str) -> None:
+            self._daemon_error_message = message
+            self._push_daemon_state()
 
         @objc.python_method
         def _dictionary_path(self) -> Path:
@@ -365,6 +406,11 @@ def _run_appkit_app() -> int:
             report = check_all_permissions_subprocess()
             if report is None:
                 report = check_all_permissions()
+            report = _combine_permission_reports(
+                report,
+                accessibility_in_process=check_accessibility_permission(),
+                input_monitoring_in_process=check_input_monitoring_permission(),
+            )
             payload = {"generation": generation, "report": report}
             try:
                 self.performSelectorOnMainThread_withObject_waitUntilDone_(
@@ -584,30 +630,33 @@ def _run_appkit_app() -> int:
             report: PermissionReport | None = None,
             *,
             success_message_key: str = "voice_input_started_message",
-        ) -> None:
+        ) -> str | None:
             if report is None:
                 report = check_all_permissions()
             if not report.all_granted:
-                self._push_daemon_state()
-                return
+                message = self._missing_permissions_message(report)
+                self._push_daemon_error(message)
+                return message
+            self._daemon_error_message = None
             if not self._configured_backend_is_available():
                 self._push_daemon_state()
-                return
+                return None
             model_token = self._configured_model_token()
             if model_token is None:
                 self._push_daemon_state()
-                return
+                return None
             if not model_download.is_model_downloaded(model_token):
                 self._start_model_download(model_token, success_message_key)
                 self._push_daemon_state()
-                return
+                return None
             if not self.daemon_controller.is_running:
                 try:
                     self.daemon_controller.start()
                 except Exception:
                     self._push_daemon_state()
-                    return
+                    return None
             self._push_daemon_state()
+            return None
 
         @objc.python_method
         def _stop_daemon(self) -> None:

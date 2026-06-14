@@ -78,6 +78,36 @@ def test_dispatch_cli_args_ignores_unknown_module() -> None:
     assert macos_app._dispatch_cli_args(["-m", "ptarmigan_flow.unknown"]) is None
 
 
+def test_combine_permission_reports_prefers_in_process_accessibility_and_input_monitoring() -> None:
+    subprocess_report = macos_app.PermissionReport(
+        microphone=False,
+        accessibility=False,
+        input_monitoring=False,
+    )
+
+    accessibility_combined = macos_app._combine_permission_reports(
+        subprocess_report,
+        accessibility_in_process=True,
+        input_monitoring_in_process=False,
+    )
+    input_monitoring_combined = macos_app._combine_permission_reports(
+        subprocess_report,
+        accessibility_in_process=False,
+        input_monitoring_in_process=True,
+    )
+
+    assert accessibility_combined == macos_app.PermissionReport(
+        microphone=False,
+        accessibility=True,
+        input_monitoring=False,
+    )
+    assert input_monitoring_combined == macos_app.PermissionReport(
+        microphone=False,
+        accessibility=False,
+        input_monitoring=True,
+    )
+
+
 def test_main_calls_freeze_support_before_dispatch(monkeypatch) -> None:
     calls: list[str] = []
 
@@ -209,6 +239,9 @@ def test_macos_app_polls_permissions_through_subprocess_and_pushes_changes() -> 
     assert 'schedule_timer(1.75, self, "pollPermissions:", None, True)' in source
     assert "check_all_permissions_subprocess" in source
     assert "report = check_all_permissions_subprocess()" in source
+    assert "check_accessibility_permission()" in source
+    assert "check_input_monitoring_permission()" in source
+    assert "_combine_permission_reports(" in source
     assert "if report is None:" in source
     assert "report = check_all_permissions()" in source
     assert "threading.Thread(" in source
@@ -268,6 +301,21 @@ def test_macos_app_guards_daemon_start_by_permissions_backend_and_model_download
     assert "self._start_model_download(model_token, success_message_key)" in start_method
     assert "self.daemon_controller.start()" in start_method
     assert "self._push_daemon_state()" in start_method
+
+
+def test_macos_app_surfaces_missing_permission_message_when_daemon_start_is_blocked() -> None:
+    source = _macos_app_source()
+    start_method = source.split("def _start_daemon_if_ready", maxsplit=1)[1].split(
+        "@objc.python_method",
+        maxsplit=1,
+    )[0]
+
+    assert "self._missing_permissions_message(report)" in start_method
+    assert "self._daemon_error_message" in source
+    assert '"daemon_error_message"' in source
+    assert 'strings["grant_permissions_message"]' in source
+    assert 'strings["accessibility_title"]' in source
+    assert 'strings["input_monitoring_title"]' in source
 
 
 def test_macos_app_exposes_menu_actions_to_web_routes_and_bridge_side_effects() -> None:

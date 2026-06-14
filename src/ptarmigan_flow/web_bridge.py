@@ -105,7 +105,7 @@ class BridgeDependencies:
     request_permission: Callable[[PermissionKind], None] = _default_request_permission
     open_system_settings: Callable[[PermissionKind], None] = _default_open_system_settings
     open_config_file: Callable[[], None] = _default_open_config_file
-    start_dictation: Callable[[], None] = _noop
+    start_dictation: Callable[[], object | None] = _noop
     stop_dictation: Callable[[], None] = _noop
     daemon_is_running: Callable[[], bool] = lambda: False
     restart_app: Callable[[], bool] = app_relaunch.relaunch_app
@@ -127,6 +127,7 @@ class WebBridgeDispatcher:
         handlers = {
             "getState": self._get_state,
             "chooseLanguage": self._choose_language,
+            "advanceOnboarding": self._advance_onboarding,
             "requestPermission": self._request_permission,
             "openSystemSettings": self._open_system_settings,
             "openConfigFile": self._open_config_file,
@@ -190,6 +191,10 @@ class WebBridgeDispatcher:
             "strings": onboarding_strings.strings_for(code),
         }
 
+    def _advance_onboarding(self, _payload: dict[str, Any]) -> dict[str, Any]:
+        self.onboarding_flow.advance_permission_step()
+        return self._get_state({})
+
     def _request_permission(self, payload: dict[str, Any]) -> dict[str, str]:
         kind = _permission_kind(payload)
         self.deps.request_permission(kind)
@@ -204,9 +209,14 @@ class WebBridgeDispatcher:
         self.deps.open_config_file()
         return {"opened": True}
 
-    def _start_dictation(self, _payload: dict[str, Any]) -> dict[str, bool]:
-        self.deps.start_dictation()
-        return {"daemon_running": bool(self.deps.daemon_is_running())}
+    def _start_dictation(self, _payload: dict[str, Any]) -> dict[str, Any]:
+        start_result = self.deps.start_dictation()
+        result: dict[str, Any] = {"daemon_running": bool(self.deps.daemon_is_running())}
+        if isinstance(start_result, dict):
+            result.update(start_result)
+        elif start_result is not None:
+            result["error_message"] = str(start_result)
+        return result
 
     def _stop_dictation(self, _payload: dict[str, Any]) -> dict[str, bool]:
         self.deps.stop_dictation()
