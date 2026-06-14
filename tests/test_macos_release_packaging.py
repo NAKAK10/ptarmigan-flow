@@ -105,9 +105,6 @@ def test_webui_assets_exist_and_do_not_hardcode_english_ui_copy() -> None:
     assert "data-select-model" in script
     assert "state.settings.model = button.dataset.selectModel" in script
     assert "data-download-model" in script
-    assert 'data-action="advance-onboarding"' in script
-    assert '"advanceOnboarding"' in script
-    assert 't("continue_anyway_button")' in script
     assert 'data-action="restart"' in script
     for literal in (
         "Start Voice Input",

@@ -60,10 +60,6 @@ class OnboardingFlow:
         if self._step_index < len(self.steps) - 1:
             self._step_index += 1
 
-    def advance_permission_step(self) -> None:
-        if self.current_step in self._permission_step_attrs:
-            self.advance()
-
     def start(
         self,
         report: PermissionReport | None = None,
