@@ -87,6 +87,7 @@ REQUIRED_KEYS = {
     "settings_model_label",
     "settings_models_section_title",
     "settings_no_models_message",
+    "settings_open_config_button",
     "settings_output_mode_label",
     "settings_save_button",
     "settings_save_failed_message",
@@ -129,6 +130,18 @@ def test_strings_for_missing_key_falls_back_to_english(monkeypatch) -> None:
 
     assert strings["restart_required_note"] == localized["en"]["restart_required_note"]
     assert strings["app_setup_title"] == "PtarmiganFlow セットアップ"
+
+
+def test_settings_open_config_button_translations_are_exact() -> None:
+    assert onboarding_strings.strings_for("en")["settings_open_config_button"] == (
+        "Open config file"
+    )
+    assert onboarding_strings.strings_for("ja")["settings_open_config_button"] == (
+        "設定ファイルを開く"
+    )
+    assert onboarding_strings.strings_for("zh")["settings_open_config_button"] == (
+        "打开配置文件"
+    )
 
 
 def test_required_japanese_translations_are_exact() -> None:

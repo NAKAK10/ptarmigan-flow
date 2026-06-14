@@ -343,6 +343,20 @@ def test_side_effect_actions_delegate_to_injected_functions(tmp_path: Path) -> N
     ]
 
 
+def test_open_config_file_action_delegates_to_injected_function(tmp_path: Path) -> None:
+    calls: list[str] = []
+    dispatcher = WebBridgeDispatcher(
+        deps=BridgeDependencies(
+            config_path=lambda: tmp_path / "config.toml",
+            available_model_entries=lambda: [_entry()],
+            open_config_file=lambda: calls.append("open"),
+        ),
+    )
+
+    assert dispatcher.handle_action("openConfigFile", {}) == {"opened": True}
+    assert calls == ["open"]
+
+
 def test_top_level_handle_action_uses_default_dispatcher() -> None:
     result = handle_action("listModels", {})
 

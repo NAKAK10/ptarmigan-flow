@@ -80,6 +80,12 @@ def _default_open_system_settings(kind: PermissionKind) -> None:
         subprocess.run(["open", url], check=False)
 
 
+def _default_open_config_file() -> None:
+    path = default_config_path()
+    if sys.platform == "darwin":
+        subprocess.run(["open", str(path)], check=False)
+
+
 def _noop() -> None:
     return
 
@@ -98,6 +104,7 @@ class BridgeDependencies:
     login_unregister: Callable[[], bool] = login_item.unregister
     request_permission: Callable[[PermissionKind], None] = _default_request_permission
     open_system_settings: Callable[[PermissionKind], None] = _default_open_system_settings
+    open_config_file: Callable[[], None] = _default_open_config_file
     start_dictation: Callable[[], None] = _noop
     stop_dictation: Callable[[], None] = _noop
     daemon_is_running: Callable[[], bool] = lambda: False
@@ -122,6 +129,7 @@ class WebBridgeDispatcher:
             "chooseLanguage": self._choose_language,
             "requestPermission": self._request_permission,
             "openSystemSettings": self._open_system_settings,
+            "openConfigFile": self._open_config_file,
             "startDictation": self._start_dictation,
             "stopDictation": self._stop_dictation,
             "saveSettings": self._save_settings,
@@ -191,6 +199,10 @@ class WebBridgeDispatcher:
         kind = _permission_kind(payload)
         self.deps.open_system_settings(kind)
         return {"opened": kind}
+
+    def _open_config_file(self, _payload: dict[str, Any]) -> dict[str, bool]:
+        self.deps.open_config_file()
+        return {"opened": True}
 
     def _start_dictation(self, _payload: dict[str, Any]) -> dict[str, bool]:
         self.deps.start_dictation()
