@@ -4,6 +4,10 @@
 
 # ptarmigan-flow
 
+## Document
+
+- Public site: https://nakak10.github.io/ptarmigan-flow/
+
 A push-to-talk transcription daemon for macOS.
 It records only while a global hotkey is held, and when released it transcribes with Moonshine and pastes into the active app.
 It uses Moonshine from the official repository: https://github.com/moonshine-ai/moonshine
