@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+from pathlib import Path
 
 _ANSI_YELLOW = "\x1b[33m"
 _ANSI_RESET = "\x1b[0m"
@@ -49,3 +50,33 @@ def configure_logging(level: str) -> None:
         )
     )
     root.addHandler(handler)
+
+
+def configure_app_file_logging(level: str = "DEBUG") -> Path:
+    """Configure additive file logging for the macOS GUI app."""
+    path = (
+        Path.home()
+        / "Library"
+        / "Logs"
+        / "ptarmigan-flow"
+        / "app.log"
+    ).resolve()
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    numeric_level = getattr(logging, level.upper(), logging.INFO)
+    root = logging.getLogger()
+    root.setLevel(numeric_level)
+
+    for handler in root.handlers:
+        if (
+            isinstance(handler, logging.FileHandler)
+            and Path(handler.baseFilename).resolve() == path
+        ):
+            return path
+
+    handler = logging.FileHandler(path, mode="a", encoding="utf-8")
+    handler.setFormatter(
+        logging.Formatter("%(asctime)s %(levelname)s [%(name)s] %(message)s")
+    )
+    root.addHandler(handler)
+    return path

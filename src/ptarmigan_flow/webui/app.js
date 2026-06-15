@@ -122,8 +122,21 @@ function render() {
   bindOnboarding();
 }
 
+function hotkeyOptions() {
+  return [
+    ["right_cmd", "right_cmd"],
+    ["left_cmd", "left_cmd"],
+    ["right_shift", "right_shift"],
+    ["left_shift", "left_shift"],
+    ["right_alt", "right_alt"],
+    ["left_alt", "left_alt"],
+    ["right_ctrl", "right_ctrl"],
+    ["left_ctrl", "left_ctrl"],
+  ];
+}
+
 function renderOnboarding() {
-  const steps = ["language", "microphone", "accessibility", "input_monitoring", "done"];
+  const steps = ["language", "hotkey", "microphone", "accessibility", "input_monitoring", "done"];
   const current = state.onboarding_step || "language";
   const index = Math.max(0, steps.indexOf(current));
   const dots = steps
@@ -149,6 +162,34 @@ function renderOnboarding() {
       </section>
     `;
   }
+  if (current === "hotkey") {
+    const hotkey = state.settings?.hotkey || "right_cmd";
+    const options = hotkeyOptions()
+      .map(([value, label]) => {
+        const attr = value === hotkey ? "selected" : "";
+        return `<option value="${escapeHtml(value)}" ${attr}>${escapeHtml(label)}</option>`;
+      })
+      .join("");
+    return `
+      <section class="onboarding-wrap">
+        <div class="card">
+          <div class="steps">${dots}</div>
+          <h1>${escapeHtml(t("hotkey_confirm_title"))}</h1>
+          <p>${escapeHtml(t("hotkey_confirm_body"))}</p>
+          <div class="form-row">
+            <label for="onboarding-hotkey">${escapeHtml(t("hotkey_select_label"))}</label>
+            <select id="onboarding-hotkey">
+              ${options}
+            </select>
+          </div>
+          <div class="actions">
+            <button class="button primary" data-action="confirm-hotkey">${escapeHtml(t("hotkey_confirm_button"))}</button>
+          </div>
+          <div class="error"></div>
+        </div>
+      </section>
+    `;
+  }
   if (current === "done") {
     return `
       <section class="onboarding-wrap">
@@ -157,9 +198,7 @@ function renderOnboarding() {
           <h1>${escapeHtml(t("done_title"))}</h1>
           <p>${escapeHtml(t("done_body"))}</p>
           <div class="actions">
-            <button class="button primary" data-action="start">${escapeHtml(t("start_dictation_button"))}</button>
-            <button class="button" data-action="stop">${escapeHtml(t("stop_dictation_button"))}</button>
-            <button class="button" data-route="settings">${escapeHtml(t("settings_button"))}</button>
+            <button class="button primary" data-route="settings">${escapeHtml(t("settings_button"))}</button>
             <button class="button" data-action="toggle-login">${escapeHtml(t("login_at_startup_button"))}</button>
           </div>
           <div class="error">${escapeHtml(state.daemon_error_message || "")}</div>
@@ -203,6 +242,26 @@ function bindOnboarding() {
       render();
     });
   });
+  app.querySelector("[data-action='confirm-hotkey']")?.addEventListener("click", async () => {
+    const selectedHotkey =
+      document.getElementById("onboarding-hotkey")?.value || state.settings?.hotkey;
+    const result = await bridge("confirmHotkey", { hotkey: selectedHotkey }).catch((error) => {
+      showError(error);
+      return null;
+    });
+    if (!result) {
+      return;
+    }
+    if (result.saved === false) {
+      const target = app.querySelector(".error");
+      if (target) {
+        target.textContent = result.errors.join(", ");
+      }
+      return;
+    }
+    state = await bridge("getState");
+    render();
+  });
   app.querySelectorAll("[data-permission]").forEach((button) => {
     button.addEventListener("click", () =>
       bridge("requestPermission", { kind: button.dataset.permission }).catch(showError),
@@ -236,14 +295,7 @@ function renderSettings() {
           ["zh", t("language_chinese")],
         ])}
         ${selectRow("hotkey", "settings_hotkey_label", settings.hotkey, [
-          ["right_cmd", "right_cmd"],
-          ["left_cmd", "left_cmd"],
-          ["right_shift", "right_shift"],
-          ["left_shift", "left_shift"],
-          ["right_alt", "right_alt"],
-          ["left_alt", "left_alt"],
-          ["right_ctrl", "right_ctrl"],
-          ["left_ctrl", "left_ctrl"],
+          ...hotkeyOptions(),
         ])}
         ${selectRow("output_mode", "settings_output_mode_label", settings.output_mode, [
           ["direct_typing", t("output_direct_typing")],
@@ -501,22 +553,6 @@ async function saveDictionary() {
 }
 
 function bindSharedActions() {
-  app.querySelector("[data-action='start']")?.addEventListener("click", async () => {
-    const result = await bridge("startDictation").catch(showError);
-    if (!result) {
-      return;
-    }
-    state = await bridge("getState");
-    if (result.error_message) {
-      state.daemon_error_message = result.error_message;
-    }
-    render();
-  });
-  app.querySelector("[data-action='stop']")?.addEventListener("click", async () => {
-    await bridge("stopDictation").catch(showError);
-    state = await bridge("getState");
-    render();
-  });
   app.querySelector("[data-action='toggle-login']")?.addEventListener("click", async () => {
     await bridge("toggleLogin").catch(showError);
     state = await bridge("getState");

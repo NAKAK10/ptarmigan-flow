@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import ptarmigan_flow.activity_overlay as overlay_module
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 class _FakeWindow:
@@ -157,3 +161,23 @@ def test_clear_backplate_visuals_hides_glass_layer() -> None:
     assert window._glass_layer.shadow_radius == 0.0
     assert window._glass_layer.shadow_offset == (0.0, 0.0)
     assert window._glass_layer.opacity == 0.0
+
+
+def test_recording_and_processing_overlay_icons_use_distinct_color_families() -> None:
+    source = (ROOT / "src/ptarmigan_flow/activity_overlay.py").read_text(encoding="utf-8")
+    recording_method = source.split("def _start_recording_animation", maxsplit=1)[1].split(
+        "def _start_processing_animation",
+        maxsplit=1,
+    )[0]
+    processing_method = source.split("def _start_processing_animation", maxsplit=1)[1].split(
+        "def _position_bottom_right",
+        maxsplit=1,
+    )[0]
+
+    assert 'self._set_mode("recording")' in recording_method
+    assert "self._color(1.0, 0.28, 0.41, 0.95)" in recording_method
+    assert "recording.core.scale" in recording_method
+    assert 'self._set_mode("processing")' in processing_method
+    assert "self._color(0.41, 0.96, 1.0, 0.92)" in processing_method
+    assert '"processing.ring.a"' in processing_method
+    assert 'f"{key_prefix}.rotation"' in processing_method

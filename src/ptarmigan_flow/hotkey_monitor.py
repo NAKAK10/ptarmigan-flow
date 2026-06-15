@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import logging
+import sys
 import threading
+import time
 from collections.abc import Callable
 
 from pynput import keyboard
@@ -34,6 +36,10 @@ _MACOS_KEYCODE_BY_NAME: dict[str, int] = {
 }
 
 
+def macos_keycode_for_hotkey(key_name: str) -> int | None:
+    return _MACOS_KEYCODE_BY_NAME.get(key_name.strip().lower())
+
+
 class HotkeyMonitor:
     """Monitor one key globally and emit press/release callbacks."""
 
@@ -55,6 +61,9 @@ class HotkeyMonitor:
         self._release_timer: threading.Timer | None = None
         self._macos_keycode = _MACOS_KEYCODE_BY_NAME.get(self.key_name.strip().lower())
         self._hid_key_state_reader = self._build_hid_key_state_reader()
+        self._hid_polling_active = False
+        self._hid_polling_thread = None
+        self._listener_started: bool = False
         self._listener = keyboard.Listener(on_press=self._on_press, on_release=self._on_release)
 
     @staticmethod
@@ -102,6 +111,36 @@ class HotkeyMonitor:
     def _matches(self, key: keyboard.Key | keyboard.KeyCode | None) -> bool:
         return key == self._target_key
 
+    def _register_press(self) -> None:
+        fired = False
+        with self._lock:
+            if not self._pressed:
+                self._pressed = True
+                self._schedule_release_timer()
+                fired = True
+        if fired:
+            LOGGER.info("Hotkey press detected: %s", self.key_name)
+            self._on_press_callback()
+
+    def _register_release(self) -> None:
+        fired = False
+        with self._lock:
+            if self._pressed:
+                self._pressed = False
+                self._cancel_release_timer()
+                fired = True
+        if fired:
+            LOGGER.info("Hotkey release detected: %s", self.key_name)
+            self._on_release_callback()
+
+    def notify_press(self) -> None:
+        """Feed an externally-detected press (e.g. from an NSEvent monitor)."""
+        self._register_press()
+
+    def notify_release(self) -> None:
+        """Feed an externally-detected release (e.g. from an NSEvent monitor)."""
+        self._register_release()
+
     def _on_press(self, key: keyboard.Key | keyboard.KeyCode | None) -> None:
         recovered_stuck_release = False
         with self._lock:
@@ -145,7 +184,38 @@ class HotkeyMonitor:
 
     def start(self) -> None:
         """Start listening in background thread."""
-        self._listener.start()
+        if "AppKit" not in sys.modules:
+            try:
+                self._listener.start()
+                self._listener_started = True
+            except Exception:
+                LOGGER.warning("pynput listener failed to start; relying on HID polling")
+        self._start_hid_polling()
+
+    def _start_hid_polling(self) -> None:
+        if self._macos_keycode is None or self._hid_key_state_reader is None:
+            return
+        if self._hid_polling_active:
+            return
+        self._hid_polling_active = True
+        self._hid_polling_thread = threading.Thread(
+            target=self._hid_poll_loop,
+            name="hid-hotkey-poll",
+            daemon=True,
+        )
+        self._hid_polling_thread.start()
+
+    def _hid_poll_loop(self) -> None:
+        prev = False
+        while self._hid_polling_active:
+            physical = self._physical_pressed_state()
+            if physical is True and not prev:
+                self._register_press()
+                prev = True
+            elif physical is False and prev:
+                self._register_release()
+                prev = False
+            time.sleep(0.05)
 
     def _physical_pressed_state(self) -> bool | None:
         if self._macos_keycode is None or self._hid_key_state_reader is None:
@@ -165,11 +235,14 @@ class HotkeyMonitor:
 
     def stop(self) -> None:
         """Stop listener."""
+        self._hid_polling_active = False
         with self._lock:
             self._pressed = False
             self._cancel_release_timer()
-        self._listener.stop()
+        if self._listener_started:
+            self._listener.stop()
 
     def join(self) -> None:
         """Block until listener exits."""
-        self._listener.join()
+        if self._listener_started:
+            self._listener.join()

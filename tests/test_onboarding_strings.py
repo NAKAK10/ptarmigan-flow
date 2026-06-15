@@ -42,6 +42,10 @@ REQUIRED_KEYS = {
     "done_title",
     "edit_dictionary_menu",
     "grant_permissions_message",
+    "hotkey_confirm_body",
+    "hotkey_confirm_button",
+    "hotkey_confirm_title",
+    "hotkey_select_label",
     "input_monitoring_body",
     "input_monitoring_title",
     "language_chinese",
@@ -157,6 +161,12 @@ def test_required_japanese_translations_are_exact() -> None:
     assert strings["grant_permissions_message"] == (
         "音声入力を開始する前にすべての権限を許可してください。"
     )
+    assert strings["hotkey_confirm_title"] == "使用するホットキーを確認"
+    assert strings["hotkey_confirm_body"] == (
+        "音声入力中に押し続けるキーを選択します。あとで設定から変更できます。"
+    )
+    assert strings["hotkey_select_label"] == "使用するキー"
+    assert strings["hotkey_confirm_button"] == "このキーを使う"
     assert strings["daemon_not_running_message"] == "音声入力デーモンはまだ起動していません。"
     assert strings["daemon_start_failed_message"] == "音声入力を開始できませんでした: {error}"
     assert strings["download_preparing_message"] == "モデルを準備中..."
@@ -247,4 +257,8 @@ def test_chinese_translations_are_simplified_and_complete() -> None:
     assert strings["route_dictionary"] == "转换词典"
     assert strings["status_waiting"] == "等待中"
     assert strings["status_granted"] == "已允许"
+    assert strings["hotkey_confirm_title"] == "确认要使用的热键"
+    assert strings["hotkey_confirm_body"] == "选择语音输入时需要按住的键。之后可在设置中更改。"
+    assert strings["hotkey_select_label"] == "使用的键"
+    assert strings["hotkey_confirm_button"] == "使用此键"
     assert strings["settings_llm_section_title"] == "LLM 修正"

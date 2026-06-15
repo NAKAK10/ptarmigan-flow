@@ -47,10 +47,18 @@ ONBOARDING_STRINGS: dict[str, dict[str, str]] = {
         "dictionary_saved_message": (
             "Dictionary saved. Restart voice input to apply changes."
         ),
-        "done_body": "Setup is complete. Start voice input or adjust settings.",
+        "done_body": (
+            "Setup is complete. Hold your configured hotkey to dictate, or adjust settings."
+        ),
         "done_title": "Ready for Voice Input",
         "edit_dictionary_menu": "Edit Dictionary",
         "grant_permissions_message": "Grant all permissions before starting voice input.",
+        "hotkey_confirm_body": (
+            "Choose the key you will hold while speaking. You can change it later in Settings."
+        ),
+        "hotkey_confirm_button": "Use This Key",
+        "hotkey_confirm_title": "Confirm Hotkey",
+        "hotkey_select_label": "Key to use",
         "input_monitoring_body": "Allow PtarmiganFlow to detect the push-to-talk hotkey.",
         "input_monitoring_title": "Input Monitoring",
         "language_chinese": "Chinese",
@@ -159,10 +167,19 @@ ONBOARDING_STRINGS: dict[str, dict[str, str]] = {
         "dictionary_save_button": "保存",
         "dictionary_save_failed_message": "変換辞書を保存できませんでした: {error}",
         "dictionary_saved_message": "保存しました。反映には音声入力を再起動してください。",
-        "done_body": "セットアップが完了しました。音声入力を開始するか、設定を変更できます。",
+        "done_body": (
+            "セットアップが完了しました。設定したホットキーを押している間だけ"
+            "音声入力できます。設定も変更できます。"
+        ),
         "done_title": "音声入力の準備完了",
         "edit_dictionary_menu": "変換辞書を編集",
         "grant_permissions_message": "音声入力を開始する前にすべての権限を許可してください。",
+        "hotkey_confirm_body": (
+            "音声入力中に押し続けるキーを選択します。あとで設定から変更できます。"
+        ),
+        "hotkey_confirm_button": "このキーを使う",
+        "hotkey_confirm_title": "使用するホットキーを確認",
+        "hotkey_select_label": "使用するキー",
         "input_monitoring_body": (
             "プッシュトゥトーク用のホットキーを検出するため、"
             "PtarmiganFlow に入力監視を許可します。"
@@ -270,10 +287,14 @@ ONBOARDING_STRINGS: dict[str, dict[str, str]] = {
         "dictionary_save_button": "保存",
         "dictionary_save_failed_message": "无法保存转换词典: {error}",
         "dictionary_saved_message": "已保存。请重启语音输入以应用更改。",
-        "done_body": "设置已完成。可以开始语音输入或调整设置。",
+        "done_body": "设置已完成。按住所设置的热键即可语音输入，也可以调整设置。",
         "done_title": "语音输入已就绪",
         "edit_dictionary_menu": "编辑转换词典",
         "grant_permissions_message": "开始语音输入前，请授予所有权限。",
+        "hotkey_confirm_body": "选择语音输入时需要按住的键。之后可在设置中更改。",
+        "hotkey_confirm_button": "使用此键",
+        "hotkey_confirm_title": "确认要使用的热键",
+        "hotkey_select_label": "使用的键",
         "input_monitoring_body": "允许 PtarmiganFlow 检测一键通话热键。",
         "input_monitoring_title": "输入监控",
         "language_chinese": "中文",
