@@ -8,36 +8,68 @@ from pathlib import Path
 from ptarmigan_flow.permissions import PermissionReport
 
 SUPPORTED_LANGUAGES = frozenset({"en", "ja", "zh"})
+SUPPORTED_HOTKEYS = frozenset(
+    {
+        "right_cmd",
+        "left_cmd",
+        "right_shift",
+        "left_shift",
+        "right_alt",
+        "left_alt",
+        "right_ctrl",
+        "left_ctrl",
+    }
+)
 
 
 def onboarding_state_path() -> Path:
     return Path("~/Library/Application Support/ptarmigan-flow/onboarding_state.json").expanduser()
 
 
-def mark_language_selected() -> None:
+def _load_state() -> dict[str, object]:
+    try:
+        path = onboarding_state_path()
+        if not path.is_file():
+            return {}
+        state = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return state if isinstance(state, dict) else {}
+
+
+def _write_state(state: dict[str, object]) -> None:
     try:
         path = onboarding_state_path()
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({"language_selected": True}), encoding="utf-8")
+        path.write_text(json.dumps(state), encoding="utf-8")
     except Exception:
         return
 
 
+def mark_language_selected() -> None:
+    state = _load_state()
+    state["language_selected"] = True
+    _write_state(state)
+
+
+def mark_hotkey_confirmed() -> None:
+    state = _load_state()
+    state["hotkey_confirmed"] = True
+    _write_state(state)
+
+
 def language_was_selected() -> bool:
-    try:
-        path = onboarding_state_path()
-        if not path.is_file():
-            return False
-        state = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return False
-    return isinstance(state, dict) and state.get("language_selected") is True
+    return _load_state().get("language_selected") is True
+
+
+def hotkey_was_confirmed() -> bool:
+    return _load_state().get("hotkey_confirmed") is True
 
 
 class OnboardingFlow:
     """Track one-step-at-a-time onboarding progress."""
 
-    steps = ["language", "microphone", "accessibility", "input_monitoring", "done"]
+    steps = ["language", "hotkey", "microphone", "accessibility", "input_monitoring", "done"]
     _permission_step_attrs = {
         "microphone": "microphone",
         "accessibility": "accessibility",
@@ -47,6 +79,7 @@ class OnboardingFlow:
     def __init__(self) -> None:
         self._step_index = 0
         self.selected_language: str | None = None
+        self.selected_hotkey: str | None = None
 
     @property
     def current_step(self) -> str:
@@ -65,8 +98,11 @@ class OnboardingFlow:
         report: PermissionReport | None = None,
         *,
         language_already_selected: bool = False,
+        hotkey_already_confirmed: bool = False,
     ) -> None:
         if language_already_selected and self.current_step == "language":
+            self.advance()
+        if hotkey_already_confirmed and self.current_step == "hotkey":
             self.advance()
         if report is not None:
             self.refresh(report)
@@ -86,11 +122,22 @@ class OnboardingFlow:
         if self.current_step == "language":
             self.advance()
 
+    def confirm_hotkey(self, hotkey: str) -> None:
+        selected = hotkey.strip()
+        if selected not in SUPPORTED_HOTKEYS:
+            raise ValueError(f"Unsupported hotkey: {hotkey}")
+        self.selected_hotkey = selected
+        if self.current_step == "hotkey":
+            self.advance()
+
 
 __all__ = [
     "OnboardingFlow",
+    "SUPPORTED_HOTKEYS",
     "SUPPORTED_LANGUAGES",
+    "hotkey_was_confirmed",
     "language_was_selected",
+    "mark_hotkey_confirmed",
     "mark_language_selected",
     "onboarding_state_path",
 ]

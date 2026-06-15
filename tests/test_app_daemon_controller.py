@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import ptarmigan_flow.app_daemon_controller as controller_module
 from ptarmigan_flow.app_daemon_controller import (
     DaemonController,
+    InProcessDaemonController,
     build_daemon_from_config,
     daemon_run_command,
 )
@@ -63,6 +64,18 @@ class _FakeProcess:
     def kill(self) -> None:
         self.kill_calls += 1
         self.returncode = -9
+
+
+class _FakeHotkey:
+    def __init__(self) -> None:
+        self.press_calls = 0
+        self.release_calls = 0
+
+    def notify_press(self) -> None:
+        self.press_calls += 1
+
+    def notify_release(self) -> None:
+        self.release_calls += 1
 
 
 def test_daemon_run_command_routes_cli_run_through_current_executable(
@@ -165,6 +178,34 @@ def test_daemon_controller_records_immediate_nonzero_exit() -> None:
     assert isinstance(controller.last_error, RuntimeError)
     assert "return code 2" in str(controller.last_error)
     assert controller.is_running is False
+
+
+def test_in_process_daemon_controller_forwards_hotkey_press_and_release(tmp_path) -> None:
+    controller = InProcessDaemonController(tmp_path / "config.toml")
+    hotkey = _FakeHotkey()
+    with controller._lock:
+        controller._daemon = SimpleNamespace(hotkey=hotkey)
+
+    controller.notify_hotkey_press()
+    controller.notify_hotkey_release()
+
+    assert hotkey.press_calls == 1
+    assert hotkey.release_calls == 1
+
+
+def test_in_process_daemon_controller_hotkey_notifications_are_noops_without_hotkey(
+    tmp_path,
+) -> None:
+    controller = InProcessDaemonController(tmp_path / "config.toml")
+
+    controller.notify_hotkey_press()
+    controller.notify_hotkey_release()
+
+    with controller._lock:
+        controller._daemon = SimpleNamespace()
+
+    controller.notify_hotkey_press()
+    controller.notify_hotkey_release()
 
 
 def test_build_daemon_from_config_ensures_loads_and_builds_daemon(monkeypatch, tmp_path) -> None:

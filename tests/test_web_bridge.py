@@ -135,7 +135,7 @@ def test_get_state_returns_web_ui_snapshot_with_localized_strings_and_download_s
     state = dispatcher.handle_action("getState", {})
 
     assert state["language"] == "ja"
-    assert state["onboarding_step"] == "microphone"
+    assert state["onboarding_step"] == "hotkey"
     assert state["permissions"] == {
         "microphone": True,
         "accessibility": False,
@@ -192,10 +192,54 @@ def test_choose_language_writes_config_marks_persistence_and_advances_flow(
     result = dispatcher.handle_action("chooseLanguage", {"code": "zh"})
 
     assert result["language"] == "zh"
-    assert result["onboarding_step"] == "microphone"
+    assert result["onboarding_step"] == "hotkey"
     assert marks == ["selected"]
     assert load_config(config_path).language == "zh"
     assert result["strings"]["settings_window_title"] == "设置"
+
+
+def test_confirm_hotkey_writes_config_marks_persistence_and_advances_flow(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "config.toml"
+    _write_config(config_path, language="ja")
+    marks: list[str] = []
+    flow = OnboardingFlow()
+    flow.choose_language("ja")
+    deps = BridgeDependencies(
+        config_path=lambda: config_path,
+        mark_hotkey_confirmed=lambda: marks.append("confirmed"),
+        available_model_entries=lambda: [_entry()],
+    )
+    dispatcher = WebBridgeDispatcher(deps=deps, onboarding_flow=flow)
+
+    result = dispatcher.handle_action("confirmHotkey", {"hotkey": "right_shift"})
+
+    assert result == {"hotkey": "right_shift", "onboarding_step": "microphone"}
+    assert marks == ["confirmed"]
+    assert load_config(config_path).hotkey.key == "right_shift"
+    assert flow.selected_hotkey == "right_shift"
+
+
+def test_confirm_hotkey_rejects_invalid_key_without_writing(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.toml"
+    _write_config(config_path, language="ja")
+    marks: list[str] = []
+    flow = OnboardingFlow()
+    flow.choose_language("ja")
+    deps = BridgeDependencies(
+        config_path=lambda: config_path,
+        mark_hotkey_confirmed=lambda: marks.append("confirmed"),
+        available_model_entries=lambda: [_entry()],
+    )
+    dispatcher = WebBridgeDispatcher(deps=deps, onboarding_flow=flow)
+
+    result = dispatcher.handle_action("confirmHotkey", {"hotkey": "shift_right"})
+
+    assert result == {"saved": False, "errors": ["hotkey"]}
+    assert marks == []
+    assert load_config(config_path).hotkey.key == "left_cmd"
+    assert flow.current_step == "hotkey"
 
 
 def test_save_settings_updates_core_fields_and_llm_correction(tmp_path: Path) -> None:

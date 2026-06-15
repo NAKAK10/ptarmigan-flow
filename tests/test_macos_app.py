@@ -27,6 +27,10 @@ def _web_bridge_source() -> str:
     return _source("src/ptarmigan_flow/web_bridge.py")
 
 
+def _webui_app_source() -> str:
+    return _source("src/ptarmigan_flow/webui/app.js")
+
+
 def test_dispatch_cli_args_handles_launchd_python_module_form(monkeypatch) -> None:
     executable = "/Applications/PtarmiganFlow.app/Contents/MacOS/PtarmiganFlow"
     app_argv = [
@@ -175,8 +179,16 @@ def test_web_ui_hosts_wkwebview_and_message_bridge() -> None:
     assert "importlib.resources.files" in source
 
 
-def test_macos_app_creates_native_status_bar_menu() -> None:
+def test_macos_app_creates_native_status_bar_menu_without_manual_voice_input_controls() -> None:
     source = _macos_app_source()
+    build_status_item = source.split("def _build_status_item", maxsplit=1)[1].split(
+        "@objc.python_method",
+        maxsplit=1,
+    )[0]
+    update_status_menu = source.split("def _update_status_menu", maxsplit=1)[1].split(
+        "@objc.python_method",
+        maxsplit=1,
+    )[0]
 
     assert "NSStatusBar" in source
     assert "NSVariableStatusItemLength" in source
@@ -184,8 +196,14 @@ def test_macos_app_creates_native_status_bar_menu() -> None:
     assert "self.status_item" in source
     assert "self.status_menu" in source
     assert 'strings["dictation_stopped_menu"]' in source
-    assert 'strings["start_dictation_button"]' in source
-    assert 'strings["stop_dictation_button"]' in source
+    assert "start_menu_item" not in build_status_item
+    assert "stop_menu_item" not in build_status_item
+    assert "startDictation:" not in build_status_item
+    assert "stopDictation:" not in build_status_item
+    assert 'strings["start_dictation_button"]' not in build_status_item
+    assert 'strings["stop_dictation_button"]' not in build_status_item
+    assert "start_menu_item" not in update_status_menu
+    assert "stop_menu_item" not in update_status_menu
     assert 'strings["settings_menu"]' in source
     assert 'strings["edit_dictionary_menu"]' in source
     assert 'strings["login_at_startup_menu"]' in source
@@ -211,6 +229,70 @@ def test_macos_app_wires_web_bridge_to_existing_logic() -> None:
     assert "login_register=login_item.register" in source
     assert "login_unregister=login_item.unregister" in source
     assert "restart_app=self._restart_app" in source
+    assert "mark_hotkey_confirmed=onboarding_flow_module.mark_hotkey_confirmed" in source
+
+
+def test_macos_app_uses_in_process_daemon_controller() -> None:
+    source = _macos_app_source()
+
+    assert (
+        "from ptarmigan_flow.app_daemon_controller import (\n"
+        "    InProcessDaemonController,\n"
+        ")"
+    ) in source
+    assert "daemon_run_command" not in source
+    assert "    DaemonController,\n" not in source
+    assert "self.daemon_controller = InProcessDaemonController(default_config_path())" in source
+
+
+def test_macos_app_installs_main_thread_nsevent_hotkey_monitor() -> None:
+    source = _macos_app_source()
+    init_body = source.split("def init(self):", maxsplit=1)[1].split(
+        "def applicationDidFinishLaunching_",
+        maxsplit=1,
+    )[0]
+    install_body = source.split("def _install_hotkey_event_monitor(self) -> None:", maxsplit=1)[
+        1
+    ].split("def _remove_hotkey_event_monitor(self) -> None:", maxsplit=1)[0]
+    remove_body = source.split("def _remove_hotkey_event_monitor(self) -> None:", maxsplit=1)[
+        1
+    ].split("@objc.python_method", maxsplit=1)[0]
+    start_method = source.split("def _start_daemon_if_ready", maxsplit=1)[1].split(
+        "@objc.python_method",
+        maxsplit=1,
+    )[0]
+    stop_method = source.split("def _stop_daemon(self) -> None:", maxsplit=1)[1].split(
+        "@objc.python_method",
+        maxsplit=1,
+    )[0]
+
+    assert "from ptarmigan_flow.hotkey_monitor import macos_keycode_for_hotkey" in source
+    assert "NSEvent" in source
+    assert "NSEventMaskFlagsChanged" in source
+    assert "_HOTKEY_KEYCODE_TO_MODIFIER_FLAG = {" in source
+    assert "60: 1 << 17" in source
+    assert "self._hotkey_global_monitor = None" in init_body
+    assert "self._hotkey_local_monitor = None" in init_body
+    assert "key_name = str(self.bridge._load_config().hotkey.key)" in install_body
+    assert "macos_keycode_for_hotkey(key_name)" in install_body
+    assert "flag_bit = _HOTKEY_KEYCODE_TO_MODIFIER_FLAG.get(keycode)" in install_body
+    assert "event.keyCode()" in install_body
+    assert "event.modifierFlags()" in install_body
+    assert "self.daemon_controller.notify_hotkey_press()" in install_body
+    assert "self.daemon_controller.notify_hotkey_release()" in install_body
+    assert "NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(" in install_body
+    assert "NSEvent.addLocalMonitorForEventsMatchingMask_handler_(" in install_body
+    assert "NSEvent.removeMonitor_(monitor)" in remove_body
+    assert "if self.daemon_controller.is_running:" in start_method
+    assert start_method.index("self._install_hotkey_event_monitor()") < start_method.rindex(
+        "self._push_daemon_state()"
+    )
+    assert stop_method.index("self.daemon_controller.stop()") < stop_method.index(
+        "self._remove_hotkey_event_monitor()"
+    )
+    assert stop_method.index("self._remove_hotkey_event_monitor()") < stop_method.index(
+        "self._push_daemon_state()"
+    )
 
 
 def test_web_bridge_is_pyobjc_independent() -> None:
@@ -227,9 +309,11 @@ def test_macos_app_starts_onboarding_from_persisted_language_state() -> None:
     source = _macos_app_source()
 
     assert "language_was_selected()" in source
+    assert "hotkey_was_confirmed()" in source
     assert "self.onboarding_flow.start(" in source
     assert "report=check_all_permissions()" in source
     assert "language_already_selected=onboarding_flow_module.language_was_selected()" in source
+    assert "hotkey_already_confirmed=onboarding_flow_module.hotkey_was_confirmed()" in source
     assert "self.bridge.set_onboarding_flow(self.onboarding_flow)" in source
 
 
@@ -363,8 +447,21 @@ def test_macos_app_daemon_start_reuses_latest_combined_permission_report(monkeyp
         def dataWithBytes_length_(data, _length):
             return data
 
-    class FakeDaemonController:
-        def __init__(self, _run_command) -> None:
+    class FakeNSEvent:
+        @staticmethod
+        def addGlobalMonitorForEventsMatchingMask_handler_(_mask, _handler):
+            return object()
+
+        @staticmethod
+        def addLocalMonitorForEventsMatchingMask_handler_(_mask, _handler):
+            return object()
+
+        @staticmethod
+        def removeMonitor_(_monitor) -> None:
+            return None
+
+    class FakeInProcessDaemonController:
+        def __init__(self, _config_path) -> None:
             self.is_running = False
             self.start_calls = 0
 
@@ -384,6 +481,8 @@ def test_macos_app_daemon_start_reuses_latest_combined_permission_report(monkeyp
         NSApplicationActivationPolicyAccessory=0,
         NSControlStateValueOff=0,
         NSControlStateValueOn=1,
+        NSEvent=FakeNSEvent,
+        NSEventMaskFlagsChanged=1,
         NSImage=FakeNSImage,
         NSMenu=object,
         NSMenuItem=object,
@@ -403,7 +502,11 @@ def test_macos_app_daemon_start_reuses_latest_combined_permission_report(monkeyp
     monkeypatch.setitem(sys.modules, "AppKit", fake_appkit)
     monkeypatch.setitem(sys.modules, "Foundation", fake_foundation)
     monkeypatch.setitem(sys.modules, "ptarmigan_flow.web_ui", fake_web_ui)
-    monkeypatch.setattr(macos_app, "DaemonController", FakeDaemonController)
+    monkeypatch.setattr(
+        "ptarmigan_flow.logging_setup.configure_app_file_logging",
+        lambda _level: "/tmp/ptarmigan-flow-app.log",
+    )
+    monkeypatch.setattr(macos_app, "InProcessDaemonController", FakeInProcessDaemonController)
     monkeypatch.setattr(
         macos_app,
         "check_all_permissions",
@@ -438,22 +541,113 @@ def test_macos_app_daemon_start_reuses_latest_combined_permission_report(monkeyp
     assert pushed_states == ["daemonState"]
 
 
+def test_webui_done_screen_omits_manual_voice_input_start_and_stop_buttons() -> None:
+    source = _webui_app_source()
+    done_template = source.split('if (current === "done")', maxsplit=1)[1].split(
+        "return renderPermissionStep(current, dots);",
+        maxsplit=1,
+    )[0]
+
+    assert 'data-action="start"' not in done_template
+    assert 'data-action="stop"' not in done_template
+    assert 't("start_dictation_button")' not in done_template
+    assert 't("stop_dictation_button")' not in done_template
+    assert 'data-route="settings"' in done_template
+    assert 'data-action="toggle-login"' in done_template
+
+
+def test_webui_onboarding_includes_hotkey_confirmation_step() -> None:
+    source = _webui_app_source()
+
+    assert (
+        '["language", "hotkey", "microphone", "accessibility", "input_monitoring", "done"]'
+        in source
+    )
+    assert 'if (current === "hotkey")' in source
+    assert 't("hotkey_confirm_title")' in source
+    assert 't("hotkey_confirm_body")' in source
+    assert 't("hotkey_select_label")' in source
+    assert 'id="onboarding-hotkey"' in source
+    assert 'data-action="confirm-hotkey"' in source
+    assert 'bridge("confirmHotkey", { hotkey: selectedHotkey })' in source
+    for hotkey in (
+        "right_cmd",
+        "left_cmd",
+        "right_shift",
+        "left_shift",
+        "right_alt",
+        "left_alt",
+        "right_ctrl",
+        "left_ctrl",
+    ):
+        assert f'"{hotkey}"' in source
+
+
 def test_macos_app_exposes_menu_actions_to_web_routes_and_bridge_side_effects() -> None:
     source = _macos_app_source()
 
-    assert "def startDictation_(self, _sender):" in source
-    assert "def stopDictation_(self, _sender):" in source
+    assert "def startDictation_(self, _sender):" not in source
+    assert "def stopDictation_(self, _sender):" not in source
     assert "def showSettings_(self, _sender):" in source
     assert "def showDictionaryEditor_(self, _sender):" in source
     assert "def toggleLoginAtStartup_(self, _sender):" in source
     assert "def restartApp_(self, _sender):" in source
     assert "def _restart_app(self) -> bool:" in source
-    assert "self._start_daemon_if_ready()" in source
-    assert "self._stop_daemon()" in source
     assert "self._set_route(\"settings\")" in source
     assert "self._set_route(\"dictionary\")" in source
     assert "self._toggle_login()" in source
     assert "NSApplication.sharedApplication().terminate_(self)" in source
+
+
+def test_macos_app_restart_and_quit_use_plain_termination_paths() -> None:
+    source = _macos_app_source()
+    restart_body = source.split("def _restart_app(self) -> bool:", maxsplit=1)[1].split(
+        "def pollPermissions_",
+        maxsplit=1,
+    )[0]
+    quit_body = source.split("def quit_(self, _sender):", maxsplit=1)[1].split(
+        "app = NSApplication.sharedApplication()",
+        maxsplit=1,
+    )[0]
+    restart_lines = [
+        line.strip()
+        for line in restart_body.splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+    quit_lines = [
+        line.strip()
+        for line in quit_body.splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+
+    assert restart_lines == [
+        "if app_relaunch.relaunch_app():",
+        "NSApplication.sharedApplication().terminate_(self)",
+        "return True",
+        "return False",
+    ]
+    assert quit_lines == ["NSApplication.sharedApplication().terminate_(self)"]
+
+
+def test_macos_app_shutdown_runs_plain_cleanup_steps() -> None:
+    source = _macos_app_source()
+    terminate_parts = source.split(
+        "def applicationWillTerminate_(self, _notification):",
+        maxsplit=1,
+    )
+    terminate_body = terminate_parts[1].split("def applicationDidBecomeActive_", maxsplit=1)[0]
+    terminate_lines = [
+        line.strip()
+        for line in terminate_body.splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+
+    assert terminate_lines == [
+        "self._stop_permission_timer()",
+        "self._terminate_model_download_process()",
+        "self._remove_hotkey_event_monitor()",
+        "self.daemon_controller.stop()",
+    ]
 
 
 def test_macos_app_wires_login_item_toggle_with_checkmark() -> None:

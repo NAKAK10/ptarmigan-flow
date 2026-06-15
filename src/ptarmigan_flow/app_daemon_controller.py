@@ -85,7 +85,16 @@ class DaemonController:
 
         try:
             command = self._command_builder()
-            process = self._runner(command)
+            if self._runner is subprocess.Popen:
+                process = subprocess.Popen(command, stderr=subprocess.PIPE, text=True)
+                if process.stderr is not None:
+                    threading.Thread(
+                        target=self._drain_stderr,
+                        args=(process,),
+                        daemon=True,
+                    ).start()
+            else:
+                process = self._runner(command)
         except Exception as exc:
             LOGGER.exception("Failed to start app daemon subprocess")
             with self._lock:
@@ -133,6 +142,99 @@ class DaemonController:
             self._last_error = RuntimeError(
                 f"App daemon subprocess exited with return code {returncode}"
             )
+
+    @staticmethod
+    def _drain_stderr(process: ProcessLike) -> None:
+        try:
+            for line in process.stderr:
+                line = line.rstrip()
+                if line:
+                    LOGGER.warning("daemon stderr: %s", line)
+        except Exception:
+            pass
+
+
+class InProcessDaemonController:
+    """Start and stop the daemon as an in-process background thread."""
+
+    def __init__(self, config_path: Path | str) -> None:
+        self._config_path = Path(config_path)
+        self._daemon: DaemonLike | None = None
+        self._thread: threading.Thread | None = None
+        self._lock = threading.Lock()
+        self._last_error: Exception | None = None
+
+    @property
+    def is_running(self) -> bool:
+        with self._lock:
+            t = self._thread
+        return t is not None and t.is_alive()
+
+    @property
+    def last_error(self) -> Exception | None:
+        with self._lock:
+            return self._last_error
+
+    def start(self) -> None:
+        """Start the daemon on a background thread unless one is already active."""
+        with self._lock:
+            if self._thread is not None and self._thread.is_alive():
+                return
+            self._last_error = None
+
+        def _run() -> None:
+            try:
+                daemon = build_daemon_from_config(self._config_path)
+            except Exception as exc:
+                LOGGER.exception("Failed to build in-process daemon")
+                with self._lock:
+                    self._last_error = exc
+                return
+            with self._lock:
+                self._daemon = daemon
+            try:
+                daemon.run_forever()
+            except Exception as exc:
+                LOGGER.exception("In-process daemon exited with error")
+                with self._lock:
+                    self._last_error = exc
+
+        t = threading.Thread(target=_run, daemon=True, name="ptarmigan-daemon")
+        with self._lock:
+            self._thread = t
+        t.start()
+
+    def stop(self) -> None:
+        """Stop the in-process daemon and wait briefly for its thread to exit."""
+        with self._lock:
+            daemon = self._daemon
+            thread = self._thread
+        if daemon is not None:
+            try:
+                daemon.stop()
+            except Exception:
+                LOGGER.exception("Failed to stop in-process daemon")
+        if thread is not None:
+            thread.join(timeout=5.0)
+        with self._lock:
+            self._daemon = None
+            self._thread = None
+
+    def notify_hotkey_press(self) -> None:
+        with self._lock:
+            daemon = self._daemon
+        hotkey = getattr(daemon, "hotkey", None)
+        notify_press = getattr(hotkey, "notify_press", None)
+        if callable(notify_press):
+            notify_press()
+
+    def notify_hotkey_release(self) -> None:
+        with self._lock:
+            daemon = self._daemon
+        hotkey = getattr(daemon, "hotkey", None)
+        notify_release = getattr(hotkey, "notify_release", None)
+        if callable(notify_release):
+            notify_release()
 
 
 def daemon_run_command(config_path: Path | str) -> list[str]:

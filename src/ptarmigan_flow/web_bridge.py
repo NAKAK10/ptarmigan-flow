@@ -110,6 +110,7 @@ class BridgeDependencies:
     daemon_is_running: Callable[[], bool] = lambda: False
     restart_app: Callable[[], bool] = app_relaunch.relaunch_app
     mark_language_selected: Callable[[], None] = onboarding_flow_module.mark_language_selected
+    mark_hotkey_confirmed: Callable[[], None] = onboarding_flow_module.mark_hotkey_confirmed
 
 
 @dataclass(slots=True)
@@ -127,6 +128,7 @@ class WebBridgeDispatcher:
         handlers = {
             "getState": self._get_state,
             "chooseLanguage": self._choose_language,
+            "confirmHotkey": self._confirm_hotkey,
             "requestPermission": self._request_permission,
             "openSystemSettings": self._open_system_settings,
             "openConfigFile": self._open_config_file,
@@ -189,6 +191,18 @@ class WebBridgeDispatcher:
             "onboarding_step": self.onboarding_flow.current_step,
             "strings": onboarding_strings.strings_for(code),
         }
+
+    def _confirm_hotkey(self, payload: dict[str, Any]) -> dict[str, Any]:
+        hotkey = str(payload.get("hotkey", "")).strip()
+        if hotkey not in SUPPORTED_HOTKEYS:
+            return {"saved": False, "errors": ["hotkey"]}
+
+        config = self._load_config()
+        config.hotkey.key = hotkey
+        self._write_config(config)
+        self.onboarding_flow.confirm_hotkey(hotkey)
+        self.deps.mark_hotkey_confirmed()
+        return {"hotkey": hotkey, "onboarding_step": self.onboarding_flow.current_step}
 
     def _request_permission(self, payload: dict[str, Any]) -> dict[str, str]:
         kind = _permission_kind(payload)

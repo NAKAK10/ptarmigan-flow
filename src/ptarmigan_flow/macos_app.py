@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.resources
 import json
+import logging
 import multiprocessing
 import subprocess
 import sys
@@ -14,14 +15,14 @@ from typing import Any
 from ptarmigan_flow import app_relaunch, login_item, onboarding_strings
 from ptarmigan_flow import onboarding_flow as onboarding_flow_module
 from ptarmigan_flow.app_daemon_controller import (
-    DaemonController,
-    daemon_run_command,
+    InProcessDaemonController,
 )
 from ptarmigan_flow.app_icon import APP_ICON_FILE, APP_ICON_RESOURCE_PACKAGE
 from ptarmigan_flow.config import (
     default_config_path,
     ensure_config_exists,
 )
+from ptarmigan_flow.hotkey_monitor import macos_keycode_for_hotkey
 from ptarmigan_flow.onboarding_flow import OnboardingFlow
 from ptarmigan_flow.permissions import (
     PermissionReport,
@@ -39,6 +40,16 @@ from ptarmigan_flow.transcription_corrections import resolve_dictionary_path
 from ptarmigan_flow.web_bridge import BridgeDependencies, WebBridgeDispatcher
 
 APP_NAME = "PtarmiganFlow"
+_HOTKEY_KEYCODE_TO_MODIFIER_FLAG = {
+    54: 1 << 20,
+    55: 1 << 20,
+    60: 1 << 17,
+    56: 1 << 17,
+    61: 1 << 19,
+    58: 1 << 19,
+    62: 1 << 18,
+    59: 1 << 18,
+}
 
 
 def _set_application_icon(app: object, ns_image_cls: object, ns_data_cls: object) -> None:
@@ -108,12 +119,19 @@ def _combine_permission_reports(
 
 
 def _run_appkit_app() -> int:
+    from ptarmigan_flow.logging_setup import configure_app_file_logging
+
+    log_path = configure_app_file_logging("DEBUG")
+    logging.getLogger(__name__).info("PtarmiganFlow GUI app starting; logging to %s", log_path)
+
     import objc
     from AppKit import (
         NSApplication,
         NSApplicationActivationPolicyAccessory,
         NSControlStateValueOff,
         NSControlStateValueOn,
+        NSEvent,
+        NSEventMaskFlagsChanged,
         NSImage,
         NSMenu,
         NSMenuItem,
@@ -156,9 +174,9 @@ def _run_appkit_app() -> int:
             if self is None:
                 return None
             self.onboarding_flow = OnboardingFlow()
-            self.daemon_controller = DaemonController(
-                lambda: daemon_run_command(default_config_path())
-            )
+            self.daemon_controller = InProcessDaemonController(default_config_path())
+            self._hotkey_global_monitor = None
+            self._hotkey_local_monitor = None
             self.permission_timer = None
             self._permission_check_generation = 0
             self._permission_check_in_progress = False
@@ -187,6 +205,7 @@ def _run_appkit_app() -> int:
                     login_unregister=login_item.unregister,
                     restart_app=self._restart_app,
                     mark_language_selected=onboarding_flow_module.mark_language_selected,
+                    mark_hotkey_confirmed=onboarding_flow_module.mark_hotkey_confirmed,
                 )
             )
             return self
@@ -196,6 +215,7 @@ def _run_appkit_app() -> int:
             self.onboarding_flow.start(
                 report=check_all_permissions(),
                 language_already_selected=onboarding_flow_module.language_was_selected(),
+                hotkey_already_confirmed=onboarding_flow_module.hotkey_was_confirmed(),
             )
             self.bridge.set_onboarding_flow(self.onboarding_flow)
             self.web_ui = WebUIController.alloc().initWithBridge_title_(self.bridge, APP_NAME)
@@ -206,6 +226,7 @@ def _run_appkit_app() -> int:
         def applicationWillTerminate_(self, _notification):  # noqa: N802
             self._stop_permission_timer()
             self._terminate_model_download_process()
+            self._remove_hotkey_event_monitor()
             self.daemon_controller.stop()
 
         def applicationDidBecomeActive_(self, _notification):  # noqa: N802
@@ -253,16 +274,6 @@ def _run_appkit_app() -> int:
             )
             self.dictation_status_menu_item.setEnabled_(False)
             self.status_menu.addItem_(self.dictation_status_menu_item)
-            self.start_menu_item = self._menu_item(
-                strings["start_dictation_button"],
-                "startDictation:",
-            )
-            self.status_menu.addItem_(self.start_menu_item)
-            self.stop_menu_item = self._menu_item(
-                strings["stop_dictation_button"],
-                "stopDictation:",
-            )
-            self.status_menu.addItem_(self.stop_menu_item)
             self.status_menu.addItem_(NSMenuItem.separatorItem())
             self.settings_menu_item = self._menu_item(strings["settings_menu"], "showSettings:")
             self.status_menu.addItem_(self.settings_menu_item)
@@ -293,14 +304,10 @@ def _run_appkit_app() -> int:
                 if is_running
                 else strings["dictation_stopped_menu"]
             )
-            self.start_menu_item.setTitle_(strings["start_dictation_button"])
-            self.stop_menu_item.setTitle_(strings["stop_dictation_button"])
             self.settings_menu_item.setTitle_(strings["settings_menu"])
             self.dictionary_menu_item.setTitle_(strings["edit_dictionary_menu"])
             self.login_menu_item.setTitle_(strings["login_at_startup_menu"])
             self.quit_menu_item.setTitle_(strings["quit_menu"])
-            self.start_menu_item.setEnabled_(not is_running)
-            self.stop_menu_item.setEnabled_(is_running)
             login_state = (
                 NSControlStateValueOn if login_item.is_enabled() else NSControlStateValueOff
             )
@@ -360,6 +367,67 @@ def _run_appkit_app() -> int:
         def _push_daemon_error(self, message: str) -> None:
             self._daemon_error_message = message
             self._push_daemon_state()
+
+        @objc.python_method
+        def _install_hotkey_event_monitor(self) -> None:
+            if (
+                self._hotkey_global_monitor is not None
+                or self._hotkey_local_monitor is not None
+            ):
+                return
+            try:
+                key_name = str(self.bridge._load_config().hotkey.key)
+            except Exception:
+                key_name = "right_cmd"
+            keycode = macos_keycode_for_hotkey(key_name)
+            if keycode is None:
+                logging.getLogger(__name__).warning("No keycode mapping for hotkey %s", key_name)
+                return
+            flag_bit = _HOTKEY_KEYCODE_TO_MODIFIER_FLAG.get(keycode)
+
+            def _handle(event):
+                try:
+                    if int(event.keyCode()) != keycode:
+                        return
+                    if flag_bit is not None:
+                        pressed = bool(int(event.modifierFlags()) & flag_bit)
+                    else:
+                        pressed = False
+                    if pressed:
+                        self.daemon_controller.notify_hotkey_press()
+                    else:
+                        self.daemon_controller.notify_hotkey_release()
+                except Exception:
+                    logging.getLogger(__name__).exception("Hotkey NSEvent handler failed")
+
+            def _handle_local(event):
+                _handle(event)
+                return event
+
+            self._hotkey_global_monitor = NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(
+                NSEventMaskFlagsChanged,
+                _handle,
+            )
+            self._hotkey_local_monitor = NSEvent.addLocalMonitorForEventsMatchingMask_handler_(
+                NSEventMaskFlagsChanged,
+                _handle_local,
+            )
+            logging.getLogger(__name__).info(
+                "Installed NSEvent hotkey monitor for %s (keycode=%s)",
+                key_name,
+                keycode,
+            )
+
+        @objc.python_method
+        def _remove_hotkey_event_monitor(self) -> None:
+            for monitor in (self._hotkey_global_monitor, self._hotkey_local_monitor):
+                if monitor is not None:
+                    try:
+                        NSEvent.removeMonitor_(monitor)
+                    except Exception:
+                        logging.getLogger(__name__).exception("Failed to remove hotkey monitor")
+            self._hotkey_global_monitor = None
+            self._hotkey_local_monitor = None
 
         @objc.python_method
         def _dictionary_path(self) -> Path:
@@ -661,12 +729,15 @@ def _run_appkit_app() -> int:
                 except Exception:
                     self._push_daemon_state()
                     return None
+            if self.daemon_controller.is_running:
+                self._install_hotkey_event_monitor()
             self._push_daemon_state()
             return None
 
         @objc.python_method
         def _stop_daemon(self) -> None:
             self.daemon_controller.stop()
+            self._remove_hotkey_event_monitor()
             self._push_daemon_state()
 
         @objc.python_method
@@ -706,12 +777,6 @@ def _run_appkit_app() -> int:
 
         def pollPermissions_(self, _timer):  # noqa: N802
             self._start_permission_check()
-
-        def startDictation_(self, _sender):  # noqa: N802
-            self._start_daemon_if_ready()
-
-        def stopDictation_(self, _sender):  # noqa: N802
-            self._stop_daemon()
 
         def showSettings_(self, _sender):  # noqa: N802
             self._set_route("settings")
