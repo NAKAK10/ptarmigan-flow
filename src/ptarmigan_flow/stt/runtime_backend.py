@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib
 import multiprocessing
 import os
+import signal
 import threading
 import time
 import traceback
@@ -336,42 +337,61 @@ class IsolatedSpeechToTextBackend(SpeechToTextBackend):
             )
 
         deadline = None if timeout_seconds is None else started_at + timeout_seconds
-        while True:
-            try:
-                message = self._poll_message_locked(deadline=deadline)
-            except BrokenPipeError:
-                return self._handle_recoverable_locked(
-                    failure_kind="crash",
-                    method=method,
-                    request_id=request_id,
-                    started_at=started_at,
-                    timeout_seconds=timeout_seconds,
-                    audio_seconds=audio_seconds,
-                    on_recoverable=on_recoverable,
-                )
-            if message is None:
-                return self._handle_recoverable_locked(
-                    failure_kind="timeout",
-                    method=method,
-                    request_id=request_id,
-                    started_at=started_at,
-                    timeout_seconds=timeout_seconds,
-                    audio_seconds=audio_seconds,
-                    on_recoverable=on_recoverable,
-                )
-            if message.get("type") == "started":
+        watchdog: threading.Timer | None = None
+        if timeout_seconds is not None and self._process is not None:
+            child_pid = self._process.pid
+
+            def _emergency_kill(pid: int = child_pid) -> None:
+                # recv() can block indefinitely after poll() returns True when the
+                # child sends partial data. Kill the child to unblock recv().
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+
+            watchdog = threading.Timer(timeout_seconds + 2.0, _emergency_kill)
+            watchdog.daemon = True
+            watchdog.start()
+        try:
+            while True:
+                try:
+                    message = self._poll_message_locked(deadline=deadline)
+                except BrokenPipeError:
+                    return self._handle_recoverable_locked(
+                        failure_kind="crash",
+                        method=method,
+                        request_id=request_id,
+                        started_at=started_at,
+                        timeout_seconds=timeout_seconds,
+                        audio_seconds=audio_seconds,
+                        on_recoverable=on_recoverable,
+                    )
+                if message is None:
+                    return self._handle_recoverable_locked(
+                        failure_kind="timeout",
+                        method=method,
+                        request_id=request_id,
+                        started_at=started_at,
+                        timeout_seconds=timeout_seconds,
+                        audio_seconds=audio_seconds,
+                        on_recoverable=on_recoverable,
+                    )
+                if message.get("type") == "started":
+                    self._update_from_child_metadata(message)
+                    continue
+                if int(message.get("request_id", -1)) != request_id:
+                    continue
+                if not bool(message.get("ok", False)):
+                    error_message = str(message.get("error_message", "Unknown backend error"))
+                    remote_traceback = str(message.get("remote_traceback", "")).strip()
+                    if remote_traceback:
+                        error_message = f"{error_message}\n{remote_traceback}"
+                    raise RemoteSpeechToTextError(error_message)
                 self._update_from_child_metadata(message)
-                continue
-            if int(message.get("request_id", -1)) != request_id:
-                continue
-            if not bool(message.get("ok", False)):
-                error_message = str(message.get("error_message", "Unknown backend error"))
-                remote_traceback = str(message.get("remote_traceback", "")).strip()
-                if remote_traceback:
-                    error_message = f"{error_message}\n{remote_traceback}"
-                raise RemoteSpeechToTextError(error_message)
-            self._update_from_child_metadata(message)
-            return self._decode_result(method, message.get("result"))
+                return self._decode_result(method, message.get("result"))
+        finally:
+            if watchdog is not None:
+                watchdog.cancel()
 
     def _ensure_child_locked(self) -> None:
         if self._closed:
