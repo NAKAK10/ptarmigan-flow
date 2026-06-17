@@ -1,6 +1,8 @@
 name: Build notarized macOS app
 
 on:
+  release:
+    types: [published]
   workflow_dispatch:
     inputs:
       tag:
@@ -66,7 +68,7 @@ jobs:
         run: |
           set -euo pipefail
           git fetch --tags --force
-          git checkout "refs/tags/${{ inputs.tag }}"
+          git checkout "refs/tags/${{ github.event.release.tag_name || inputs.tag }}"
 
       - name: Setup uv
         uses: astral-sh/setup-uv@v5
@@ -246,7 +248,7 @@ jobs:
 
       - name: Build PyInstaller app
         env:
-          TAG_NAME: ${{ inputs.tag }}
+          TAG_NAME: ${{ github.event.release.tag_name || inputs.tag }}
           PYINSTALLER_TARGET_ARCH: ${{ matrix.arch }}
         run: |
           set -euo pipefail
@@ -340,6 +342,7 @@ jobs:
           fi
 
       - name: Create draft release
+        if: github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.tag }}
@@ -350,3 +353,17 @@ jobs:
           files: |
             artifacts/PtarmiganFlow-macos-arm64/PtarmiganFlow-macos-arm64.zip
             artifacts/PtarmiganFlow-macos-x86_64/PtarmiganFlow-macos-x86_64.zip
+
+      - name: Upload assets to existing release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          uploads=()
+          arm64="artifacts/PtarmiganFlow-macos-arm64/PtarmiganFlow-macos-arm64.zip"
+          x86_64="artifacts/PtarmiganFlow-macos-x86_64/PtarmiganFlow-macos-x86_64.zip"
+          [ -f "$arm64" ] && uploads+=("$arm64")
+          [ -f "$x86_64" ] && uploads+=("$x86_64")
+          gh release upload "$TAG" "${uploads[@]}" --clobber --repo "${{ github.repository }}"
