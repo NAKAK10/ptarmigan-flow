@@ -40,6 +40,8 @@ _HOTKEY_COOLDOWN_SECONDS = 0.25
 _RECORDING_STALE_GRACE_SECONDS = 0.5
 _RECORDING_STARTUP_GRACE_SECONDS = 0.35
 _LIVE_INPUT_STOP_LOCK_TIMEOUT_SECONDS = 0.35
+_PENDING_FINAL_AUDIO_TIMEOUT_SECONDS = 25.0
+_WORKER_LIVE_INPUT_LOCK_TIMEOUT_SECONDS = 2.0
 _LIVE_INPUT_MIN_NEW_AUDIO_SECONDS = 0.1
 _KEYDOWN_WARMUP_COLD_THRESHOLD_SECONDS = 300.0
 _MAIN_LOOP_IDLE_SLEEP_SECONDS = 0.2
@@ -80,6 +82,7 @@ class PtarmiganFlowDaemon:
         self._next_stop_id = 0
         self._pending_final_audio: _QueuedAudio | None = None
         self._pending_final_audio_reason: str | None = None
+        self._pending_final_audio_created_at_monotonic: float | None = None
         self._live_emitted_text = ""
         self._live_last_snapshot_samples = 0
         self._live_stop_requested = False
@@ -394,6 +397,35 @@ class PtarmiganFlowDaemon:
         self._live_last_snapshot_samples = 0
         self._live_stop_requested = False
 
+    def _defer_final_audio(self, item: _QueuedAudio, *, reason: str) -> None:
+        with self._state_lock:
+            self._pending_final_audio = item
+            self._pending_final_audio_reason = reason
+            self._pending_final_audio_created_at_monotonic = time.monotonic()
+
+    def _clear_pending_final_audio_locked(self) -> None:
+        self._pending_final_audio = None
+        self._pending_final_audio_reason = None
+        self._pending_final_audio_created_at_monotonic = None
+
+    def _drop_pending_final_audio(self, *, age_seconds: float, reason: str | None) -> None:
+        with self._state_lock:
+            if self._pending_final_audio is None:
+                return
+            self._clear_pending_final_audio_locked()
+            transcription_in_progress = self._transcription_in_progress
+        LOGGER.warning(
+            "Dropping pending final transcription after %.2fs waiting for live input lock (%s)",
+            age_seconds,
+            reason or "unknown",
+        )
+        if (
+            self._audio_queue.empty()
+            and not self.recorder.is_recording
+            and not transcription_in_progress
+        ):
+            self._hide_activity_indicator()
+
     def _stop_recording_and_queue_audio(self, *, reason: str) -> None:
         if self._stop_event.is_set() or not self.recorder.is_recording:
             return
@@ -418,8 +450,7 @@ class PtarmiganFlowDaemon:
                     "Live input lock was busy during stop; stopping without live lock (%s)",
                     reason,
                 )
-                if self._live_input_enabled():
-                    defer_final_transcription = True
+            defer_final_transcription = True
         try:
             audio = self.recorder.stop()
         except Exception:
@@ -458,9 +489,7 @@ class PtarmiganFlowDaemon:
             )
         item = _QueuedAudio(audio=audio, emitted_prefix=emitted_prefix)
         if defer_final_transcription:
-            with self._state_lock:
-                self._pending_final_audio = item
-                self._pending_final_audio_reason = reason
+            self._defer_final_audio(item, reason=reason)
             self._show_processing_indicator()
             LOGGER.info(
                 "Deferred final transcription until live input lock is released (%s)",
@@ -472,11 +501,18 @@ class PtarmiganFlowDaemon:
         LOGGER.info("Queued audio for transcription (%s)", reason)
 
     def _flush_pending_final_audio_if_ready(self) -> None:
+        now = time.monotonic()
         with self._state_lock:
             item = self._pending_final_audio
             reason = self._pending_final_audio_reason
+            created_at = self._pending_final_audio_created_at_monotonic
         if item is None or self.recorder.is_recording or self._stop_event.is_set():
             return
+        if created_at is not None:
+            age_seconds = max(0.0, now - created_at)
+            if age_seconds >= _PENDING_FINAL_AUDIO_TIMEOUT_SECONDS:
+                self._drop_pending_final_audio(age_seconds=age_seconds, reason=reason)
+                return
         if not self._live_input_lock.acquire(blocking=False):
             return
         try:
@@ -485,8 +521,7 @@ class PtarmiganFlowDaemon:
                 reason = self._pending_final_audio_reason
                 if item is None:
                     return
-                self._pending_final_audio = None
-                self._pending_final_audio_reason = None
+                self._clear_pending_final_audio_locked()
             queue_reason = reason or "deferred-final-transcription"
             LOGGER.info(
                 "Live input lock released; queueing deferred final transcription (%s)",
@@ -562,10 +597,19 @@ class PtarmiganFlowDaemon:
             with self._state_lock:
                 self._transcription_in_progress = True
             self._show_processing_indicator()
+            lock_acquired = self._live_input_lock.acquire(
+                timeout=_WORKER_LIVE_INPUT_LOCK_TIMEOUT_SECONDS
+            )
             try:
-                # Serialize transcriber access with live input tick
-                # to avoid concurrent GPU execution.
-                with self._live_input_lock:
+                if not lock_acquired:
+                    self._defer_final_audio(item, reason="worker-live-lock-timeout")
+                    LOGGER.warning(
+                        "Live input lock was busy in transcription worker; "
+                        "deferring final transcription"
+                    )
+                else:
+                    # Serialize transcriber access with live input tick
+                    # to avoid concurrent GPU execution.
                     audio = item.audio
                     if self._enable_streaming:
                         # Live input already emitted partial text while key was held.
@@ -613,10 +657,17 @@ class PtarmiganFlowDaemon:
             except Exception:
                 LOGGER.exception("Transcription pipeline failed")
             finally:
+                if lock_acquired:
+                    self._live_input_lock.release()
                 with self._state_lock:
                     self._transcription_in_progress = False
+                    pending_final_audio = self._pending_final_audio
                 self._audio_queue.task_done()
-                if self._audio_queue.empty() and not self.recorder.is_recording:
+                if (
+                    self._audio_queue.empty()
+                    and not self.recorder.is_recording
+                    and pending_final_audio is None
+                ):
                     self._hide_activity_indicator()
 
     @staticmethod
@@ -822,8 +873,7 @@ class PtarmiganFlowDaemon:
             with self._state_lock:
                 self._cancel_pending_stop_locked()
                 self._reset_live_state_locked()
-                self._pending_final_audio = None
-                self._pending_final_audio_reason = None
+                self._clear_pending_final_audio_locked()
                 self._hotkey_not_pressed_since_monotonic = None
         try:
             self.hotkey.stop()

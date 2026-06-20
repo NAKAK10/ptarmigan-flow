@@ -854,6 +854,31 @@ def test_stop_recording_defers_final_transcription_when_live_lock_is_busy(monkey
     assert daemon._pending_final_audio.emitted_prefix == "latest-prefix"
 
 
+def test_stop_recording_defers_final_transcription_when_non_realtime_lock_is_busy(
+    monkeypatch,
+) -> None:
+    config = AppConfig()
+    config.audio.release_tail_seconds = 0.0
+    daemon = _build_daemon(monkeypatch, config=config)
+    daemon.recorder.is_recording = True
+
+    monkeypatch.setattr(daemon_module, "_LIVE_INPUT_STOP_LOCK_TIMEOUT_SECONDS", 0.01)
+    daemon._live_input_lock.acquire()
+    try:
+        daemon._stop_recording_and_queue_audio(reason="hotkey-release-reconciled")
+    finally:
+        if daemon._live_input_lock.locked():
+            daemon._live_input_lock.release()
+
+    assert daemon.recorder.stop_calls == 1
+    assert daemon._audio_queue.qsize() == 0
+    assert daemon.activity_indicator.show_processing_calls == 1
+    assert daemon._pending_final_audio is not None
+    assert daemon._pending_final_audio.emitted_prefix == ""
+    assert daemon._pending_final_audio_reason == "hotkey-release-reconciled"
+    assert daemon._pending_final_audio_created_at_monotonic is not None
+
+
 def test_flush_pending_final_audio_queues_after_live_lock_releases(monkeypatch) -> None:
     config = AppConfig()
     config.audio.release_tail_seconds = 0.0
@@ -874,6 +899,35 @@ def test_flush_pending_final_audio_queues_after_live_lock_releases(monkeypatch) 
     assert item.emitted_prefix == "latest-prefix"
     assert daemon._pending_final_audio is None
     assert daemon._pending_final_audio_reason is None
+
+
+def test_flush_pending_final_audio_drops_stale_audio_and_allows_next_recording(
+    monkeypatch,
+) -> None:
+    daemon = _build_daemon(monkeypatch)
+    with daemon._state_lock:
+        daemon._pending_final_audio = SimpleNamespace(
+            audio=np.array([[0.25], [0.5]], dtype=np.float32),
+            emitted_prefix="",
+        )
+        daemon._pending_final_audio_reason = "hotkey-release-reconciled"
+        daemon._pending_final_audio_created_at_monotonic = 1.0
+
+    monkeypatch.setattr(daemon_module, "_PENDING_FINAL_AUDIO_TIMEOUT_SECONDS", 0.1, raising=False)
+    monkeypatch.setattr(daemon_module.time, "monotonic", lambda: 1.2)
+
+    daemon._flush_pending_final_audio_if_ready()
+
+    assert daemon._audio_queue.qsize() == 0
+    assert daemon._pending_final_audio is None
+    assert daemon._pending_final_audio_reason is None
+    assert daemon._pending_final_audio_created_at_monotonic is None
+    assert daemon.activity_indicator.hide_calls == 1
+
+    daemon._on_hotkey_down()
+
+    assert daemon.recorder.start_calls == 1
+    assert daemon.activity_indicator.show_recording_calls == 1
 
 
 def test_hotkey_down_ignores_press_while_final_transcription_is_pending(monkeypatch) -> None:
@@ -917,6 +971,40 @@ def test_stop_recording_logs_info_when_keydown_warmup_holds_lock(monkeypatch, ca
         "Keydown warmup still held transcriber lock during stop" in entry.message
         for entry in caplog.records
     )
+
+
+def test_worker_defers_audio_instead_of_blocking_forever_when_live_lock_is_busy(
+    monkeypatch,
+) -> None:
+    daemon = _build_daemon(monkeypatch)
+    daemon._audio_queue.put(
+        SimpleNamespace(
+            audio=np.array([[0.25], [0.5]], dtype=np.float32),
+            emitted_prefix="",
+        )
+    )
+
+    monkeypatch.setattr(
+        daemon_module,
+        "_WORKER_LIVE_INPUT_LOCK_TIMEOUT_SECONDS",
+        0.01,
+        raising=False,
+    )
+    daemon._live_input_lock.acquire()
+    worker = threading.Thread(target=daemon._worker_loop, daemon=True)
+    try:
+        worker.start()
+        time.sleep(0.05)
+
+        assert daemon._audio_queue.unfinished_tasks == 0
+        assert daemon._pending_final_audio is not None
+        assert daemon._pending_final_audio_reason == "worker-live-lock-timeout"
+        assert daemon._transcription_in_progress is False
+    finally:
+        if daemon._live_input_lock.locked():
+            daemon._live_input_lock.release()
+        daemon._stop_event.set()
+        worker.join(timeout=1.0)
 
 
 def test_stop_recording_force_closes_recorder_when_stop_fails(monkeypatch) -> None:
