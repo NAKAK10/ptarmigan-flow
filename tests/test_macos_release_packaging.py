@@ -231,13 +231,17 @@ def test_release_workflow_builds_notarizes_and_uploads_draft_release() -> None:
     assert "stapler staple" in workflow
     assert "PtarmiganFlow-macos-arm64.zip" in workflow
     assert "PtarmiganFlow-macos-x86_64.zip" in workflow
-    assert "actions/download-artifact@v4" in workflow
+    assert "actions/checkout@v7" in workflow
+    assert "astral-sh/setup-uv@v8.2.0" in workflow
+    assert "actions/upload-artifact@v7" in workflow
+    assert "actions/download-artifact@v8" in workflow
     assert "if: ${{ !cancelled() }}" in workflow
     assert "Mandatory arm64 release artifact is missing" in workflow
     assert "::warning::Optional x86_64 release artifact is missing" in workflow
     assert "fail_on_unmatched_files" not in workflow
     assert "Validate Moonshine native libraries" in workflow
-    assert "softprops/action-gh-release@v2" in workflow
+    assert "softprops/action-gh-release@v3" in workflow
+    assert "FORCE_JAVASCRIPT_ACTIONS_TO_NODE24" not in workflow
     assert "draft: true" in workflow
     assert "APPLE_CERTIFICATE_BASE64" in workflow
     assert "APPLE_CERTIFICATE_PASSWORD" in workflow

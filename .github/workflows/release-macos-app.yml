@@ -13,9 +13,6 @@ on:
 permissions:
   contents: write
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
 jobs:
   build:
     name: Build ${{ matrix.arch }} app
@@ -60,7 +57,7 @@ jobs:
           fi
 
       - name: Checkout selected tag
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -71,7 +68,7 @@ jobs:
           git checkout "refs/tags/${{ github.event.release.tag_name || inputs.tag }}"
 
       - name: Setup uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v8.2.0
 
       - name: Read Moonshine version
         id: moonshine-version
@@ -84,7 +81,7 @@ jobs:
 
       - name: Checkout Moonshine source
         if: ${{ matrix.moonshine_source == 'source' }}
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: moonshine-ai/moonshine
           ref: v${{ steps.moonshine-version.outputs.version }}
@@ -309,7 +306,7 @@ jobs:
             "dist/PtarmiganFlow-macos-${{ matrix.arch }}.zip"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: PtarmiganFlow-macos-${{ matrix.arch }}
           path: dist/PtarmiganFlow-macos-${{ matrix.arch }}.zip
@@ -322,7 +319,7 @@ jobs:
     if: ${{ !cancelled() }}
     steps:
       - name: Download signed app artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
 
@@ -343,7 +340,7 @@ jobs:
 
       - name: Create draft release
         if: github.event_name == 'workflow_dispatch'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ inputs.tag }}
           name: ${{ inputs.tag }}
