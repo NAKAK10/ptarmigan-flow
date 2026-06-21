@@ -190,6 +190,19 @@ class _FakeHotkeyMonitor:
     def is_pressed(self) -> bool:
         return self.pressed
 
+    def notify_press(self) -> None:
+        if self.pressed:
+            return
+        self.pressed = True
+        self.on_press()
+
+    def notify_release(self) -> bool:
+        if not self.pressed:
+            return False
+        self.pressed = False
+        self.on_release()
+        return True
+
     def physical_pressed_state(self) -> bool | None:
         return self.physical_state
 
@@ -720,6 +733,34 @@ def test_recover_missed_hotkey_release_stops_recording(monkeypatch) -> None:
     assert daemon._audio_queue.qsize() == 1
 
 
+def test_recover_missed_hotkey_release_clears_hotkey_state_for_next_press(
+    monkeypatch,
+) -> None:
+    config = AppConfig()
+    config.audio.release_tail_seconds = 0.0
+    daemon = _build_daemon(monkeypatch, config=config)
+    clock = SimpleNamespace(now=10.0)
+    monkeypatch.setattr(daemon_module.time, "monotonic", lambda: clock.now)
+
+    daemon.hotkey.notify_press()
+    assert daemon.recorder.start_calls == 1
+    assert daemon.hotkey.is_pressed() is True
+
+    daemon.hotkey.pressed = False
+    clock.now = 10.1
+    daemon._recover_missed_hotkey_release_if_needed()
+    clock.now = 10.5
+    daemon._recover_missed_hotkey_release_if_needed()
+
+    assert daemon.hotkey.is_pressed() is False
+    assert daemon.recorder.stop_calls == 1
+
+    clock.now = 10.8
+    daemon.hotkey.notify_press()
+
+    assert daemon.recorder.start_calls == 2
+
+
 def test_recover_missed_hotkey_release_prefers_physical_pressed_state(monkeypatch) -> None:
     daemon = _build_daemon(monkeypatch)
     daemon.recorder.is_recording = True
@@ -736,22 +777,82 @@ def test_recover_missed_hotkey_release_prefers_physical_pressed_state(monkeypatc
     assert daemon._audio_queue.qsize() == 0
 
 
-def test_recover_missed_hotkey_release_does_not_override_listener_pressed_with_physical_false(
+def test_recover_missed_hotkey_release_preserves_pending_delayed_stop_after_notify_release(
+    monkeypatch,
+) -> None:
+    _reset_fake_timer()
+    monkeypatch.setattr(daemon_module.threading, "Timer", _FakeTimer)
+    daemon = _build_daemon(monkeypatch)
+    daemon.recorder.is_recording = True
+    daemon.hotkey.pressed = False
+    clock = SimpleNamespace(now=1.0)
+    monkeypatch.setattr(daemon_module.time, "monotonic", lambda: clock.now)
+
+    def notify_release_already_consumed() -> bool:
+        daemon._on_hotkey_up()
+        return False
+
+    daemon.hotkey.notify_release = notify_release_already_consumed
+
+    daemon._recover_missed_hotkey_release_if_needed()
+    clock.now = 1.4
+    daemon._recover_missed_hotkey_release_if_needed()
+
+    assert len(_FakeTimer.instances) == 1
+    timer = _FakeTimer.instances[0]
+    assert timer.started is True
+    assert daemon.recorder.stop_calls == 0
+    assert daemon._audio_queue.qsize() == 0
+
+    timer.fire()
+
+    assert daemon.recorder.stop_calls == 1
+    assert daemon._audio_queue.qsize() == 1
+
+
+def test_recover_missed_hotkey_release_transient_physical_false_keeps_recording(
     monkeypatch,
 ) -> None:
     daemon = _build_daemon(monkeypatch)
     daemon.recorder.is_recording = True
     daemon.hotkey.pressed = True
     daemon.hotkey.physical_state = False
-
-    monotonic_values = iter([1.0, 1.4])
-    monkeypatch.setattr(daemon_module.time, "monotonic", lambda: next(monotonic_values))
+    clock = SimpleNamespace(now=1.0)
+    monkeypatch.setattr(daemon_module.time, "monotonic", lambda: clock.now)
 
     daemon._recover_missed_hotkey_release_if_needed()
+
+    daemon.hotkey.physical_state = True
+    clock.now = 1.4
     daemon._recover_missed_hotkey_release_if_needed()
 
+    assert daemon.hotkey.is_pressed() is True
     assert daemon.recorder.stop_calls == 0
     assert daemon._audio_queue.qsize() == 0
+    assert daemon._hotkey_not_pressed_since_monotonic is None
+
+
+def test_recover_missed_hotkey_release_sustained_physical_false_keeps_recording_after_debounce(
+    monkeypatch,
+) -> None:
+    config = AppConfig()
+    config.audio.release_tail_seconds = 0.0
+    daemon = _build_daemon(monkeypatch, config=config)
+    daemon.recorder.is_recording = True
+    daemon.hotkey.pressed = True
+    daemon.hotkey.physical_state = False
+
+    clock = SimpleNamespace(now=1.0)
+    monkeypatch.setattr(daemon_module.time, "monotonic", lambda: clock.now)
+
+    daemon._recover_missed_hotkey_release_if_needed()
+    clock.now = 1.4
+    daemon._recover_missed_hotkey_release_if_needed()
+
+    assert daemon.hotkey.is_pressed() is True
+    assert daemon.recorder.stop_calls == 0
+    assert daemon._audio_queue.qsize() == 0
+    assert daemon._hotkey_not_pressed_since_monotonic is None
 
 
 def test_append_only_delta_tolerates_non_monotonic_tail() -> None:

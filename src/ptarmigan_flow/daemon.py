@@ -738,7 +738,21 @@ class PtarmiganFlowDaemon:
             "Hotkey release callback appears missed; reconciling after %.2fs",
             stale_for,
         )
-        self._stop_recording_and_queue_audio(reason="hotkey-release-reconciled")
+        release_notified = False
+        notify_release = getattr(self.hotkey, "notify_release", None)
+        if callable(notify_release):
+            try:
+                release_notified = bool(notify_release())
+            except Exception:
+                LOGGER.debug(
+                    "Failed to notify hotkey release during recovery",
+                    exc_info=True,
+                )
+        if not release_notified:
+            with self._state_lock:
+                pending_stop_scheduled = self._pending_stop_id is not None
+            if not pending_stop_scheduled and self.recorder.is_recording:
+                self._stop_recording_and_queue_audio(reason="hotkey-release-reconciled")
         with self._state_lock:
             self._hotkey_not_pressed_since_monotonic = None
 

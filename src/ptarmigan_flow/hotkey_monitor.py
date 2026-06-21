@@ -123,30 +123,9 @@ class HotkeyMonitor:
             LOGGER.info("Hotkey press detected: %s", self.key_name)
             self._on_press_callback()
 
-    def _register_release(self) -> None:
-        fired = False
-        with self._lock:
-            if self._pressed:
-                self._pressed = False
-                self._cancel_release_timer()
-                fired = True
-        if fired:
-            LOGGER.info("Hotkey release detected: %s", self.key_name)
-            self._on_release_callback()
-
-    def notify_press(self) -> None:
-        """Feed an externally-detected press (e.g. from an NSEvent monitor)."""
-        self._register_press()
-
-    def notify_release(self) -> None:
-        """Feed an externally-detected release (e.g. from an NSEvent monitor)."""
-        self._register_release()
-
-    def _on_press(self, key: keyboard.Key | keyboard.KeyCode | None) -> None:
+    def _register_press_recovering_missed_release(self) -> None:
         recovered_stuck_release = False
         with self._lock:
-            if not self._matches(key):
-                return
             if self._pressed:
                 # Recover from a missed release event: synthesize one before
                 # accepting the new press so daemon state can recover quickly.
@@ -158,6 +137,33 @@ class HotkeyMonitor:
         if recovered_stuck_release:
             LOGGER.warning("Recovered hotkey state after missed release event: %s", self.key_name)
             self._on_release_callback()
+
+    def _register_release(self) -> bool:
+        fired = False
+        with self._lock:
+            if self._pressed:
+                self._pressed = False
+                self._cancel_release_timer()
+                fired = True
+        if fired:
+            LOGGER.info("Hotkey release detected: %s", self.key_name)
+            self._on_release_callback()
+        return fired
+
+    def notify_press(self) -> None:
+        """Feed an externally-detected press (e.g. from an NSEvent monitor)."""
+        self._register_press_recovering_missed_release()
+        LOGGER.info("Hotkey press detected: %s", self.key_name)
+        self._on_press_callback()
+
+    def notify_release(self) -> bool:
+        """Feed an externally-detected release (e.g. from an NSEvent monitor)."""
+        return self._register_release()
+
+    def _on_press(self, key: keyboard.Key | keyboard.KeyCode | None) -> None:
+        if not self._matches(key):
+            return
+        self._register_press_recovering_missed_release()
         LOGGER.debug("Hotkey down: %s", self.key_name)
         self._on_press_callback()
 
@@ -185,13 +191,14 @@ class HotkeyMonitor:
 
     def start(self) -> None:
         """Start listening in background thread."""
-        if self._use_pynput_listener:
-            try:
-                self._listener.start()
-                self._listener_started = True
-            except Exception:
-                LOGGER.warning("pynput listener failed to start; relying on HID polling")
-        self._start_hid_polling()
+        if not self._use_pynput_listener:
+            return
+        try:
+            self._listener.start()
+            self._listener_started = True
+        except Exception:
+            LOGGER.warning("pynput listener failed to start; relying on HID polling")
+            self._start_hid_polling()
 
     def _start_hid_polling(self) -> None:
         if self._macos_keycode is None or self._hid_key_state_reader is None:
