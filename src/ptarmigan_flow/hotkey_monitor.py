@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import sys
 import threading
 import time
 from collections.abc import Callable
@@ -50,12 +49,14 @@ class HotkeyMonitor:
         on_release: Callable[[], None],
         *,
         max_hold_seconds: float | None = None,
+        use_pynput_listener: bool = True,
     ) -> None:
         self.key_name = key_name
         self._target_key = self._parse_key_name(key_name)
         self._on_press_callback = on_press
         self._on_release_callback = on_release
         self._max_hold_seconds = max_hold_seconds if (max_hold_seconds or 0) > 0 else None
+        self._use_pynput_listener = use_pynput_listener
         self._pressed = False
         self._lock = threading.Lock()
         self._release_timer: threading.Timer | None = None
@@ -184,7 +185,7 @@ class HotkeyMonitor:
 
     def start(self) -> None:
         """Start listening in background thread."""
-        if "AppKit" not in sys.modules:
+        if self._use_pynput_listener:
             try:
                 self._listener.start()
                 self._listener_started = True

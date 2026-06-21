@@ -64,6 +64,7 @@ class PtarmiganFlowDaemon:
         *,
         enable_streaming: bool = True,
         activity_indicator: ActivityIndicatorPort | None = None,
+        use_pynput_listener: bool = True,
     ) -> None:
         self.config = config
         self._enable_streaming = enable_streaming
@@ -119,6 +120,7 @@ class PtarmiganFlowDaemon:
             on_press=self._on_hotkey_down,
             on_release=self._on_hotkey_up,
             max_hold_seconds=float(config.audio.max_record_seconds) + 1.0,
+            use_pynput_listener=use_pynput_listener,
         )
 
         self._worker = threading.Thread(

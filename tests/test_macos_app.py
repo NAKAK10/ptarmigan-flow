@@ -31,6 +31,141 @@ def _webui_app_source() -> str:
     return _source("src/ptarmigan_flow/webui/app.js")
 
 
+def _capture_app_delegate(monkeypatch, daemon_controller_cls):
+    captured: dict[str, object] = {
+        "global_handlers": [],
+        "local_handlers": [],
+        "global_monitors": [],
+        "local_monitors": [],
+        "removed_monitors": [],
+        "timers": [],
+    }
+
+    class FakeNSObject:
+        @classmethod
+        def alloc(cls):
+            return cls.__new__(cls)
+
+        def init(self):
+            return self
+
+    class FakeApp:
+        def setApplicationIconImage_(self, _image) -> None:
+            pass
+
+        def setActivationPolicy_(self, _policy) -> None:
+            pass
+
+        def setDelegate_(self, delegate) -> None:
+            captured["delegate"] = delegate
+
+        def run(self) -> None:
+            pass
+
+    fake_app = FakeApp()
+
+    class FakeNSApplication:
+        @staticmethod
+        def sharedApplication():
+            return fake_app
+
+    class FakeNSImage:
+        @classmethod
+        def alloc(cls):
+            return cls()
+
+        def initWithData_(self, _data):
+            return self
+
+    class FakeNSData:
+        @staticmethod
+        def dataWithBytes_length_(data, _length):
+            return data
+
+    class FakeNSEvent:
+        @staticmethod
+        def addGlobalMonitorForEventsMatchingMask_handler_(_mask, handler):
+            captured["global_handlers"].append(handler)
+            monitor = object()
+            captured["global_monitors"].append(monitor)
+            return monitor
+
+        @staticmethod
+        def addLocalMonitorForEventsMatchingMask_handler_(_mask, handler):
+            captured["local_handlers"].append(handler)
+            monitor = object()
+            captured["local_monitors"].append(monitor)
+            return monitor
+
+        @staticmethod
+        def removeMonitor_(monitor) -> None:
+            captured["removed_monitors"].append(monitor)
+
+    class FakeTimer:
+        def __init__(self, interval, target, selector, user_info, repeats) -> None:
+            self.interval = interval
+            self.target = target
+            self.selector = selector
+            self.user_info = user_info
+            self.repeats = repeats
+            self.invalidated = False
+
+        def invalidate(self) -> None:
+            self.invalidated = True
+
+    class FakeNSTimer:
+        @staticmethod
+        def scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+            interval,
+            target,
+            selector,
+            user_info,
+            repeats,
+        ):
+            timer = FakeTimer(interval, target, selector, user_info, repeats)
+            captured["timers"].append(timer)
+            return timer
+
+    fake_objc = types.SimpleNamespace(
+        python_method=lambda method: method,
+        super=lambda cls, instance: super(cls, instance),
+    )
+    fake_appkit = types.SimpleNamespace(
+        NSApplication=FakeNSApplication,
+        NSApplicationActivationPolicyAccessory=0,
+        NSControlStateValueOff=0,
+        NSControlStateValueOn=1,
+        NSEvent=FakeNSEvent,
+        NSEventMaskFlagsChanged=1,
+        NSImage=FakeNSImage,
+        NSMenu=object,
+        NSMenuItem=object,
+        NSStatusBar=object,
+        NSVariableStatusItemLength=0,
+        NSWorkspace=object,
+    )
+    fake_foundation = types.SimpleNamespace(
+        NSURL=object,
+        NSData=FakeNSData,
+        NSObject=FakeNSObject,
+        NSTimer=FakeNSTimer,
+    )
+    fake_web_ui = types.SimpleNamespace(WebUIController=object)
+
+    monkeypatch.setitem(sys.modules, "objc", fake_objc)
+    monkeypatch.setitem(sys.modules, "AppKit", fake_appkit)
+    monkeypatch.setitem(sys.modules, "Foundation", fake_foundation)
+    monkeypatch.setitem(sys.modules, "ptarmigan_flow.web_ui", fake_web_ui)
+    monkeypatch.setattr(
+        "ptarmigan_flow.logging_setup.configure_app_file_logging",
+        lambda _level: "/tmp/ptarmigan-flow-app.log",
+    )
+    monkeypatch.setattr(macos_app, "InProcessDaemonController", daemon_controller_cls)
+
+    assert macos_app._run_appkit_app() == 0
+    return captured
+
+
 def test_dispatch_cli_args_handles_launchd_python_module_form(monkeypatch) -> None:
     executable = "/Applications/PtarmiganFlow.app/Contents/MacOS/PtarmiganFlow"
     app_argv = [
@@ -283,7 +418,7 @@ def test_macos_app_installs_main_thread_nsevent_hotkey_monitor() -> None:
     assert "NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(" in install_body
     assert "NSEvent.addLocalMonitorForEventsMatchingMask_handler_(" in install_body
     assert "NSEvent.removeMonitor_(monitor)" in remove_body
-    assert "if self.daemon_controller.is_running:" in start_method
+    assert "if not self.daemon_controller.is_running:" in start_method
     assert start_method.index("self._install_hotkey_event_monitor()") < start_method.rindex(
         "self._push_daemon_state()"
     )
@@ -293,6 +428,198 @@ def test_macos_app_installs_main_thread_nsevent_hotkey_monitor() -> None:
     assert stop_method.index("self._remove_hotkey_event_monitor()") < stop_method.index(
         "self._push_daemon_state()"
     )
+
+
+def test_macos_app_right_shift_nsevent_handler_notifies_daemon_controller(monkeypatch) -> None:
+    class FakeDaemonController:
+        def __init__(self, _config_path) -> None:
+            self.is_running = True
+            self.events: list[str] = []
+
+        def start(self) -> None:
+            self.is_running = True
+
+        def stop(self) -> None:
+            self.is_running = False
+
+        def notify_hotkey_press(self) -> None:
+            self.events.append("press")
+
+        def notify_hotkey_release(self) -> None:
+            self.events.append("release")
+
+    class FakeEvent:
+        def __init__(self, keycode: int, flags: int) -> None:
+            self._keycode = keycode
+            self._flags = flags
+
+        def keyCode(self) -> int:  # noqa: N802 - mirrors NSEvent
+            return self._keycode
+
+        def modifierFlags(self) -> int:  # noqa: N802 - mirrors NSEvent
+            return self._flags
+
+    captured = _capture_app_delegate(monkeypatch, FakeDaemonController)
+    controller = captured["delegate"]
+    controller.bridge = types.SimpleNamespace(
+        _load_config=lambda: types.SimpleNamespace(hotkey=types.SimpleNamespace(key="right_shift"))
+    )
+
+    controller._install_hotkey_event_monitor()
+
+    global_handler = captured["global_handlers"][0]
+    local_handler = captured["local_handlers"][0]
+    wrong_key_event = FakeEvent(59, 1 << 17)
+    press_event = FakeEvent(60, 1 << 17)
+    release_event = FakeEvent(60, 0)
+
+    global_handler(wrong_key_event)
+    global_handler(press_event)
+    global_handler(release_event)
+    local_handler(press_event)
+    local_handler(release_event)
+
+    assert controller.daemon_controller.events == [
+        "press",
+        "release",
+        "press",
+        "release",
+    ]
+    assert local_handler(wrong_key_event) is wrong_key_event
+
+
+def test_macos_app_reconciles_async_daemon_failure_after_monitor_install(
+    monkeypatch,
+) -> None:
+    class FakeDaemonController:
+        def __init__(self, _config_path) -> None:
+            self._is_running = False
+            self.last_error: Exception | None = None
+            self.start_calls = 0
+
+        @property
+        def is_running(self) -> bool:
+            return self._is_running
+
+        def start(self) -> None:
+            self.start_calls += 1
+            self._is_running = True
+
+        def fail_later(self) -> None:
+            self._is_running = False
+            self.last_error = RuntimeError("daemon boot failed after thread start")
+
+        def stop(self) -> None:
+            self._is_running = False
+
+        def notify_hotkey_press(self) -> None:
+            pass
+
+        def notify_hotkey_release(self) -> None:
+            pass
+
+    captured = _capture_app_delegate(monkeypatch, FakeDaemonController)
+    controller = captured["delegate"]
+    pushed: list[tuple[str, dict[str, object]]] = []
+    controller.web_ui = types.SimpleNamespace(
+        push_event=lambda event, payload: pushed.append((event, payload))
+    )
+    controller.bridge = types.SimpleNamespace(
+        _load_config=lambda: types.SimpleNamespace(
+            hotkey=types.SimpleNamespace(key="right_shift")
+        ),
+        handle_action=lambda _action, _payload: {
+            "language": "en",
+            "daemon_running": controller.daemon_controller.is_running,
+        },
+    )
+    controller._configured_backend_is_available = lambda: True
+    controller._configured_model_token = lambda: "moonshine/base"
+    monkeypatch.setattr(macos_app.model_download, "is_model_downloaded", lambda _token: True)
+
+    result = controller._start_daemon_if_ready(
+        macos_app.PermissionReport(
+            microphone=True,
+            accessibility=True,
+            input_monitoring=True,
+        )
+    )
+    controller.daemon_controller.fail_later()
+
+    assert result is None
+    assert controller.daemon_controller.start_calls == 1
+    assert len(captured["timers"]) == 1
+    assert captured["timers"][0].selector == "pollDaemonStatus:"
+
+    controller.pollDaemonStatus_(captured["timers"][0])
+
+    assert controller._hotkey_global_monitor is None
+    assert controller._hotkey_local_monitor is None
+    assert captured["timers"][0].invalidated is True
+    assert captured["removed_monitors"] == [
+        captured["global_monitors"][0],
+        captured["local_monitors"][0],
+    ]
+    assert pushed[-1][0] == "daemonState"
+    assert pushed[-1][1]["daemon_running"] is False
+    assert (
+        pushed[-1][1]["daemon_error_message"]
+        == "Could not start voice input: daemon boot failed after thread start"
+    )
+
+
+def test_macos_app_surfaces_daemon_error_when_start_returns_not_running(
+    monkeypatch,
+) -> None:
+    class FakeDaemonController:
+        def __init__(self, _config_path) -> None:
+            self.is_running = False
+            self.last_error: Exception | None = None
+            self.start_calls = 0
+
+        def start(self) -> None:
+            self.start_calls += 1
+            self.last_error = RuntimeError("daemon boot failed")
+
+        def stop(self) -> None:
+            self.is_running = False
+
+        def notify_hotkey_press(self) -> None:
+            pass
+
+        def notify_hotkey_release(self) -> None:
+            pass
+
+    captured = _capture_app_delegate(monkeypatch, FakeDaemonController)
+    controller = captured["delegate"]
+    pushed: list[tuple[str, dict[str, object]]] = []
+    controller.web_ui = types.SimpleNamespace(
+        push_event=lambda event, payload: pushed.append((event, payload))
+    )
+    controller.bridge = types.SimpleNamespace(
+        handle_action=lambda _action, _payload: {
+            "language": "en",
+            "daemon_running": False,
+        }
+    )
+    controller._configured_backend_is_available = lambda: True
+    controller._configured_model_token = lambda: "moonshine/base"
+    monkeypatch.setattr(macos_app.model_download, "is_model_downloaded", lambda _token: True)
+
+    result = controller._start_daemon_if_ready(
+        macos_app.PermissionReport(
+            microphone=True,
+            accessibility=True,
+            input_monitoring=True,
+        )
+    )
+
+    assert controller.daemon_controller.start_calls == 1
+    assert isinstance(result, str)
+    assert pushed[-1][0] == "daemonState"
+    assert pushed[-1][1]["daemon_error_message"] == result
+    assert "Could not start voice input" in result
+    assert "daemon boot failed" in result
 
 
 def test_web_bridge_is_pyobjc_independent() -> None:
@@ -460,6 +787,21 @@ def test_macos_app_daemon_start_reuses_latest_combined_permission_report(monkeyp
         def removeMonitor_(_monitor) -> None:
             return None
 
+    class FakeTimer:
+        def invalidate(self) -> None:
+            pass
+
+    class FakeNSTimer:
+        @staticmethod
+        def scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+            _interval,
+            _target,
+            _selector,
+            _user_info,
+            _repeats,
+        ):
+            return FakeTimer()
+
     class FakeInProcessDaemonController:
         def __init__(self, _config_path) -> None:
             self.is_running = False
@@ -494,7 +836,7 @@ def test_macos_app_daemon_start_reuses_latest_combined_permission_report(monkeyp
         NSURL=object,
         NSData=FakeNSData,
         NSObject=FakeNSObject,
-        NSTimer=object,
+        NSTimer=FakeNSTimer,
     )
     fake_web_ui = types.SimpleNamespace(WebUIController=object)
 

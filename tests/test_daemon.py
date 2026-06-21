@@ -168,10 +168,12 @@ class _FakeHotkeyMonitor:
         on_release,
         *,
         max_hold_seconds: float | None = None,
+        use_pynput_listener: bool = True,
     ) -> None:
         del key_name, max_hold_seconds
         self.on_press = on_press
         self.on_release = on_release
+        self.use_pynput_listener = use_pynput_listener
         self.started = False
         self.pressed = False
         self.physical_state: bool | None = None
@@ -245,6 +247,7 @@ def _build_daemon(
     monkeypatch,
     *,
     config: AppConfig | None = None,
+    use_pynput_listener: bool | None = None,
 ) -> daemon_module.PtarmiganFlowDaemon:
     monkeypatch.setattr(daemon_module, "AudioRecorder", _FakeRecorder)
     monkeypatch.setattr(
@@ -259,7 +262,12 @@ def _build_daemon(
         "create_activity_indicator",
         lambda *_args, **_kwargs: _FakeActivityIndicator(),
     )
-    return daemon_module.PtarmiganFlowDaemon(config or AppConfig())
+    kwargs = (
+        {"use_pynput_listener": use_pynput_listener}
+        if use_pynput_listener is not None
+        else {}
+    )
+    return daemon_module.PtarmiganFlowDaemon(config or AppConfig(), **kwargs)
 
 
 def _timeout_error(*, request_kind: str = "transcribe") -> SpeechToTextRequestTimeoutError:
@@ -293,6 +301,12 @@ def test_hotkey_down_ignored_while_transcription_busy(monkeypatch) -> None:
     daemon._on_hotkey_down()
 
     assert daemon.recorder.start_calls == 0
+
+
+def test_daemon_passes_explicit_pynput_listener_setting_to_hotkey_monitor(monkeypatch) -> None:
+    daemon = _build_daemon(monkeypatch, use_pynput_listener=False)
+
+    assert daemon.hotkey.use_pynput_listener is False
 
 
 def test_hotkey_down_respects_cooldown(monkeypatch) -> None:

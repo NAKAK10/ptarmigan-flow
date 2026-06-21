@@ -21,11 +21,6 @@ class _FakeListener:
         return None
 
 
-class _RaisingStartListener(_FakeListener):
-    def start(self) -> None:
-        raise AssertionError("pynput listener should not start when AppKit is loaded")
-
-
 class _CountingListener(_FakeListener):
     def __init__(self, on_press, on_release):
         super().__init__(on_press, on_release)
@@ -43,9 +38,10 @@ class _CountingListener(_FakeListener):
         self.join_calls += 1
 
 
-def test_start_skips_pynput_listener_when_appkit_is_loaded(monkeypatch) -> None:
+def test_start_uses_pynput_listener_when_only_appkit_is_loaded(monkeypatch) -> None:
     monkeypatch.setitem(sys.modules, "AppKit", object())
-    monkeypatch.setattr("ptarmigan_flow.hotkey_monitor.keyboard.Listener", _RaisingStartListener)
+    monkeypatch.delitem(sys.modules, "ptarmigan_flow.macos_app", raising=False)
+    monkeypatch.setattr("ptarmigan_flow.hotkey_monitor.keyboard.Listener", _CountingListener)
 
     hid_polling_started = 0
 
@@ -59,6 +55,34 @@ def test_start_skips_pynput_listener_when_appkit_is_loaded(monkeypatch) -> None:
 
     monitor.start()
 
+    assert monitor._listener.start_calls == 1
+    assert monitor._listener_started is True
+    assert hid_polling_started == 1
+
+
+def test_start_skips_pynput_listener_when_explicitly_disabled(monkeypatch) -> None:
+    monkeypatch.setitem(sys.modules, "AppKit", object())
+    monkeypatch.delitem(sys.modules, "ptarmigan_flow.macos_app", raising=False)
+    monkeypatch.setattr("ptarmigan_flow.hotkey_monitor.keyboard.Listener", _CountingListener)
+
+    hid_polling_started = 0
+
+    def fake_start_hid_polling(self) -> None:
+        nonlocal hid_polling_started
+        hid_polling_started += 1
+
+    monkeypatch.setattr(HotkeyMonitor, "_start_hid_polling", fake_start_hid_polling)
+
+    monitor = HotkeyMonitor(
+        "a",
+        on_press=lambda: None,
+        on_release=lambda: None,
+        use_pynput_listener=False,
+    )
+
+    monitor.start()
+
+    assert monitor._listener.start_calls == 0
     assert monitor._listener_started is False
     assert hid_polling_started == 1
 
@@ -198,7 +222,9 @@ def test_duplicate_press_recovers_missed_release(monkeypatch) -> None:
 def test_is_pressed_reflects_hotkey_state(monkeypatch) -> None:
     monkeypatch.setattr("ptarmigan_flow.hotkey_monitor.keyboard.Listener", _FakeListener)
 
-    monitor = HotkeyMonitor("a", on_press=lambda: None, on_release=lambda: None, max_hold_seconds=1.0)
+    monitor = HotkeyMonitor(
+        "a", on_press=lambda: None, on_release=lambda: None, max_hold_seconds=1.0
+    )
     assert monitor.is_pressed() is False
 
     monitor._on_press(monitor._target_key)
@@ -211,7 +237,9 @@ def test_is_pressed_reflects_hotkey_state(monkeypatch) -> None:
 def test_is_pressed_prefers_physical_state_when_available(monkeypatch) -> None:
     monkeypatch.setattr("ptarmigan_flow.hotkey_monitor.keyboard.Listener", _FakeListener)
 
-    monitor = HotkeyMonitor("a", on_press=lambda: None, on_release=lambda: None, max_hold_seconds=1.0)
+    monitor = HotkeyMonitor(
+        "a", on_press=lambda: None, on_release=lambda: None, max_hold_seconds=1.0
+    )
     monitor._on_press(monitor._target_key)
     monitor._physical_pressed_state = lambda: True
     assert monitor.is_pressed() is True
@@ -223,7 +251,9 @@ def test_is_pressed_prefers_physical_state_when_available(monkeypatch) -> None:
 def test_is_pressed_ignores_physical_false(monkeypatch) -> None:
     monkeypatch.setattr("ptarmigan_flow.hotkey_monitor.keyboard.Listener", _FakeListener)
 
-    monitor = HotkeyMonitor("a", on_press=lambda: None, on_release=lambda: None, max_hold_seconds=1.0)
+    monitor = HotkeyMonitor(
+        "a", on_press=lambda: None, on_release=lambda: None, max_hold_seconds=1.0
+    )
     monitor._physical_pressed_state = lambda: False
     monitor._on_press(monitor._target_key)
 

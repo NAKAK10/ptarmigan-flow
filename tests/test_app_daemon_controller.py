@@ -193,6 +193,39 @@ def test_in_process_daemon_controller_forwards_hotkey_press_and_release(tmp_path
     assert hotkey.release_calls == 1
 
 
+def test_in_process_daemon_controller_builds_daemon_with_pynput_disabled(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    config_path = tmp_path / "config.toml"
+    config = AppConfig()
+    daemon = _FakeDaemon()
+    build_calls: list[dict[str, object]] = []
+
+    monkeypatch.setattr(controller_module, "ensure_config_exists", lambda _path: None)
+    monkeypatch.setattr(controller_module, "load_config", lambda _path: config)
+
+    def fake_build_daemon(loaded_config: AppConfig, **kwargs) -> _FakeDaemon:
+        build_calls.append({"config": loaded_config, **kwargs})
+        return daemon
+
+    monkeypatch.setattr(controller_module, "build_daemon", fake_build_daemon)
+
+    controller = InProcessDaemonController(config_path)
+    controller.start()
+    try:
+        assert daemon.started.wait(timeout=1.0)
+    finally:
+        controller.stop()
+
+    assert build_calls == [
+        {
+            "config": config,
+            "use_pynput_listener": False,
+        }
+    ]
+
+
 def test_in_process_daemon_controller_hotkey_notifications_are_noops_without_hotkey(
     tmp_path,
 ) -> None:
@@ -222,7 +255,7 @@ def test_build_daemon_from_config_ensures_loads_and_builds_daemon(monkeypatch, t
         return config
 
     def fake_build(loaded_config: AppConfig, **kwargs) -> _FakeDaemon:
-        assert kwargs == {}
+        assert kwargs == {"use_pynput_listener": True}
         calls.append(("build", loaded_config))
         return daemon
 

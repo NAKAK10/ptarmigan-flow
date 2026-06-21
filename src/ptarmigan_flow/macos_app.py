@@ -177,6 +177,7 @@ def _run_appkit_app() -> int:
             self.daemon_controller = InProcessDaemonController(default_config_path())
             self._hotkey_global_monitor = None
             self._hotkey_local_monitor = None
+            self.daemon_status_timer = None
             self.permission_timer = None
             self._permission_check_generation = 0
             self._permission_check_in_progress = False
@@ -345,6 +346,7 @@ def _run_appkit_app() -> int:
 
         @objc.python_method
         def _push_daemon_state(self) -> None:
+            self._reconcile_daemon_status()
             self._update_status_menu()
             self._push_event("daemonState", self._state_payload())
 
@@ -428,6 +430,46 @@ def _run_appkit_app() -> int:
                         logging.getLogger(__name__).exception("Failed to remove hotkey monitor")
             self._hotkey_global_monitor = None
             self._hotkey_local_monitor = None
+            self._stop_daemon_status_timer()
+
+        @objc.python_method
+        def _start_daemon_status_timer(self) -> None:
+            if self.daemon_status_timer is not None:
+                return
+            if (
+                self._hotkey_global_monitor is None
+                and self._hotkey_local_monitor is None
+            ):
+                return
+            schedule_timer = (
+                NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_
+            )
+            self.daemon_status_timer = schedule_timer(1.75, self, "pollDaemonStatus:", None, True)
+
+        @objc.python_method
+        def _stop_daemon_status_timer(self) -> None:
+            if self.daemon_status_timer is not None:
+                self.daemon_status_timer.invalidate()
+                self.daemon_status_timer = None
+
+        @objc.python_method
+        def _reconcile_daemon_status(self) -> bool:
+            if (
+                self._hotkey_global_monitor is None
+                and self._hotkey_local_monitor is None
+            ):
+                return False
+            if self.daemon_controller.is_running:
+                return False
+            last_error = getattr(self.daemon_controller, "last_error", None)
+            error = str(last_error) if last_error is not None else None
+            if not error:
+                error = self._strings()["daemon_not_running_message"]
+            self._daemon_error_message = self._strings()["daemon_start_failed_message"].format(
+                error=error
+            )
+            self._remove_hotkey_event_monitor()
+            return True
 
         @objc.python_method
         def _dictionary_path(self) -> Path:
@@ -726,11 +768,20 @@ def _run_appkit_app() -> int:
             if not self.daemon_controller.is_running:
                 try:
                     self.daemon_controller.start()
-                except Exception:
-                    self._push_daemon_state()
-                    return None
-            if self.daemon_controller.is_running:
-                self._install_hotkey_event_monitor()
+                except Exception as exc:
+                    message = self._strings()["daemon_start_failed_message"].format(error=exc)
+                    self._push_daemon_error(message)
+                    return message
+            if not self.daemon_controller.is_running:
+                last_error = getattr(self.daemon_controller, "last_error", None)
+                error = str(last_error) if last_error is not None else None
+                if not error:
+                    error = self._strings()["daemon_not_running_message"]
+                message = self._strings()["daemon_start_failed_message"].format(error=error)
+                self._push_daemon_error(message)
+                return message
+            self._install_hotkey_event_monitor()
+            self._start_daemon_status_timer()
             self._push_daemon_state()
             return None
 
@@ -777,6 +828,12 @@ def _run_appkit_app() -> int:
 
         def pollPermissions_(self, _timer):  # noqa: N802
             self._start_permission_check()
+
+        def pollDaemonStatus_(self, _timer):  # noqa: N802
+            if self._reconcile_daemon_status():
+                self._push_daemon_state()
+                return
+            self._update_status_menu()
 
         def showSettings_(self, _sender):  # noqa: N802
             self._set_route("settings")

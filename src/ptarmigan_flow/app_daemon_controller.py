@@ -184,7 +184,10 @@ class InProcessDaemonController:
 
         def _run() -> None:
             try:
-                daemon = build_daemon_from_config(self._config_path)
+                daemon = build_daemon_from_config(
+                    self._config_path,
+                    use_pynput_listener=False,
+                )
             except Exception as exc:
                 LOGGER.exception("Failed to build in-process daemon")
                 with self._lock:
@@ -254,6 +257,7 @@ def build_daemon(
     *,
     post_processor: TextPostProcessor | None = None,
     enable_streaming: bool = True,
+    use_pynput_listener: bool = True,
 ) -> DaemonLike:
     """Build the runtime daemon shared by CLI and macOS app entry points."""
     from ptarmigan_flow.daemon import PtarmiganFlowDaemon
@@ -262,12 +266,17 @@ def build_daemon(
         config,
         post_processor=post_processor,
         enable_streaming=enable_streaming,
+        use_pynput_listener=use_pynput_listener,
     )
 
 
-def build_daemon_from_config(config_path: Path | str) -> DaemonLike:
+def build_daemon_from_config(
+    config_path: Path | str,
+    *,
+    use_pynput_listener: bool = True,
+) -> DaemonLike:
     """Ensure, load, and build a daemon from a config path."""
     resolved_path = Path(config_path).expanduser()
     ensure_config_exists(resolved_path)
     config = load_config(resolved_path)
-    return build_daemon(config)
+    return build_daemon(config, use_pynput_listener=use_pynput_listener)
