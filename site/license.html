@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>License — ptarmigan-flow</title>
+  <meta name="description" content="License information and key dependencies for ptarmigan-flow.">
+  <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f5f5f5">
+  <meta name="theme-color" media="(prefers-color-scheme: dark)"  content="#070809">
+  <link rel="alternate" hreflang="ja" href="./ja.html">
+  <link rel="icon" type="image/svg+xml" href="./favicon.svg">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="site-header">
+    <div class="wrap header-inner">
+      <a class="brand" href="./index.html">
+        <svg class="logo-badge" width="28" height="28" viewBox="0 0 64 64" role="img" aria-label="ptarmigan-flow logo">
+          <rect width="64" height="64" rx="14" fill="var(--badge)"/>
+          <g fill="var(--badge-bird)">
+            <ellipse cx="29" cy="39" rx="17.5" ry="13"/>
+            <circle cx="43" cy="23" r="8.2"/>
+            <path d="M31 31 L47 21 L45 37 Z"/>
+            <path d="M50 19.5 L58.5 23 L50 26.5 Z"/>
+            <path d="M14.5 33 L3.5 44.5 L17 49 Z"/>
+          </g>
+          <circle cx="44.5" cy="21.5" r="1.9" fill="var(--badge)"/>
+          <path d="M37.5 14.6 Q43 10.2 48.5 14.6 Q43 17.2 37.5 14.6 Z" fill="var(--comb)"/>
+        </svg>
+        <span class="brand-name">ptarmigan-flow</span>
+      </a>
+      <nav class="site-nav" aria-label="Main">
+        <a href="./index.html#how" class="nav-section">How it works</a>
+        <a href="./index.html#features" class="nav-section">Features</a>
+        <a href="./index.html#install" class="nav-section">Install</a>
+        <a href="./docs.html">Docs</a>
+        <a href="https://github.com/NAKAK10/ptarmigan-flow">GitHub</a>
+        <a class="lang-switch" href="./ja.html" hreflang="ja" lang="ja">日本語</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="hero">
+      <canvas class="hero-canvas" aria-hidden="true"></canvas>
+      <div class="wrap">
+        <p class="eyebrow">Open Source</p>
+        <h1>License &amp;<br>Dependencies</h1>
+        <p class="lede">ptarmigan-flow is free and open-source software. It builds on a rich ecosystem of local AI and macOS tooling — all listed here with their respective licenses.</p>
+
+        <nav class="docs-toc" aria-label="On this page">
+          <a href="#project-license">Project license</a>
+          <a href="#dependencies">Key dependencies</a>
+          <a href="#stt-models">STT model licenses</a>
+        </nav>
+      </div>
+    </section>
+
+    <div class="wrap">
+
+      <!-- ── Project license ── -->
+      <div class="docs-section" id="project-license">
+        <p class="eyebrow">Project license</p>
+        <h2>MIT License</h2>
+        <p class="section-intro">ptarmigan-flow is released under the MIT License. You are free to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the software, subject to the conditions below.</p>
+
+        <div class="license-content">
+          <p>Copyright © 2024–2025 ptarmigan-flow Contributors</p>
+          <p>Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:</p>
+          <p>The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.</p>
+          <p>THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.</p>
+        </div>
+
+        <p style="margin-top: 1.5rem; font-size: 0.91rem;">
+          <a href="https://github.com/NAKAK10/ptarmigan-flow/blob/main/LICENSE">View full license on GitHub →</a>
+        </p>
+      </div>
+
+      <!-- ── Key dependencies ── -->
+      <div class="docs-section" id="dependencies">
+        <p class="eyebrow">Dependencies</p>
+        <h2>Key dependencies</h2>
+        <p class="section-intro">All runtime packages run locally on your Mac. No data is sent to third-party servers by any of these libraries.</p>
+
+        <h3 style="margin: 2rem 0 0.75rem; font-family: var(--font-mono); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--slate);">Core</h3>
+        <ul class="dep-list">
+          <li>
+            <strong>moonshine-voice</strong> —
+            <span class="dep-license">Apache-2.0</span>
+            <span class="dep-desc">Efficient English speech recognition by Useful Sensors.</span>
+          </li>
+          <li>
+            <strong>transformers</strong> —
+            <span class="dep-license">Apache-2.0</span>
+            <span class="dep-desc">Hugging Face transformers; used by the Granite and vLLM backends.</span>
+          </li>
+          <li>
+            <strong>mlx-whisper</strong> —
+            <span class="dep-license">MIT</span>
+            <span class="dep-desc">OpenAI Whisper optimised for Apple Silicon via MLX.</span>
+          </li>
+          <li>
+            <strong>mlx-audio</strong> —
+            <span class="dep-license">MIT</span>
+            <span class="dep-desc">MLX-native audio processing; powers the Voxtral backend.</span>
+          </li>
+          <li>
+            <strong>voxmlx</strong> —
+            <span class="dep-license">Apache-2.0</span>
+            <span class="dep-desc">Voxtral real-time speech model bindings for Apple Silicon.</span>
+          </li>
+        </ul>
+
+        <h3 style="margin: 2rem 0 0.75rem; font-family: var(--font-mono); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--slate);">Audio &amp; input</h3>
+        <ul class="dep-list">
+          <li>
+            <strong>sounddevice</strong> —
+            <span class="dep-license">MIT</span>
+            <span class="dep-desc">Cross-platform audio I/O via PortAudio. Used for microphone capture.</span>
+          </li>
+          <li>
+            <strong>pynput</strong> —
+            <span class="dep-license">LGPL-3.0</span>
+            <span class="dep-desc">Global keyboard monitoring for push-to-talk hotkey detection.</span>
+          </li>
+          <li>
+            <strong>pyperclip</strong> —
+            <span class="dep-license">BSD-3-Clause</span>
+            <span class="dep-desc">Clipboard integration for the clipboard-paste output mode.</span>
+          </li>
+        </ul>
+
+        <h3 style="margin: 2rem 0 0.75rem; font-family: var(--font-mono); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--slate);">macOS integration</h3>
+        <ul class="dep-list">
+          <li>
+            <strong>pyobjc-core</strong> —
+            <span class="dep-license">MIT</span>
+            <span class="dep-desc">Python ↔ Objective-C bridge. Foundation for all macOS system calls.</span>
+          </li>
+          <li>
+            <strong>pyobjc-framework-Cocoa</strong> —
+            <span class="dep-license">MIT</span>
+            <span class="dep-desc">AppKit, Foundation, and CoreGraphics bindings.</span>
+          </li>
+          <li>
+            <strong>pyobjc-framework-WebKit</strong> —
+            <span class="dep-license">MIT</span>
+            <span class="dep-desc">WKWebView bindings; powers the macOS app's built-in browser window.</span>
+          </li>
+          <li>
+            <strong>pyobjc-framework-AVFoundation</strong> —
+            <span class="dep-license">MIT</span>
+            <span class="dep-desc">Microphone permission handling via AVCaptureDevice.</span>
+          </li>
+        </ul>
+
+        <h3 style="margin: 2rem 0 0.75rem; font-family: var(--font-mono); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--slate);">Configuration &amp; utilities</h3>
+        <ul class="dep-list">
+          <li>
+            <strong>pydantic</strong> —
+            <span class="dep-license">MIT</span>
+            <span class="dep-desc">Type-validated config models and runtime settings.</span>
+          </li>
+          <li>
+            <strong>tomli-w</strong> —
+            <span class="dep-license">MIT</span>
+            <span class="dep-desc">TOML serialisation for writing the config file.</span>
+          </li>
+          <li>
+            <strong>numpy</strong> —
+            <span class="dep-license">BSD-3-Clause</span>
+            <span class="dep-desc">Numerical arrays for audio buffer processing.</span>
+          </li>
+          <li>
+            <strong>websockets</strong> —
+            <span class="dep-license">BSD-3-Clause</span>
+            <span class="dep-desc">WebSocket server for vLLM realtime audio streaming.</span>
+          </li>
+          <li>
+            <strong>mistral-common</strong> —
+            <span class="dep-license">Apache-2.0</span>
+            <span class="dep-desc">Common utilities for Mistral/Voxtral model inference.</span>
+          </li>
+        </ul>
+
+        <p style="font-size: 0.87rem; color: var(--slate); margin-top: 2rem;">
+          For the complete, authoritative list of all transitive dependencies and their exact versions, see <a href="https://github.com/NAKAK10/ptarmigan-flow/blob/main/pyproject.toml"><code>pyproject.toml</code></a> in the repository.
+        </p>
+      </div>
+
+      <!-- ── STT model licenses ── -->
+      <div class="docs-section" id="stt-models">
+        <p class="eyebrow">Models</p>
+        <h2>STT model licenses</h2>
+        <p class="section-intro">Models run entirely on your Mac. They are downloaded from Hugging Face Hub on first use. Each model is subject to its own license — see the relevant Hub page for the full terms.</p>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Model</th><th>Provider</th><th>License</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Moonshine tiny / base</td>
+                <td>Useful Sensors</td>
+                <td>Apache-2.0</td>
+              </tr>
+              <tr>
+                <td>Granite 4.0 1B Speech</td>
+                <td>IBM</td>
+                <td>Apache-2.0</td>
+              </tr>
+              <tr>
+                <td>Whisper large-v3-turbo</td>
+                <td>OpenAI</td>
+                <td>MIT</td>
+              </tr>
+              <tr>
+                <td>Voxtral Mini 4B</td>
+                <td>Mistral AI</td>
+                <td>Apache-2.0</td>
+              </tr>
+              <tr>
+                <td>vLLM (custom)</td>
+                <td>User-supplied</td>
+                <td>Varies by model</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p style="font-size: 0.87rem; color: var(--slate); margin-top: 1.5rem;">
+          ptarmigan-flow does not bundle or redistribute any model weights — they are fetched directly from Hugging Face or your configured vLLM endpoint.
+        </p>
+      </div>
+
+    </div><!-- /wrap -->
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap footer-inner">
+      <div class="footer-brand">
+        <svg class="logo-badge" width="22" height="22" viewBox="0 0 64 64" aria-hidden="true">
+          <rect width="64" height="64" rx="14" fill="var(--badge)"/>
+          <g fill="var(--badge-bird)">
+            <ellipse cx="29" cy="39" rx="17.5" ry="13"/>
+            <circle cx="43" cy="23" r="8.2"/>
+            <path d="M31 31 L47 21 L45 37 Z"/>
+            <path d="M50 19.5 L58.5 23 L50 26.5 Z"/>
+            <path d="M14.5 33 L3.5 44.5 L17 49 Z"/>
+          </g>
+          <circle cx="44.5" cy="21.5" r="1.9" fill="var(--badge)"/>
+          <path d="M37.5 14.6 Q43 10.2 48.5 14.6 Q43 17.2 37.5 14.6 Z" fill="var(--comb)"/>
+        </svg>
+        <span class="brand-name">ptarmigan-flow</span>
+      </div>
+      <ul class="footer-links">
+        <li><a href="./index.html">Home</a></li>
+        <li><a href="./docs.html">Docs</a></li>
+        <li><a href="https://github.com/NAKAK10/ptarmigan-flow">GitHub</a></li>
+        <li><a href="https://github.com/NAKAK10/ptarmigan-flow/blob/main/LICENSE">LICENSE on GitHub</a></li>
+      </ul>
+      <p class="footer-note">Requires macOS 14 or later on Apple Silicon (arm64).</p>
+    </div>
+  </footer>
+
+  <script src="./script.js"></script>
+</body>
+</html>

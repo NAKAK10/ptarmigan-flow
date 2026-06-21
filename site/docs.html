@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Docs — ptarmigan-flow</title>
+  <meta name="description" content="Command reference, configuration guide, STT model selection, and Ollama/LM Studio integration for ptarmigan-flow.">
+  <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f5f5f5">
+  <meta name="theme-color" media="(prefers-color-scheme: dark)"  content="#070809">
+  <link rel="alternate" hreflang="ja" href="./ja.html">
+  <link rel="icon" type="image/svg+xml" href="./favicon.svg">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="site-header">
+    <div class="wrap header-inner">
+      <a class="brand" href="./index.html">
+        <svg class="logo-badge" width="28" height="28" viewBox="0 0 64 64" role="img" aria-label="ptarmigan-flow logo">
+          <rect width="64" height="64" rx="14" fill="var(--badge)"/>
+          <g fill="var(--badge-bird)">
+            <ellipse cx="29" cy="39" rx="17.5" ry="13"/>
+            <circle cx="43" cy="23" r="8.2"/>
+            <path d="M31 31 L47 21 L45 37 Z"/>
+            <path d="M50 19.5 L58.5 23 L50 26.5 Z"/>
+            <path d="M14.5 33 L3.5 44.5 L17 49 Z"/>
+          </g>
+          <circle cx="44.5" cy="21.5" r="1.9" fill="var(--badge)"/>
+          <path d="M37.5 14.6 Q43 10.2 48.5 14.6 Q43 17.2 37.5 14.6 Z" fill="var(--comb)"/>
+        </svg>
+        <span class="brand-name">ptarmigan-flow</span>
+      </a>
+      <nav class="site-nav" aria-label="Main">
+        <a href="./index.html#how" class="nav-section">How it works</a>
+        <a href="./index.html#features" class="nav-section">Features</a>
+        <a href="./index.html#install" class="nav-section">Install</a>
+        <a href="./docs.html" style="color: var(--comb);">Docs</a>
+        <a href="https://github.com/NAKAK10/ptarmigan-flow">GitHub</a>
+        <a class="lang-switch" href="./ja.html" hreflang="ja" lang="ja">日本語</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="hero">
+      <canvas class="hero-canvas" aria-hidden="true"></canvas>
+      <div class="wrap">
+        <p class="eyebrow">Documentation</p>
+        <h1>Command &amp; Config<br>Reference</h1>
+        <p class="lede">Everything you need to run, configure, and extend ptarmigan-flow — from the first <code>pflow doctor</code> to custom Hugging Face models and LLM post-correction.</p>
+
+        <nav class="docs-toc" aria-label="On this page">
+          <a href="#quickstart">Quick start</a>
+          <a href="#commands">Commands</a>
+          <a href="#models">Models</a>
+          <a href="#ai-correction">AI correction</a>
+          <a href="#configuration">Configuration</a>
+          <a href="#troubleshooting">Troubleshooting</a>
+        </nav>
+      </div>
+    </section>
+
+    <div class="wrap">
+
+      <!-- ── Quick start ── -->
+      <div class="docs-section" id="quickstart">
+        <p class="eyebrow">Quick start</p>
+        <h2>Up and running in four commands</h2>
+        <p class="section-intro">Install via Homebrew, verify your environment, grant macOS permissions, then start the daemon. The <code>pflow</code> alias works everywhere <code>ptarmigan-flow</code> does.</p>
+        <div class="cmd">
+          <pre><code>brew tap nakak10/ptarmigan-flow https://github.com/NAKAK10/ptarmigan-flow
+brew install ptarmigan-flow
+pflow doctor
+pflow check-permissions --request
+pflow run</code></pre>
+          <button type="button" class="copy-btn" data-done="Copied">Copy</button>
+        </div>
+        <p style="font-size:0.91rem; color: var(--slate);">Prefer a GUI? <a href="./index.html#install">Download the signed Mac app</a> instead — it walks you through permissions in a setup window.</p>
+      </div>
+
+      <!-- ── Commands ── -->
+      <div class="docs-section" id="commands">
+        <p class="eyebrow">Commands</p>
+        <h2>Full command reference</h2>
+        <p class="section-intro"><code>pflow</code> is a short alias for <code>ptarmigan-flow</code>. Append <code>--help</code> to any command for the full flag list.</p>
+
+        <h3 style="margin: 2rem 0 0.75rem; font-size: 1rem; color: var(--slate); text-transform: uppercase; letter-spacing: 0.08em; font-family: var(--font-mono); font-size: 0.75rem;">Core</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Command</th><th>What it does</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>pflow run</td><td>Start the push-to-talk daemon in the foreground.</td></tr>
+              <tr><td>pflow doctor</td><td>Run runtime diagnostics — checks permissions, STT backend, and launchd status.</td></tr>
+              <tr><td>pflow init</td><td>Interactive config editor; shows current values as defaults.</td></tr>
+              <tr><td>pflow config &lt;section&gt;</td><td>Edit one config section (<code>audio</code>, <code>stt</code>, <code>output</code>, <code>hotkey</code>, …).</td></tr>
+              <tr><td>pflow config language</td><td>Pick transcription language from a described menu (<code>en</code>, <code>ja</code>, <code>zh</code>, custom).</td></tr>
+              <tr><td>pflow update</td><td>Run <code>brew upgrade ptarmigan-flow</code> and refresh the launch agent if installed.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 style="margin: 2rem 0 0.75rem; font-family: var(--font-mono); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--slate);">Launch agent (auto-start at login)</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Command</th><th>What it does</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>pflow install-launch-agent</td><td>Install launchd agent for auto-start at login. Also requests any missing permissions.</td></tr>
+              <tr><td>pflow restart-launch-agent</td><td>Restart the agent — required after granting new macOS permissions.</td></tr>
+              <tr><td>pflow uninstall-launch-agent</td><td>Remove the launchd agent.</td></tr>
+              <tr><td>pflow doctor --launchd-check</td><td>Detailed diagnostics including launchd permission binding status.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 style="margin: 2rem 0 0.75rem; font-family: var(--font-mono); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--slate);">Listing &amp; selection</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Command</th><th>What it does</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>pflow list model</td><td>Browse and select from verified STT model presets. Saves choice to config.</td></tr>
+              <tr><td>pflow list model --hub-search &lt;query&gt; --backend &lt;b&gt; --limit 20</td><td>Search public Hugging Face Hub ASR models and install any result.</td></tr>
+              <tr><td>pflow list devices</td><td>List available audio input devices and save selection to config.</td></tr>
+              <tr><td>pflow list ollama</td><td>List downloaded Ollama models and select one for LLM post-correction.</td></tr>
+              <tr><td>pflow list lmstudio</td><td>List loaded LM Studio models and select one for LLM post-correction.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 style="margin: 2rem 0 0.75rem; font-family: var(--font-mono); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--slate);">Permissions</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Command</th><th>What it does</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>pflow check-permissions</td><td>Check current macOS permission status (Microphone, Accessibility, Input Monitoring).</td></tr>
+              <tr><td>pflow check-permissions --request</td><td>Check and request any missing permissions via system dialogs.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- ── Models ── -->
+      <div class="docs-section" id="models">
+        <p class="eyebrow">Models</p>
+        <h2>STT model reference</h2>
+        <p class="section-intro">All models run locally. Switch with <code>pflow list model</code>. The token goes in <code>~/.config/ptarmigan-flow/config.toml</code> as <code>stt.model</code>.</p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Token</th><th>Label</th><th>Notes</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>moonshine:tiny</td>
+                <td>Moonshine tiny</td>
+                <td>Fastest. Bundled in the Mac app. English-focused. Minimal RAM.</td>
+              </tr>
+              <tr>
+                <td>moonshine:base</td>
+                <td>Moonshine base</td>
+                <td>Slightly larger than tiny. Better accuracy with still fast response. English-focused.</td>
+              </tr>
+              <tr>
+                <td>granite:ibm-granite/granite-4.0-1b-speech</td>
+                <td>IBM Granite 4.0 1B Speech</td>
+                <td><strong>Recommended default.</strong> Good Japanese &amp; English accuracy. Uses MLX on Apple Silicon, Transformers on other platforms.</td>
+              </tr>
+              <tr>
+                <td>mlx:openai/whisper-large-v3-turbo</td>
+                <td>Whisper large-v3-turbo</td>
+                <td>OpenAI's battle-tested model via MLX. Strong multilingual accuracy across 99 languages. Apple Silicon only.</td>
+              </tr>
+              <tr>
+                <td>voxtral:mistralai/Voxtral-Mini-4B-Realtime-2602</td>
+                <td>Mistral Voxtral Mini 4B</td>
+                <td>Real-time capable multilingual model. Runs via MLX Audio on Apple Silicon.</td>
+              </tr>
+              <tr>
+                <td>vllm:&lt;any-model-id&gt;</td>
+                <td>vLLM (custom server)</td>
+                <td>Point to your own vLLM endpoint. <code>--max-model-len</code> is derived from <code>audio.max_record_seconds</code> automatically.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 style="margin: 2rem 0 0.75rem;">Hugging Face Hub search</h3>
+        <p style="font-size: 0.91rem; color: var(--slate); margin-bottom: 1rem;">Any public ASR model on the Hub can be used. Hub results are marked <em>unverified</em> but accept the same <code>backend:repo_id</code> format:</p>
+        <div class="cmd">
+          <pre><code>pflow list model --hub-search whisper --backend mlx --limit 20</code></pre>
+          <button type="button" class="copy-btn" data-done="Copied">Copy</button>
+        </div>
+        <p style="font-size: 0.87rem; color: var(--slate); margin-top: 0.75rem;">Set <code>HF_TOKEN</code> in your environment to raise rate limits or access private models.</p>
+      </div>
+
+      <!-- ── AI Correction ── -->
+      <div class="docs-section" id="ai-correction">
+        <p class="eyebrow">AI Correction</p>
+        <h2>Post-process with a local LLM</h2>
+        <p class="section-intro">After each STT transcription, ptarmigan-flow can pass the text through a local language model for context-aware corrections: proper nouns, punctuation, domain jargon. All of this runs locally — nothing leaves your Mac.</p>
+
+        <h3 style="margin: 2rem 0 0.75rem;">Enable via Ollama</h3>
+        <p style="font-size: 0.91rem; color: var(--slate); margin-bottom: 1rem;">Make sure Ollama is running, then:</p>
+        <div class="cmd">
+          <pre><code>pflow list ollama          # pick a model
+pflow config text          # set mode = "always"</code></pre>
+          <button type="button" class="copy-btn" data-done="Copied">Copy</button>
+        </div>
+
+        <h3 style="margin: 2rem 0 0.75rem;">Enable via LM Studio</h3>
+        <div class="cmd">
+          <pre><code>pflow list lmstudio        # pick a loaded model
+pflow config text          # set provider = "lmstudio", mode = "always"</code></pre>
+          <button type="button" class="copy-btn" data-done="Copied">Copy</button>
+        </div>
+
+        <h3 style="margin: 2rem 0 0.75rem;">Relevant config keys</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Key</th><th>Values / default</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>text.llm_correction.mode</td><td><code>never</code> (default) · <code>always</code> · <code>ask</code></td></tr>
+              <tr><td>text.llm_correction.provider</td><td><code>ollama</code> · <code>lmstudio</code></td></tr>
+              <tr><td>text.llm_correction.base_url</td><td>Ollama default: <code>http://localhost:11434</code></td></tr>
+              <tr><td>text.llm_correction.model</td><td>e.g. <code>qwen2.5:7b-instruct</code></td></tr>
+              <tr><td>text.llm_correction.timeout_seconds</td><td>Clamped <code>0.5–5.0</code>, default <code>5.0</code></td></tr>
+              <tr><td>text.llm_correction.max_input_chars</td><td>Clamped <code>50–5000</code>, default <code>500</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- ── Configuration ── -->
+      <div class="docs-section" id="configuration">
+        <p class="eyebrow">Configuration</p>
+        <h2>Config file reference</h2>
+        <p class="section-intro">Config lives at <code>~/.config/ptarmigan-flow/config.toml</code>. Missing on first run — it is auto-created. Edit interactively with <code>pflow init</code> or open the file directly.</p>
+
+        <h3 style="margin: 2rem 0 0.75rem;">Hotkey</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Key</th><th>Default / notes</th></tr></thead>
+            <tbody>
+              <tr><td>hotkey.key</td><td><code>right_cmd</code> — right ⌘ key. Change to any key name pynput recognises.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 style="margin: 2rem 0 0.75rem;">Audio</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Key</th><th>Default / notes</th></tr></thead>
+            <tbody>
+              <tr><td>audio.input_device</td><td>Unset = system default. Set to device name or index from <code>pflow list devices</code>.</td></tr>
+              <tr><td>audio.input_device_policy</td><td><code>playback_friendly</code> (avoids Bluetooth HFP mic) · <code>system_default</code> · <code>external_preferred</code></td></tr>
+              <tr><td>audio.max_record_seconds</td><td><code>30</code> — max single recording length in seconds.</td></tr>
+              <tr><td>audio.trailing_silence_seconds</td><td><code>1.0</code> (clamped 0–1) — silence appended for decoder stability.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 style="margin: 2rem 0 0.75rem;">STT model</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Key</th><th>Default / notes</th></tr></thead>
+            <tbody>
+              <tr><td>stt.model</td><td><code>moonshine:tiny</code> — see the <a href="#models">Models section</a> for all tokens.</td></tr>
+              <tr><td>stt.idle_shutdown_seconds</td><td><code>30.0</code> — release backend resources after this many idle seconds. <code>0</code> disables.</td></tr>
+              <tr><td>stt.vllm.startup_preset</td><td><code>off</code> · <code>balanced</code> · <code>fastest</code> — only applies to <code>vllm:</code> models.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 style="margin: 2rem 0 0.75rem;">Output</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Key</th><th>Default / notes</th></tr></thead>
+            <tbody>
+              <tr><td>output.mode</td><td><code>direct_typing</code> (clipboard untouched) · <code>clipboard_paste</code></td></tr>
+              <tr><td>language</td><td><code>en</code> · <code>ja</code> · <code>zh</code> · any custom code. Use <code>pflow config language</code> for a picker.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 style="margin: 2rem 0 0.75rem;">Runtime UI</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Key</th><th>Default / notes</th></tr></thead>
+            <tbody>
+              <tr><td>runtime.ui_enabled</td><td><code>true</code> — toggle all runtime overlays.</td></tr>
+              <tr><td>runtime.activity_indicator_enabled</td><td><code>true</code> — show the corner recording/transcription indicator.</td></tr>
+              <tr><td>runtime.activity_indicator_margin_right</td><td><code>24</code> px from right edge.</td></tr>
+              <tr><td>runtime.activity_indicator_margin_bottom</td><td><code>24</code> px from bottom edge.</td></tr>
+              <tr><td>runtime.activity_indicator_size</td><td><code>42</code> px (minimum 16).</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- ── Troubleshooting ── -->
+      <div class="docs-section" id="troubleshooting">
+        <p class="eyebrow">Troubleshooting</p>
+        <h2>Common issues</h2>
+
+        <h3 style="margin: 2rem 0 0.5rem;">Permissions show "ON" but the app still reports them missing</h3>
+        <p style="font-size: 0.91rem; color: var(--slate); margin-bottom: 1rem;">This only affects locally built / ad-hoc signed binaries. macOS ties Accessibility and Input Monitoring to the binary's CDHash, which changes on every rebuild. Reset and re-grant:</p>
+        <div class="cmd">
+          <pre><code>tccutil reset Accessibility com.ptarmiganflow.app
+tccutil reset ListenEvent com.ptarmiganflow.app</code></pre>
+          <button type="button" class="copy-btn" data-done="Copied">Copy</button>
+        </div>
+
+        <h3 style="margin: 2rem 0 0.5rem;">Homebrew install fails with "Broken Python installation"</h3>
+        <div class="cmd">
+          <pre><code>brew reinstall python@3.11
+brew untap nakak10/ptarmigan-flow
+brew tap nakak10/ptarmigan-flow https://github.com/NAKAK10/ptarmigan-flow
+brew update
+brew reinstall ptarmigan-flow</code></pre>
+          <button type="button" class="copy-btn" data-done="Copied">Copy</button>
+        </div>
+
+        <h3 style="margin: 2rem 0 0.5rem;">After granting permissions, the daemon still does not detect them</h3>
+        <p style="font-size: 0.91rem; color: var(--slate); margin-bottom: 1rem;">Permissions are bound to the executable, not just the process. Restart the launch agent to rebind:</p>
+        <div class="cmd">
+          <pre><code>pflow restart-launch-agent
+pflow doctor --launchd-check</code></pre>
+          <button type="button" class="copy-btn" data-done="Copied">Copy</button>
+        </div>
+
+        <h3 style="margin: 2rem 0 0.5rem;">Audio quality drops during Bluetooth playback</h3>
+        <p style="font-size: 0.91rem; color: var(--slate);">Set <code>audio.input_device_policy = "playback_friendly"</code> in config (this is the default). Leave <code>audio.input_device</code> unset so ptarmigan-flow can choose a non-HFP mic automatically.</p>
+
+        <div class="note" style="margin-top: 2rem;">
+          <p>For detailed edge cases and all config options, see <a href="https://github.com/NAKAK10/ptarmigan-flow/blob/main/README.llm.md"><code>README.llm.md</code></a> in the repository.</p>
+        </div>
+      </div>
+
+    </div><!-- /wrap -->
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap footer-inner">
+      <div class="footer-brand">
+        <svg class="logo-badge" width="22" height="22" viewBox="0 0 64 64" aria-hidden="true">
+          <rect width="64" height="64" rx="14" fill="var(--badge)"/>
+          <g fill="var(--badge-bird)">
+            <ellipse cx="29" cy="39" rx="17.5" ry="13"/>
+            <circle cx="43" cy="23" r="8.2"/>
+            <path d="M31 31 L47 21 L45 37 Z"/>
+            <path d="M50 19.5 L58.5 23 L50 26.5 Z"/>
+            <path d="M14.5 33 L3.5 44.5 L17 49 Z"/>
+          </g>
+          <circle cx="44.5" cy="21.5" r="1.9" fill="var(--badge)"/>
+          <path d="M37.5 14.6 Q43 10.2 48.5 14.6 Q43 17.2 37.5 14.6 Z" fill="var(--comb)"/>
+        </svg>
+        <span class="brand-name">ptarmigan-flow</span>
+      </div>
+      <ul class="footer-links">
+        <li><a href="./index.html">Home</a></li>
+        <li><a href="./license.html">License</a></li>
+        <li><a href="https://github.com/NAKAK10/ptarmigan-flow">GitHub</a></li>
+        <li><a href="https://github.com/NAKAK10/ptarmigan-flow/blob/main/README.llm.md">README.llm.md</a></li>
+      </ul>
+      <p class="footer-note">Requires macOS 14 or later on Apple Silicon (arm64).</p>
+    </div>
+  </footer>
+
+  <script src="./script.js"></script>
+</body>
+</html>

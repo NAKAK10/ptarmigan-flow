@@ -39,6 +39,7 @@
         <a class="nav-section" href="#features">Features</a>
         <a class="nav-section" href="#install">Install</a>
         <a class="nav-section" href="#permissions">Permissions</a>
+        <a href="./docs.html">Docs</a>
         <a href="https://github.com/NAKAK10/ptarmigan-flow">GitHub</a>
         <a class="lang-switch" href="./ja.html" hreflang="ja" lang="ja">日本語</a>
       </nav>
@@ -47,6 +48,7 @@
 
   <main id="main">
     <section class="hero">
+      <canvas class="hero-canvas" aria-hidden="true"></canvas>
       <div class="wrap">
         <p class="eyebrow">macOS · Apple Silicon · 100% on-device</p>
         <h1>Hold to talk.<br>Release to type.</h1>
@@ -153,6 +155,100 @@ brew install ptarmigan-flow</code></pre>
       </div>
     </section>
 
+    <section class="section" id="models">
+      <div class="wrap">
+        <p class="eyebrow">Models</p>
+        <h2>Five engines, one command to switch</h2>
+        <p class="section-intro">All models run entirely on your Mac — nothing is streamed to a server. Switch any time with <code>pflow list model</code>, or search thousands of community models on Hugging Face Hub.</p>
+        <div class="model-grid">
+          <div class="model-card">
+            <div class="model-header">
+              <span class="model-badge">Mac App</span>
+              <h3>Moonshine tiny</h3>
+            </div>
+            <p class="model-id"><code>moonshine:tiny</code></p>
+            <p>The lightest option. Sub-second latency with minimal RAM. Bundled in the downloadable Mac app — no extra download needed.</p>
+          </div>
+          <div class="model-card">
+            <div class="model-header">
+              <span class="model-badge">Balanced</span>
+              <h3>Moonshine base</h3>
+            </div>
+            <p class="model-id"><code>moonshine:base</code></p>
+            <p>Slightly larger than tiny for better accuracy, still very fast. Great for English dictation on any machine.</p>
+          </div>
+          <div class="model-card">
+            <div class="model-header">
+              <span class="model-badge">Default</span>
+              <h3>IBM Granite Speech</h3>
+            </div>
+            <p class="model-id"><code>granite:ibm-granite/granite-4.0-1b-speech</code></p>
+            <p>The recommended preset. Enterprise-grade accuracy across Japanese and English. Runs on Apple Silicon via MLX, or CPU via Transformers.</p>
+          </div>
+          <div class="model-card">
+            <div class="model-header">
+              <span class="model-badge">Multilingual</span>
+              <h3>Whisper large-v3-turbo</h3>
+            </div>
+            <p class="model-id"><code>mlx:openai/whisper-large-v3-turbo</code></p>
+            <p>OpenAI's battle-tested ASR model, running locally on Apple Silicon via MLX. Strong multilingual accuracy across 99 languages.</p>
+          </div>
+          <div class="model-card">
+            <div class="model-header">
+              <span class="model-badge">Real-time</span>
+              <h3>Mistral Voxtral Mini</h3>
+            </div>
+            <p class="model-id"><code>voxtral:mistralai/Voxtral-Mini-4B-Realtime-2602</code></p>
+            <p>Streaming-capable ASR from Mistral AI. Runs locally via MLX Audio on Apple Silicon — powerful and private.</p>
+          </div>
+          <div class="model-card">
+            <div class="model-header">
+              <span class="model-badge">Custom</span>
+              <h3>vLLM server</h3>
+            </div>
+            <p class="model-id"><code>vllm:&lt;any-compatible-model&gt;</code></p>
+            <p>Point to your own vLLM endpoint. Max model length is auto-tuned from your recording limit. Full control over the backend.</p>
+          </div>
+        </div>
+        <div class="model-hub-hint">
+          <p>Search Hugging Face Hub for any public ASR model and drop it in as your backend:</p>
+          <div class="cmd">
+            <pre><code>pflow list model --hub-search whisper --backend mlx --limit 20</code></pre>
+            <button type="button" class="copy-btn" data-done="Copied">Copy</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="ai-correction">
+      <div class="wrap">
+        <p class="eyebrow">AI Correction</p>
+        <h2>Local LLM post-processing</h2>
+        <p class="section-intro">After each transcription, optionally pipe the text through a local language model for context-aware fixes — proper nouns, punctuation, jargon. Works with Ollama and LM Studio. Your words never leave the Mac.</p>
+        <div class="correction-grid">
+          <div class="correction-card">
+            <h3>Ollama</h3>
+            <p>Run any Ollama model as a post-correction pass. List and select from your downloaded models with one command.</p>
+            <div class="cmd">
+              <pre><code>pflow list ollama</code></pre>
+              <button type="button" class="copy-btn" data-done="Copied">Copy</button>
+            </div>
+          </div>
+          <div class="correction-card">
+            <h3>LM Studio</h3>
+            <p>Already running LM Studio locally? Point ptarmigan-flow at its OpenAI-compatible server endpoint.</p>
+            <div class="cmd">
+              <pre><code>pflow list lmstudio</code></pre>
+              <button type="button" class="copy-btn" data-done="Copied">Copy</button>
+            </div>
+          </div>
+        </div>
+        <div class="correction-privacy">
+          <p><strong>Zero cloud, by design.</strong> The correction LLM runs on the same Mac as the STT model. No API key, no subscription, no telemetry — the entire pipeline from microphone to typed text stays local.</p>
+        </div>
+      </div>
+    </section>
+
     <section class="section" id="install">
       <div class="wrap">
         <p class="eyebrow">Install</p>
@@ -242,9 +338,10 @@ pflow run</code></pre>
         <span class="brand-name">ptarmigan-flow</span>
       </div>
       <ul class="footer-links">
+        <li><a href="./docs.html">Docs</a></li>
+        <li><a href="./license.html">License</a></li>
         <li><a href="https://github.com/NAKAK10/ptarmigan-flow">GitHub</a></li>
-        <li><a href="https://github.com/NAKAK10/ptarmigan-flow/blob/main/README.md">README (English)</a></li>
-        <li><a href="https://github.com/NAKAK10/ptarmigan-flow/blob/main/README.ja.md" hreflang="ja">README（日本語）</a></li>
+        <li><a href="https://github.com/NAKAK10/ptarmigan-flow/blob/main/README.md">README</a></li>
       </ul>
       <p class="footer-note">Requires macOS 14 or later on Apple Silicon (arm64).</p>
     </div>
