@@ -405,9 +405,15 @@ textarea:focus {
 }
 
 .dictionary-list h3 {
-  margin: 8px 0 4px;
+  margin: 8px 0 0;
+}
+
+.dictionary-section-description {
+  margin: 0 0 4px;
   padding-bottom: 8px;
   border-bottom: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 13px;
 }
 
 .model-card {
@@ -565,16 +571,37 @@ textarea:focus {
   border-radius: var(--radius);
   padding: 14px;
   background: var(--elevated);
+  transition: border-color 150ms ease, background 150ms ease;
 }
 
 .dictionary-row textarea {
   min-height: 72px;
 }
 
-.dictionary-row [data-delete-row] {
+.dictionary-row-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.dictionary-row-header input {
+  flex: 1;
+}
+
+.dictionary-row.invalid {
+  border-color: rgba(255, 107, 107, 0.45);
+  background: rgba(255, 107, 107, 0.06);
+}
+
+.field-error {
+  color: var(--error);
+  font-size: 12.5px;
+}
+
+.button.ghost {
   width: auto;
   min-height: 32px;
-  justify-self: end;
+  flex: none;
   border-color: transparent;
   padding: 6px 12px;
   color: var(--muted);
@@ -582,11 +609,66 @@ textarea:focus {
   font-size: 13px;
 }
 
-.dictionary-row [data-delete-row]:hover {
+.button.ghost:hover {
+  border-color: var(--border);
+  background: var(--surface);
+  transform: none;
+}
+
+.button.ghost.danger:hover,
+.button.danger:hover {
   border-color: rgba(255, 107, 107, 0.4);
   color: var(--error);
   background: rgba(255, 107, 107, 0.06);
   transform: none;
+}
+
+.empty-state {
+  display: grid;
+  gap: 8px;
+  justify-items: center;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  padding: 24px 18px;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+}
+
+.empty-state .dictionary-section-description {
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+
+.unsaved-indicator {
+  color: var(--warning);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.unsaved-indicator.hidden {
+  display: none;
+}
+
+.alert {
+  margin-top: 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 14px;
+  font-size: 13px;
+}
+
+.alert.error {
+  border-color: rgba(255, 107, 107, 0.35);
+  color: var(--error);
+  background: rgba(255, 107, 107, 0.08);
+}
+
+.alert.success {
+  border-color: rgba(61, 214, 140, 0.35);
+  color: var(--success);
+  background: rgba(61, 214, 140, 0.08);
 }
 
 .action-bar {

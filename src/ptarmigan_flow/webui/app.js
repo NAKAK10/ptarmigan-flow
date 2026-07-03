@@ -7,6 +7,19 @@ const pending = new Map();
 // absence of an entry means "idle" (no download in progress).
 const downloadStates = new Map();
 
+// Dictionary editor draft state, kept OUTSIDE `state` on purpose: `state` is
+// wholesale replaced by daemonState/permissionsChanged push events (see
+// dispatch() above), which would otherwise wipe in-progress edits. As long as
+// renderDictionary() renders from `dictDraft` (not from `state.dictionary`)
+// once it exists, those push events are harmless to the editor.
+// Shape: { exact: [row...], regex: [row...], dirty } where
+// row = { id, key, valuesText, error }. error is null or { message }.
+let dictDraft = null;
+let dictRowSeq = 1;
+// { kind: "success" | "error", text } | null — summary banner above the
+// dictionary sections; cleared on the next edit.
+let dictionaryMessage = null;
+
 function bridge(action, payload = {}) {
   const id = String(nextId++);
   const message = { id, action, payload };
@@ -583,110 +596,301 @@ async function saveSettings(modelOverride = null) {
 }
 
 function renderDictionary() {
-  const dictionary = state.dictionary || { exact: {}, regex: {} };
+  if (!dictDraft) {
+    dictDraft = buildDictDraft(state.dictionary);
+  }
   return `
     <section class="grid">
       <div class="panel full">
         <h2>${escapeHtml(t("dictionary_editor_title"))}</h2>
-        ${dictionarySection("exact", "dictionary_exact_rules_title", dictionary.exact)}
-        ${dictionarySection("regex", "dictionary_regex_rules_title", dictionary.regex)}
+        ${dictionarySection("exact", dictDraft.exact, "dictionary_exact_rules_title", "dictionary_exact_rules_description", "dictionary_add_exact_button")}
+        ${dictionarySection("regex", dictDraft.regex, "dictionary_regex_rules_title", "dictionary_regex_rules_description", "dictionary_add_regex_button")}
         <div class="actions">
           <button class="button" data-add-dictionary="exact">${escapeHtml(t("dictionary_add_exact_button"))}</button>
           <button class="button" data-add-dictionary="regex">${escapeHtml(t("dictionary_add_regex_button"))}</button>
           <button class="button primary" data-action="save-dictionary">${escapeHtml(t("dictionary_save_button"))}</button>
+          <span class="unsaved-indicator${dictDraft.dirty ? "" : " hidden"}" data-dictionary-unsaved>${escapeHtml(t("dictionary_unsaved_changes_label"))}</span>
         </div>
-        <div id="dictionary-error" class="error"></div>
+        ${dictionaryMessageBox()}
       </div>
     </section>
   `;
 }
 
-function dictionarySection(section, titleKey, entries) {
-  const rows = Object.entries(entries || {});
+function buildDictDraft(dictionary) {
+  const source = dictionary || { exact: {}, regex: {} };
+  return {
+    exact: Object.entries(source.exact || {}).map(([key, values]) => makeDictRow(key, values)),
+    regex: Object.entries(source.regex || {}).map(([key, values]) => makeDictRow(key, values)),
+    dirty: false,
+  };
+}
+
+function makeDictRow(key, values) {
+  return { id: dictRowSeq++, key, valuesText: (values || []).join(", "), error: null };
+}
+
+function dictionaryMessageBox() {
+  if (!dictionaryMessage) {
+    return `<div id="dictionary-error"></div>`;
+  }
+  const cls = dictionaryMessage.kind === "success" ? "alert success" : "alert error";
+  return `<div id="dictionary-error" class="${cls}">${escapeHtml(dictionaryMessage.text)}</div>`;
+}
+
+function dictionarySection(section, rows, titleKey, descriptionKey, addLabelKey) {
+  const body = rows.length
+    ? rows.map((row) => dictionaryRow(section, row)).join("")
+    : dictionaryEmptyState(section, descriptionKey, addLabelKey);
   return `
     <div class="dictionary-list" data-section="${section}">
       <h3>${escapeHtml(t(titleKey))}</h3>
-      ${
-        rows.length
-          ? rows.map(([key, values]) => dictionaryRow(section, key, values)).join("")
-          : `<p>${escapeHtml(t("dictionary_no_rules"))}</p>`
-      }
+      <p class="dictionary-section-description">${escapeHtml(t(descriptionKey))}</p>
+      ${body}
     </div>
   `;
 }
 
-function dictionaryRow(section, key, values) {
+function dictionaryEmptyState(section, descriptionKey, addLabelKey) {
   return `
-    <div class="dictionary-row" data-dictionary-row="${section}">
-      <label>${escapeHtml(t("dictionary_canonical_label"))}</label>
-      <input data-dictionary-key value="${escapeHtml(key)}" />
+    <div class="empty-state">
+      <p>${escapeHtml(t("dictionary_no_rules"))}</p>
+      <p class="dictionary-section-description">${escapeHtml(t(descriptionKey))}</p>
+      <button class="button ghost" data-add-dictionary="${section}">${escapeHtml(t(addLabelKey))}</button>
+    </div>
+  `;
+}
+
+function dictionaryRow(section, row) {
+  const invalidClass = row.error ? " invalid" : "";
+  return `
+    <div class="dictionary-row${invalidClass}" data-dictionary-row="${row.id}" data-section="${section}">
+      <div class="dictionary-row-header">
+        <input
+          data-dictionary-key
+          value="${escapeHtml(row.key)}"
+          aria-label="${escapeHtml(t("dictionary_canonical_label"))}"
+        />
+        <button class="button ghost danger" data-delete-row>${escapeHtml(t("dictionary_delete_button"))}</button>
+      </div>
       <label>${escapeHtml(t("dictionary_candidates_patterns_label"))}</label>
-      <textarea data-dictionary-values>${escapeHtml((values || []).join(", "))}</textarea>
-      <button class="button" data-delete-row>${escapeHtml(t("dictionary_delete_button"))}</button>
+      <textarea data-dictionary-values>${escapeHtml(row.valuesText)}</textarea>
+      ${row.error ? `<div class="field-error">${escapeHtml(row.error.message)}</div>` : ""}
     </div>
   `;
 }
 
 function bindDictionary() {
-  app.querySelectorAll("[data-add-dictionary]").forEach((button) => {
-    button.addEventListener("click", () => {
-      const section = button.dataset.addDictionary;
-      const table = state.dictionary?.[section] || {};
-      const key =
-        section === "exact" ? t("dictionary_new_exact_rule") : t("dictionary_new_regex_rule");
-      table[uniqueDictionaryKey(table, key)] = [
-        section === "exact" ? t("dictionary_default_candidate") : t("dictionary_default_pattern"),
-      ];
-      state.dictionary[section] = table;
-      render();
+  app.querySelectorAll("[data-dictionary-row]").forEach((rowEl) => {
+    const id = Number(rowEl.dataset.dictionaryRow);
+    const section = rowEl.dataset.section;
+    const keyInput = rowEl.querySelector("[data-dictionary-key]");
+    const valuesInput = rowEl.querySelector("[data-dictionary-values]");
+    keyInput?.addEventListener("input", () => {
+      updateDictRow(section, id, { key: keyInput.value });
+    });
+    valuesInput?.addEventListener("input", () => {
+      updateDictRow(section, id, { valuesText: valuesInput.value });
+    });
+    rowEl.querySelector("[data-delete-row]")?.addEventListener("click", () => {
+      deleteDictRow(section, id);
     });
   });
-  app.querySelectorAll("[data-delete-row]").forEach((button) => {
+  app.querySelectorAll("[data-add-dictionary]").forEach((button) => {
     button.addEventListener("click", () => {
-      button.closest("[data-dictionary-row]")?.remove();
+      addDictRow(button.dataset.addDictionary);
     });
   });
   app.querySelector("[data-action='save-dictionary']")?.addEventListener("click", saveDictionary);
 }
 
-function uniqueDictionaryKey(table, base) {
-  if (!table[base]) {
+function findDictRow(section, id) {
+  const list = dictDraft?.[section];
+  return list ? list.find((row) => row.id === id) : undefined;
+}
+
+// Edits patch the draft in place and only touch the DOM directly (dirty
+// indicator, clearing a row's stale error) — never render() here, or every
+// keystroke would rebuild the section and drop focus/cursor position.
+function updateDictRow(section, id, patch) {
+  const row = findDictRow(section, id);
+  if (!row) {
+    return;
+  }
+  Object.assign(row, patch);
+  const hadError = Boolean(row.error);
+  row.error = null;
+  dictDraft.dirty = true;
+  clearDictionaryMessage();
+  if (hadError) {
+    const rowEl = app.querySelector(`[data-dictionary-row="${id}"]`);
+    rowEl?.classList.remove("invalid");
+    rowEl?.querySelector(".field-error")?.remove();
+  }
+  app.querySelector("[data-dictionary-unsaved]")?.classList.toggle("hidden", !dictDraft.dirty);
+}
+
+function addDictRow(section) {
+  if (!dictDraft) {
+    return;
+  }
+  const list = dictDraft[section];
+  const baseKey =
+    section === "exact" ? t("dictionary_new_exact_rule") : t("dictionary_new_regex_rule");
+  const defaultValue =
+    section === "exact" ? t("dictionary_default_candidate") : t("dictionary_default_pattern");
+  list.push({
+    id: dictRowSeq++,
+    key: uniqueDictionaryKey(list, baseKey),
+    valuesText: defaultValue,
+    error: null,
+  });
+  dictDraft.dirty = true;
+  clearDictionaryMessage();
+  render();
+}
+
+function deleteDictRow(section, id) {
+  if (!dictDraft) {
+    return;
+  }
+  const list = dictDraft[section];
+  const index = list.findIndex((row) => row.id === id);
+  if (index === -1) {
+    return;
+  }
+  list.splice(index, 1);
+  dictDraft.dirty = true;
+  clearDictionaryMessage();
+  render();
+}
+
+function uniqueDictionaryKey(rows, base) {
+  const existing = new Set(rows.map((row) => row.key));
+  if (!existing.has(base)) {
     return base;
   }
   let index = 2;
-  while (table[`${base} ${index}`]) {
+  while (existing.has(`${base} ${index}`)) {
     index += 1;
   }
   return `${base} ${index}`;
 }
 
-async function saveDictionary() {
+function clearDictionaryMessage() {
+  if (!dictionaryMessage) {
+    return;
+  }
+  dictionaryMessage = null;
+  const target = document.getElementById("dictionary-error");
+  if (target) {
+    target.className = "";
+    target.textContent = "";
+  }
+}
+
+// Builds the saveDictionary payload from the draft and runs the client-side
+// duplicate-key check (per section) before any bridge call. Rows with both an
+// empty key and no values are dropped silently; a row with a key but no
+// values is still sent so the backend's non-empty-values validation reports
+// it against that row.
+function buildDictionaryPayload() {
+  const computed = new Map();
+  const grouped = { exact: new Map(), regex: new Map() };
+  for (const section of ["exact", "regex"]) {
+    for (const row of dictDraft[section]) {
+      row.error = null;
+      const key = row.key.trim();
+      const values = row.valuesText
+        .split(/[,\n]/)
+        .map((item) => item.trim())
+        .filter(Boolean);
+      computed.set(row.id, { key, values });
+      if (!key && values.length === 0) {
+        continue;
+      }
+      if (!grouped[section].has(key)) {
+        grouped[section].set(key, []);
+      }
+      grouped[section].get(key).push(row);
+    }
+  }
+  let hasDuplicates = false;
+  for (const section of ["exact", "regex"]) {
+    for (const [key, rows] of grouped[section].entries()) {
+      if (rows.length > 1) {
+        hasDuplicates = true;
+        const message = t("dictionary_duplicate_key_message").replace("{key}", key);
+        rows.forEach((row) => {
+          row.error = { message };
+        });
+      }
+    }
+  }
+  if (hasDuplicates) {
+    return { payload: null, hasDuplicates: true };
+  }
   const payload = { exact: {}, regex: {} };
-  app.querySelectorAll("[data-dictionary-row]").forEach((row) => {
-    const section = row.dataset.dictionaryRow;
-    const key = row.querySelector("[data-dictionary-key]").value.trim();
-    const values = row
-      .querySelector("[data-dictionary-values]")
-      .value.split(/[,\n]/)
-      .map((item) => item.trim())
-      .filter(Boolean);
-    payload[section][key] = values;
+  for (const section of ["exact", "regex"]) {
+    for (const row of dictDraft[section]) {
+      const { key, values } = computed.get(row.id);
+      if (!key && values.length === 0) {
+        continue;
+      }
+      payload[section][key] = values;
+    }
+  }
+  return { payload, hasDuplicates: false };
+}
+
+// error = { section, key, index, pattern, message } from the backend
+// (index is 0-based within the rule's value list, or null for row-level
+// errors such as an empty key).
+function composeDictionaryErrorMessage(error) {
+  if (error.index !== null && error.index !== undefined) {
+    return `#${error.index + 1} (${error.pattern}): ${error.message}`;
+  }
+  return error.message;
+}
+
+// Keys are unique within a section after the client-side duplicate check, so
+// matching errors back to rows by (section, trimmed key) is unambiguous.
+function applyDictionarySaveErrors(errors) {
+  errors.forEach((error) => {
+    const row = (dictDraft[error.section] || []).find((r) => r.key.trim() === error.key);
+    if (row) {
+      row.error = { message: composeDictionaryErrorMessage(error) };
+    }
   });
+  const first = errors[0];
+  dictionaryMessage = first ? { kind: "error", text: composeDictionaryErrorMessage(first) } : null;
+}
+
+async function saveDictionary() {
+  if (!dictDraft) {
+    return;
+  }
+  const { payload, hasDuplicates } = buildDictionaryPayload();
+  if (hasDuplicates) {
+    render();
+    return;
+  }
   const result = await bridge("saveDictionary", payload).catch((error) => {
-    showError(error, "dictionary-error");
+    dictionaryMessage = { kind: "error", text: `${t("webui_error_title")}: ${error.message || error}` };
+    render();
     return null;
   });
   if (!result) {
     return;
   }
   if (result.saved === false) {
-    const target = document.getElementById("dictionary-error");
-    if (target) {
-      target.textContent = result.errors.map((error) => error.message).join(", ");
-    }
+    applyDictionarySaveErrors(result.errors || []);
+    render();
     return;
   }
+  dictDraft = null;
   state = await bridge("getState");
+  dictionaryMessage = { kind: "success", text: t("dictionary_saved_message") };
   render();
 }
 
