@@ -36,6 +36,7 @@ REQUIRED_KEYS = {
     "dictionary_new_exact_rule",
     "dictionary_new_regex_rule",
     "dictionary_no_rules",
+    "dictionary_patterns_label",
     "dictionary_regex_rules_description",
     "dictionary_regex_rules_title",
     "dictionary_save_button",
@@ -205,7 +206,10 @@ def test_required_japanese_translations_are_exact() -> None:
     assert strings["dictionary_exact_rules_title"] == "完全一致ルール"
     assert strings["dictionary_regex_rules_title"] == "正規表現ルール"
     assert strings["dictionary_canonical_label"] == "正規表記"
-    assert strings["dictionary_candidates_patterns_label"] == "候補/パターン(カンマ区切り)"
+    assert strings["dictionary_candidates_patterns_label"] == (
+        "候補の表記（カンマまたは改行区切り）"
+    )
+    assert strings["dictionary_patterns_label"] == "パターン（1行に1つ）"
     assert strings["dictionary_no_rules"] == "ルールがありません"
     assert strings["dictionary_add_exact_button"] == "完全一致を追加"
     assert strings["dictionary_add_regex_button"] == "正規表現を追加"

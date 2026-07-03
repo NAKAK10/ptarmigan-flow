@@ -28,7 +28,7 @@ ONBOARDING_STRINGS: dict[str, dict[str, str]] = {
         "dictionary_add_exact_button": "Add Exact",
         "dictionary_add_regex_button": "Add Regex",
         "dictionary_canonical_label": "Canonical",
-        "dictionary_candidates_patterns_label": "Candidates / Patterns (comma-separated)",
+        "dictionary_candidates_patterns_label": "Variants (comma or newline separated)",
         "dictionary_default_candidate": "candidate",
         "dictionary_default_pattern": "pattern",
         "dictionary_delete_button": "Delete",
@@ -46,6 +46,7 @@ ONBOARDING_STRINGS: dict[str, dict[str, str]] = {
         "dictionary_new_exact_rule": "New Exact Rule",
         "dictionary_new_regex_rule": "New Regex Rule",
         "dictionary_no_rules": "No rules yet.",
+        "dictionary_patterns_label": "Patterns (one per line)",
         "dictionary_regex_rules_description": (
             "Text matching any of the regular-expression patterns is replaced with the "
             "rule name."
@@ -164,7 +165,7 @@ ONBOARDING_STRINGS: dict[str, dict[str, str]] = {
         "dictionary_add_exact_button": "完全一致を追加",
         "dictionary_add_regex_button": "正規表現を追加",
         "dictionary_canonical_label": "正規表記",
-        "dictionary_candidates_patterns_label": "候補/パターン(カンマ区切り)",
+        "dictionary_candidates_patterns_label": "候補の表記（カンマまたは改行区切り）",
         "dictionary_default_candidate": "候補",
         "dictionary_default_pattern": "パターン",
         "dictionary_delete_button": "削除",
@@ -181,6 +182,7 @@ ONBOARDING_STRINGS: dict[str, dict[str, str]] = {
         "dictionary_new_exact_rule": "新しい完全一致ルール",
         "dictionary_new_regex_rule": "新しい正規表現ルール",
         "dictionary_no_rules": "ルールがありません",
+        "dictionary_patterns_label": "パターン（1行に1つ）",
         "dictionary_regex_rules_description": (
             "正規表現パターンに一致したテキストをルール名の表記に置き換えます。"
         ),
@@ -296,7 +298,7 @@ ONBOARDING_STRINGS: dict[str, dict[str, str]] = {
         "dictionary_add_exact_button": "添加完全匹配",
         "dictionary_add_regex_button": "添加正则表达式",
         "dictionary_canonical_label": "规范写法",
-        "dictionary_candidates_patterns_label": "候选/模式(逗号分隔)",
+        "dictionary_candidates_patterns_label": "候选写法（逗号或换行分隔）",
         "dictionary_default_candidate": "候选",
         "dictionary_default_pattern": "模式",
         "dictionary_delete_button": "删除",
@@ -313,6 +315,7 @@ ONBOARDING_STRINGS: dict[str, dict[str, str]] = {
         "dictionary_new_exact_rule": "新的完全匹配规则",
         "dictionary_new_regex_rule": "新的正则表达式规则",
         "dictionary_no_rules": "暂无规则",
+        "dictionary_patterns_label": "模式（每行一个）",
         "dictionary_regex_rules_description": (
             "与正则表达式匹配的文本将替换为规则名称的写法。"
         ),

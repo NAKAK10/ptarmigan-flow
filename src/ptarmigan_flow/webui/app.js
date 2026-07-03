@@ -628,14 +628,22 @@ function renderDictionary() {
 function buildDictDraft(dictionary) {
   const source = dictionary || { exact: {}, regex: {} };
   return {
-    exact: Object.entries(source.exact || {}).map(([key, values]) => makeDictRow(key, values)),
-    regex: Object.entries(source.regex || {}).map(([key, values]) => makeDictRow(key, values)),
+    exact: Object.entries(source.exact || {}).map(([key, values]) =>
+      makeDictRow("exact", key, values),
+    ),
+    regex: Object.entries(source.regex || {}).map(([key, values]) =>
+      makeDictRow("regex", key, values),
+    ),
     dirty: false,
   };
 }
 
-function makeDictRow(key, values) {
-  return { id: dictRowSeq++, key, valuesText: (values || []).join(", "), error: null };
+// Exact variants are short comma-friendly tokens, so they display comma-joined
+// and split on commas or newlines. Regex patterns may contain literal commas
+// (e.g. \d{1,2}), so they display and parse one pattern per line only.
+function makeDictRow(section, key, values) {
+  const joiner = section === "regex" ? "\n" : ", ";
+  return { id: dictRowSeq++, key, valuesText: (values || []).join(joiner), error: null };
 }
 
 function dictionaryMessageBox() {
@@ -676,6 +684,8 @@ function dictionaryRow(section, row) {
   const invalidClass = row.error ? " invalid" : "";
   const keyId = `dict-key-${row.id}`;
   const valuesId = `dict-values-${row.id}`;
+  const valuesLabelKey =
+    section === "regex" ? "dictionary_patterns_label" : "dictionary_candidates_patterns_label";
   return `
     <div class="dictionary-row${invalidClass}" data-dictionary-row="${row.id}" data-section="${section}">
       <div class="dictionary-row-header">
@@ -686,7 +696,7 @@ function dictionaryRow(section, row) {
         <button class="button ghost danger" data-delete-row>${escapeHtml(t("dictionary_delete_button"))}</button>
       </div>
       <div class="dictionary-field">
-        <label for="${valuesId}">${escapeHtml(t("dictionary_candidates_patterns_label"))}</label>
+        <label for="${valuesId}">${escapeHtml(t(valuesLabelKey))}</label>
         <textarea id="${valuesId}" data-dictionary-values>${escapeHtml(row.valuesText)}</textarea>
       </div>
       ${row.error ? `<div class="field-error">${escapeHtml(row.error.message)}</div>` : ""}
@@ -758,10 +768,11 @@ function clearDictRowErrorInDom(id) {
 // Rows with both an empty key and no values are treated as blank/ignorable
 // throughout the editor (see buildDictionaryPayload); mirror that here so
 // duplicate-key grouping stays consistent between live edits and save-time
-// validation.
-function parseDictionaryValues(valuesText) {
+// validation. Splitting is section-aware: see the makeDictRow comment.
+function parseDictionaryValues(section, valuesText) {
+  const splitter = section === "regex" ? /\n/ : /[,\n]/;
   return valuesText
-    .split(/[,\n]/)
+    .split(splitter)
     .map((item) => item.trim())
     .filter(Boolean);
 }
@@ -771,7 +782,7 @@ function reconcileDuplicateKeyErrors(section) {
   const counts = new Map();
   rows.forEach((row) => {
     const key = row.key.trim();
-    const values = parseDictionaryValues(row.valuesText);
+    const values = parseDictionaryValues(section, row.valuesText);
     if (!key && values.length === 0) {
       return;
     }
@@ -862,7 +873,7 @@ function buildDictionaryPayload() {
     for (const row of dictDraft[section]) {
       row.error = null;
       const key = row.key.trim();
-      const values = parseDictionaryValues(row.valuesText);
+      const values = parseDictionaryValues(section, row.valuesText);
       computed.set(row.id, { key, values });
       if (!key && values.length === 0) {
         continue;
