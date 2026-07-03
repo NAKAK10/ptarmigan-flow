@@ -90,6 +90,10 @@ def _noop() -> None:
     return
 
 
+def _noop_model_download(_token: str) -> None:
+    return
+
+
 @dataclass(slots=True)
 class BridgeDependencies:
     """External effects used by the Web UI bridge."""
@@ -107,6 +111,7 @@ class BridgeDependencies:
     open_config_file: Callable[[], None] = _default_open_config_file
     start_dictation: Callable[[], object | None] = _noop
     stop_dictation: Callable[[], None] = _noop
+    start_model_download: Callable[[str], None] = _noop_model_download
     daemon_is_running: Callable[[], bool] = lambda: False
     restart_app: Callable[[], bool] = app_relaunch.relaunch_app
     mark_language_selected: Callable[[], None] = onboarding_flow_module.mark_language_selected
@@ -136,6 +141,7 @@ class WebBridgeDispatcher:
             "stopDictation": self._stop_dictation,
             "saveSettings": self._save_settings,
             "listModels": self._list_models,
+            "downloadModel": self._download_model,
             "loadDictionary": self._load_dictionary,
             "saveDictionary": self._save_dictionary,
             "toggleLogin": self._toggle_login,
@@ -288,6 +294,16 @@ class WebBridgeDispatcher:
             }
             for entry in self.deps.available_model_entries()
         ]
+
+    def _download_model(self, payload: dict[str, Any]) -> dict[str, Any]:
+        token = str(payload.get("model", "")).strip()
+        available_tokens = {entry.token for entry in self.deps.available_model_entries()}
+        if token not in available_tokens:
+            return {"started": False, "errors": ["model"]}
+        if self.deps.is_model_downloaded(token):
+            return {"started": False, "already_downloaded": True}
+        self.deps.start_model_download(token)
+        return {"started": True, "model": token}
 
     def _load_dictionary(self, _payload: dict[str, Any]) -> dict[str, dict[str, list[str]]]:
         model = CorrectionsEditorModel.load(self.deps.resolve_dictionary_path())

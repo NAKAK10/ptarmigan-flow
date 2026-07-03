@@ -200,6 +200,9 @@ def _run_appkit_app() -> int:
                     open_config_file=open_config,
                     start_dictation=self._start_daemon_if_ready,
                     stop_dictation=self._stop_daemon,
+                    start_model_download=lambda token: self._start_model_download(
+                        token, "voice_input_started_message"
+                    ),
                     daemon_is_running=lambda: self.daemon_controller.is_running,
                     login_is_enabled=login_item.is_enabled,
                     login_register=login_item.register,
@@ -734,7 +737,11 @@ def _run_appkit_app() -> int:
                         self._model_download_success_message_key,
                     )
                 )
-                self._start_daemon_if_ready(success_message_key=success_key)
+                downloaded_model = str(payload.get("model", ""))
+                if downloaded_model == self._configured_model_token():
+                    self._start_daemon_if_ready(success_message_key=success_key)
+                else:
+                    self._push_daemon_state()
                 return
             if event_type == "error":
                 self._model_download_process = None

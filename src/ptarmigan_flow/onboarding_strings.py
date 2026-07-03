@@ -32,7 +32,12 @@ ONBOARDING_STRINGS: dict[str, dict[str, str]] = {
         "dictionary_default_candidate": "candidate",
         "dictionary_default_pattern": "pattern",
         "dictionary_delete_button": "Delete",
+        "dictionary_duplicate_key_message": "Duplicate rule name: {key}",
         "dictionary_editor_title": "Dictionary Editor",
+        "dictionary_exact_rules_description": (
+            "When the transcript exactly contains one of the listed variants, "
+            "it is replaced with the rule name."
+        ),
         "dictionary_exact_rules_title": "Exact Rules",
         "dictionary_invalid_rule_message": (
             "Invalid dictionary rule: [{section}] {key} {pattern}: {message}"
@@ -41,12 +46,17 @@ ONBOARDING_STRINGS: dict[str, dict[str, str]] = {
         "dictionary_new_exact_rule": "New Exact Rule",
         "dictionary_new_regex_rule": "New Regex Rule",
         "dictionary_no_rules": "No rules yet.",
+        "dictionary_regex_rules_description": (
+            "Text matching any of the regular-expression patterns is replaced with the "
+            "rule name."
+        ),
         "dictionary_regex_rules_title": "Regex Rules",
         "dictionary_save_button": "Save",
         "dictionary_save_failed_message": "Could not save dictionary: {error}",
         "dictionary_saved_message": (
             "Dictionary saved. Restart voice input to apply changes."
         ),
+        "dictionary_unsaved_changes_label": "Unsaved changes",
         "done_body": (
             "Setup is complete. Hold your configured hotkey to dictate, or adjust settings."
         ),
@@ -106,8 +116,12 @@ ONBOARDING_STRINGS: dict[str, dict[str, str]] = {
         "settings_load_failed_message": "Could not load settings: {error}",
         "settings_menu": "Settings",
         "settings_model_download_button": "Download",
+        "settings_model_download_done_message": "Download complete",
+        "settings_model_download_error_message": "Download failed: {error}",
         "settings_model_downloaded_badge": "Downloaded",
         "settings_model_label": "Model",
+        "settings_model_preparing_message": "Preparing download…",
+        "settings_model_retry_button": "Retry",
         "settings_models_section_title": "Models",
         "settings_no_models_message": "No bundled speech models are available.",
         "settings_open_config_button": "Open config file",
@@ -154,7 +168,11 @@ ONBOARDING_STRINGS: dict[str, dict[str, str]] = {
         "dictionary_default_candidate": "候補",
         "dictionary_default_pattern": "パターン",
         "dictionary_delete_button": "削除",
+        "dictionary_duplicate_key_message": "ルール名が重複しています: {key}",
         "dictionary_editor_title": "変換辞書",
+        "dictionary_exact_rules_description": (
+            "認識結果に候補の表記が現れたとき、ルール名の表記に置き換えます。"
+        ),
         "dictionary_exact_rules_title": "完全一致ルール",
         "dictionary_invalid_rule_message": (
             "無効な辞書ルール: [{section}] {key} {pattern}: {message}"
@@ -163,10 +181,14 @@ ONBOARDING_STRINGS: dict[str, dict[str, str]] = {
         "dictionary_new_exact_rule": "新しい完全一致ルール",
         "dictionary_new_regex_rule": "新しい正規表現ルール",
         "dictionary_no_rules": "ルールがありません",
+        "dictionary_regex_rules_description": (
+            "正規表現パターンに一致したテキストをルール名の表記に置き換えます。"
+        ),
         "dictionary_regex_rules_title": "正規表現ルール",
         "dictionary_save_button": "保存",
         "dictionary_save_failed_message": "変換辞書を保存できませんでした: {error}",
         "dictionary_saved_message": "保存しました。反映には音声入力を再起動してください。",
+        "dictionary_unsaved_changes_label": "未保存の変更",
         "done_body": (
             "セットアップが完了しました。設定したホットキーを押している間だけ"
             "音声入力できます。設定も変更できます。"
@@ -231,8 +253,12 @@ ONBOARDING_STRINGS: dict[str, dict[str, str]] = {
         "settings_load_failed_message": "設定を読み込めませんでした: {error}",
         "settings_menu": "設定",
         "settings_model_download_button": "ダウンロード",
+        "settings_model_download_done_message": "ダウンロード完了",
+        "settings_model_download_error_message": "ダウンロードに失敗しました: {error}",
         "settings_model_downloaded_badge": "DL済み",
         "settings_model_label": "モデル",
+        "settings_model_preparing_message": "ダウンロードを準備中…",
+        "settings_model_retry_button": "再試行",
         "settings_models_section_title": "モデル",
         "settings_no_models_message": "このアプリ版で利用できる音声モデルがありません。",
         "settings_open_config_button": "設定ファイルを開く",
@@ -274,7 +300,11 @@ ONBOARDING_STRINGS: dict[str, dict[str, str]] = {
         "dictionary_default_candidate": "候选",
         "dictionary_default_pattern": "模式",
         "dictionary_delete_button": "删除",
+        "dictionary_duplicate_key_message": "规则名称重复：{key}",
         "dictionary_editor_title": "转换词典",
+        "dictionary_exact_rules_description": (
+            "当识别结果中出现所列写法时，替换为规则名称的写法。"
+        ),
         "dictionary_exact_rules_title": "完全匹配规则",
         "dictionary_invalid_rule_message": (
             "无效的词典规则: [{section}] {key} {pattern}: {message}"
@@ -283,10 +313,14 @@ ONBOARDING_STRINGS: dict[str, dict[str, str]] = {
         "dictionary_new_exact_rule": "新的完全匹配规则",
         "dictionary_new_regex_rule": "新的正则表达式规则",
         "dictionary_no_rules": "暂无规则",
+        "dictionary_regex_rules_description": (
+            "与正则表达式匹配的文本将替换为规则名称的写法。"
+        ),
         "dictionary_regex_rules_title": "正则表达式规则",
         "dictionary_save_button": "保存",
         "dictionary_save_failed_message": "无法保存转换词典: {error}",
         "dictionary_saved_message": "已保存。请重启语音输入以应用更改。",
+        "dictionary_unsaved_changes_label": "未保存的更改",
         "done_body": "设置已完成。按住所设置的热键即可语音输入，也可以调整设置。",
         "done_title": "语音输入已就绪",
         "edit_dictionary_menu": "编辑转换词典",
@@ -340,8 +374,12 @@ ONBOARDING_STRINGS: dict[str, dict[str, str]] = {
         "settings_load_failed_message": "无法加载设置: {error}",
         "settings_menu": "设置",
         "settings_model_download_button": "下载",
+        "settings_model_download_done_message": "下载完成",
+        "settings_model_download_error_message": "下载失败：{error}",
         "settings_model_downloaded_badge": "已下载",
         "settings_model_label": "模型",
+        "settings_model_preparing_message": "正在准备下载…",
+        "settings_model_retry_button": "重试",
         "settings_models_section_title": "模型",
         "settings_no_models_message": "此应用版本没有可用的语音模型。",
         "settings_open_config_button": "打开配置文件",

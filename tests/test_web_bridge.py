@@ -353,8 +353,13 @@ def test_dictionary_actions_load_save_and_return_regex_validation_errors(tmp_pat
 
     assert loaded == {"exact": {"AI": ["a i"]}, "regex": {}}
     assert invalid["saved"] is False
+    assert set(invalid["errors"][0]) == {"section", "key", "index", "pattern", "message"}
     assert invalid["errors"][0]["section"] == "regex"
     assert invalid["errors"][0]["key"] == "broken"
+    assert invalid["errors"][0]["index"] == 0
+    assert invalid["errors"][0]["pattern"] == "("
+    assert isinstance(invalid["errors"][0]["message"], str)
+    assert invalid["errors"][0]["message"]
     assert saved == {"saved": True}
     assert CorrectionsEditorModel.load(dictionary_path).regex == {"email": [r"e-?mail"]}
 
@@ -440,3 +445,60 @@ def test_top_level_handle_action_uses_default_dispatcher() -> None:
     result = handle_action("listModels", {})
 
     assert isinstance(result["models"], list)
+
+
+def test_download_model_starts_download_for_valid_not_downloaded_token(
+    tmp_path: Path,
+) -> None:
+    calls: list[str] = []
+    dispatcher = WebBridgeDispatcher(
+        deps=BridgeDependencies(
+            config_path=lambda: tmp_path / "config.toml",
+            available_model_entries=lambda: [_entry("granite:ibm/test")],
+            is_model_downloaded=lambda _token: False,
+            start_model_download=lambda token: calls.append(token),
+        ),
+    )
+
+    result = dispatcher.handle_action("downloadModel", {"model": "granite:ibm/test"})
+
+    assert result == {"started": True, "model": "granite:ibm/test"}
+    assert calls == ["granite:ibm/test"]
+
+
+def test_download_model_rejects_unknown_token_without_calling_dependency(
+    tmp_path: Path,
+) -> None:
+    calls: list[str] = []
+    dispatcher = WebBridgeDispatcher(
+        deps=BridgeDependencies(
+            config_path=lambda: tmp_path / "config.toml",
+            available_model_entries=lambda: [_entry("granite:ibm/test")],
+            is_model_downloaded=lambda _token: False,
+            start_model_download=lambda token: calls.append(token),
+        ),
+    )
+
+    result = dispatcher.handle_action("downloadModel", {"model": "unknown:model"})
+
+    assert result == {"started": False, "errors": ["model"]}
+    assert calls == []
+
+
+def test_download_model_reports_already_downloaded_without_calling_dependency(
+    tmp_path: Path,
+) -> None:
+    calls: list[str] = []
+    dispatcher = WebBridgeDispatcher(
+        deps=BridgeDependencies(
+            config_path=lambda: tmp_path / "config.toml",
+            available_model_entries=lambda: [_entry("granite:ibm/test")],
+            is_model_downloaded=lambda _token: True,
+            start_model_download=lambda token: calls.append(token),
+        ),
+    )
+
+    result = dispatcher.handle_action("downloadModel", {"model": "granite:ibm/test"})
+
+    assert result == {"started": False, "already_downloaded": True}
+    assert calls == []
