@@ -120,7 +120,21 @@ Detect frozen context with `getattr(sys, "frozen", False)`.
 
 ## Building the macOS App Locally (Unsigned)
 
+### Recommended: dev build script
+
+The fastest path — `scripts/build-dev.sh` stops any running instance, resets TCC
+permissions, builds with `APP_VERSION=0.0.0-dev`, and opens the app:
+
 ```bash
+bash scripts/build-dev.sh
+```
+
+Re-grant permissions in System Settings when prompted after it launches.
+
+### Manual build
+
+```bash
+pkill -x "PtarmiganFlow" || true
 export APP_VERSION="0.0.0-dev"
 uv run pyinstaller --clean --noconfirm packaging/macos/PtarmiganFlow.spec
 open dist/PtarmiganFlow.app
