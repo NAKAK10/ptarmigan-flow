@@ -3,7 +3,9 @@ let state = null;
 let route = "onboarding";
 let nextId = 1;
 const pending = new Map();
-const downloadProgress = new Map();
+// token -> { status: "preparing" | "downloading" | "done" | "error", fraction, message }
+// absence of an entry means "idle" (no download in progress).
+const downloadStates = new Map();
 
 function bridge(action, payload = {}) {
   const id = String(nextId++);
@@ -37,10 +39,24 @@ window.app = {
     if (message.event === "downloadProgress") {
       const payload = message.payload || {};
       const token = payload.model || state?.model || "";
-      if (token) {
-        downloadProgress.set(token, payload);
+      if (!token) {
+        return;
       }
-      render();
+      if (payload.type === "progress") {
+        const fraction = payload.fraction;
+        downloadStates.set(token, {
+          status: fraction === null || fraction === undefined ? "preparing" : "downloading",
+          fraction,
+          message: payload.message,
+        });
+      } else if (payload.type === "done") {
+        downloadStates.set(token, { status: "done" });
+      } else if (payload.type === "error") {
+        downloadStates.set(token, { status: "error", message: payload.message });
+      }
+      // Never full-render here: it would wipe in-progress edits in the settings
+      // form while a download runs. Patch only the affected model card.
+      updateModelCardInPlace(token);
       return;
     }
     if (message.event === "routeChanged") {
@@ -326,38 +342,156 @@ function renderSettings() {
 
 function renderModelCard(model, selected) {
   const isSelected = selected === model.token;
-  const active = isSelected ? "primary" : "";
   const selectedClass = isSelected ? "selected" : "";
-  const progress = downloadProgress.get(model.token);
-  const fraction = Math.max(0, Math.min(1, Number(progress?.fraction || 0)));
-  const percent = Math.round(fraction * 100);
-  const downloadingText =
-    progress && !model.downloaded
-      ? t("download_in_progress_message").replace("{percent}", percent + "%")
-      : "";
+  const download = downloadStates.get(model.token);
+  const status = model.downloaded ? "downloaded" : download?.status || "idle";
   return `
-    <div class="model-card ${selectedClass}" data-select-model="${escapeHtml(model.token)}">
+    <div class="model-card ${selectedClass}" data-select-model="${escapeHtml(model.token)}" tabindex="0" role="button">
       <div class="model-info">
         <h3>${escapeHtml(model.label)}</h3>
         <div class="model-meta">${escapeHtml(model.description)}</div>
         <div class="model-token">${escapeHtml(model.token)}</div>
       </div>
       <div class="model-action">
-        ${
-          model.downloaded
-            ? `<span class="badge">${escapeHtml(t("settings_model_downloaded_badge"))}</span>`
-            : progress
-              ? `<span class="model-downloading">${escapeHtml(downloadingText)}</span>`
-              : `<button class="button ${active}" data-download-model="${escapeHtml(model.token)}">${escapeHtml(t("settings_model_download_button"))}</button>`
-        }
+        ${renderModelAction(model, status, download)}
       </div>
-      ${
-        progress
-          ? `<div class="progress"><span style="--value: ${percent}%"></span></div>`
-          : ""
-      }
+      ${renderModelProgress(status, download)}
     </div>
   `;
+}
+
+function renderModelAction(model, status, download) {
+  if (status === "downloaded") {
+    return `<span class="badge">${escapeHtml(t("settings_model_downloaded_badge"))}</span>`;
+  }
+  if (status === "done") {
+    return `<span class="badge">${escapeHtml(t("settings_model_download_done_message"))}</span>`;
+  }
+  if (status === "preparing") {
+    return `<span class="model-downloading">${escapeHtml(t("settings_model_preparing_message"))}</span>`;
+  }
+  if (status === "downloading") {
+    const percent = fractionToPercent(download?.fraction);
+    const text = t("download_in_progress_message").replace("{percent}", percent + "%");
+    return `<span class="model-downloading">${escapeHtml(text)}</span>`;
+  }
+  if (status === "error") {
+    return `
+      <div class="model-download-error">
+        <span class="model-error-text">${escapeHtml(download?.message || "")}</span>
+        <button class="button" data-download-model="${escapeHtml(model.token)}">${escapeHtml(t("settings_model_retry_button"))}</button>
+      </div>
+    `;
+  }
+  return `<button class="button" data-download-model="${escapeHtml(model.token)}">${escapeHtml(t("settings_model_download_button"))}</button>`;
+}
+
+function renderModelProgress(status, download) {
+  if (status === "preparing") {
+    return `
+      <div class="model-progress-row">
+        <div class="progress indeterminate"><span></span></div>
+      </div>
+    `;
+  }
+  if (status === "downloading") {
+    const percent = fractionToPercent(download?.fraction);
+    return `
+      <div class="model-progress-row">
+        <div class="progress"><span style="--value: ${percent}%"></span></div>
+        <span class="model-percent">${percent}%</span>
+      </div>
+    `;
+  }
+  return "";
+}
+
+function fractionToPercent(fraction) {
+  const clamped = Math.max(0, Math.min(1, Number(fraction || 0)));
+  return Math.round(clamped * 100);
+}
+
+function findModelCardElement(token) {
+  return Array.from(app.querySelectorAll("[data-select-model]")).find(
+    (el) => el.dataset.selectModel === token,
+  );
+}
+
+function updateModelCardInPlace(token) {
+  if (!state || route !== "settings") {
+    return;
+  }
+  const cardEl = findModelCardElement(token);
+  if (!cardEl) {
+    // User navigated away from settings; the Map already holds the latest
+    // state and will be reflected next time the settings view renders.
+    return;
+  }
+  const model = (state.models || []).find((entry) => entry.token === token);
+  if (!model) {
+    return;
+  }
+  cardEl.outerHTML = renderModelCard(model, state.settings?.model);
+  bindModelCard(findModelCardElement(token));
+}
+
+// `button` here is the whole `.model-card` element (selection target), named
+// to match the click-to-select convention used across this file.
+function bindModelCard(button) {
+  if (!button) {
+    return;
+  }
+  button.addEventListener("click", () => {
+    state.settings.model = button.dataset.selectModel;
+    render();
+  });
+  button.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " " || event.key === "Spacebar") {
+      event.preventDefault();
+      state.settings.model = button.dataset.selectModel;
+      render();
+    }
+  });
+  button
+    .querySelector("[data-download-model]")
+    ?.addEventListener("click", handleDownloadModelClick);
+}
+
+async function handleDownloadModelClick(event) {
+  // The card itself is also click-bound to model selection; downloading
+  // must not trigger that.
+  event.stopPropagation();
+  const token = event.currentTarget.dataset.downloadModel;
+  if (!token) {
+    return;
+  }
+  downloadStates.set(token, { status: "preparing" });
+  render();
+  let result = null;
+  try {
+    result = await bridge("downloadModel", { model: token });
+  } catch (error) {
+    downloadStates.set(token, { status: "error", message: error.message });
+    updateModelCardInPlace(token);
+    return;
+  }
+  if (result?.started === false) {
+    if (result.already_downloaded) {
+      downloadStates.delete(token);
+      state = await bridge("getState");
+      render();
+      return;
+    }
+    const message = t("settings_model_download_error_message").replace(
+      "{error}",
+      (result.errors || []).join(", "),
+    );
+    downloadStates.set(token, { status: "error", message });
+    updateModelCardInPlace(token);
+    return;
+  }
+  // result.started === true: leave status "preparing"; downloadProgress
+  // events drive the rest of the state machine from here.
 }
 
 function selectRow(id, labelKey, selected, options) {
@@ -408,20 +542,8 @@ function bindSettings() {
   app.querySelector("[data-action='open-config']")?.addEventListener("click", () => {
     bridge("openConfigFile").catch(showError);
   });
-  app.querySelectorAll("[data-select-model]").forEach((button) => {
-    button.addEventListener("click", () => {
-      state.settings.model = button.dataset.selectModel;
-      render();
-    });
-  });
-  app.querySelectorAll("[data-download-model]").forEach((button) => {
-    button.addEventListener("click", async (event) => {
-      event.stopPropagation();
-      await saveSettings(button.dataset.downloadModel);
-      await bridge("startDictation");
-      state = await bridge("getState");
-      render();
-    });
+  app.querySelectorAll("[data-select-model]").forEach((cardEl) => {
+    bindModelCard(cardEl);
   });
 }
 

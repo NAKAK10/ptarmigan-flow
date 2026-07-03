@@ -469,6 +469,8 @@ textarea:focus {
 .model-action {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
+  min-width: 190px;
 }
 
 .model-downloading {
@@ -476,6 +478,19 @@ textarea:focus {
   font-size: 12.5px;
   font-weight: 600;
   white-space: nowrap;
+}
+
+.model-download-error {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.model-error-text {
+  color: var(--error);
+  font-size: 12.5px;
 }
 
 .badge {
@@ -488,13 +503,32 @@ textarea:focus {
   font-weight: 650;
 }
 
-.progress {
+.model-progress-row {
+  display: flex;
   grid-column: 1 / -1;
-  height: 6px;
+  align-items: center;
+  gap: 10px;
   margin-top: 12px;
+}
+
+.model-percent {
+  flex: none;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11.5px;
+}
+
+.progress {
+  position: relative;
+  height: 6px;
   overflow: hidden;
   border-radius: 999px;
   background: #0c0e12;
+}
+
+.model-progress-row .progress {
+  flex: 1;
+  margin-top: 0;
 }
 
 .progress span {
@@ -503,6 +537,24 @@ textarea:focus {
   height: 100%;
   background: linear-gradient(90deg, var(--accent), var(--accent-hover));
   transition: width 150ms ease;
+}
+
+.progress.indeterminate span {
+  position: absolute;
+  top: 0;
+  left: -35%;
+  width: 35%;
+  animation: pf-indeterminate-sweep 1.4s ease-in-out infinite;
+}
+
+@keyframes pf-indeterminate-sweep {
+  0% {
+    left: -35%;
+  }
+
+  100% {
+    left: 100%;
+  }
 }
 
 .dictionary-row {
