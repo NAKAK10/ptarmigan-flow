@@ -378,7 +378,7 @@ function renderModelAction(model, status, download) {
   if (status === "error") {
     return `
       <div class="model-download-error">
-        <span class="model-error-text">${escapeHtml(download?.message || "")}</span>
+        <span class="model-error-text">${escapeHtml(downloadErrorText(download?.message))}</span>
         <button class="button" data-download-model="${escapeHtml(model.token)}">${escapeHtml(t("settings_model_retry_button"))}</button>
       </div>
     `;
@@ -409,6 +409,18 @@ function renderModelProgress(status, download) {
 function fractionToPercent(fraction) {
   const clamped = Math.max(0, Math.min(1, Number(fraction || 0)));
   return Math.round(clamped * 100);
+}
+
+// Formats the localized download-failure text; never returns an empty string.
+// With no detail message, the ": {error}" tail (ASCII or fullwidth colon) is
+// stripped from the template so we don't render a dangling separator.
+function downloadErrorText(message) {
+  const template = t("settings_model_download_error_message");
+  if (message) {
+    return template.replace("{error}", message);
+  }
+  const generic = template.replace(/[:：]?\s*\{error\}/, "").trim();
+  return generic || template;
 }
 
 function findModelCardElement(token) {
@@ -446,6 +458,12 @@ function bindModelCard(button) {
     render();
   });
   button.addEventListener("keydown", (event) => {
+    // Keydown bubbles up from the nested Download/Retry <button>; only handle
+    // keypresses aimed at the card itself so the inner button keeps its
+    // native Enter/Space activation.
+    if (event.target !== event.currentTarget) {
+      return;
+    }
     if (event.key === "Enter" || event.key === " " || event.key === "Spacebar") {
       event.preventDefault();
       state.settings.model = button.dataset.selectModel;
@@ -482,11 +500,9 @@ async function handleDownloadModelClick(event) {
       render();
       return;
     }
-    const message = t("settings_model_download_error_message").replace(
-      "{error}",
-      (result.errors || []).join(", "),
-    );
-    downloadStates.set(token, { status: "error", message });
+    // Store the raw detail; downloadErrorText() applies the localized
+    // "download failed" template at render time.
+    downloadStates.set(token, { status: "error", message: (result.errors || []).join(", ") });
     updateModelCardInPlace(token);
     return;
   }
