@@ -10,12 +10,21 @@
   --success: #3dd68c;
   --error: #ff6b6b;
   --radius: 14px;
+  --radius-sm: 10px;
   --warning: #e8b84b;
   --accent-soft: rgba(110, 139, 255, 0.14);
   --accent-ring: 0 0 0 3px rgba(110, 139, 255, 0.4);
   --text-dim: #6f7681;
   --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
   --shadow: 0 18px 48px rgba(0, 0, 0, 0.34);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.25), 0 4px 12px rgba(0, 0, 0, 0.18);
+  /* Spacing scale — every panel/form/action gap derives from this. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
   color-scheme: dark;
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
 }
@@ -49,22 +58,22 @@ textarea {
 
 .app-shell {
   min-height: 100vh;
-  padding: 28px;
+  padding: var(--space-6);
 }
 
 .topbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 18px;
-  margin: 0 auto 28px;
+  gap: var(--space-4);
+  margin: 0 auto var(--space-6);
   max-width: 1040px;
 }
 
 .brand {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-3);
 }
 
 .brand-logo {
@@ -91,7 +100,7 @@ textarea {
 .brand-status {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: var(--space-2);
   color: var(--muted);
   font-size: 13px;
 }
@@ -123,7 +132,7 @@ textarea {
 
 .nav {
   display: flex;
-  gap: 8px;
+  gap: var(--space-2);
   padding: 5px;
   border: 1px solid var(--border);
   border-radius: 999px;
@@ -134,11 +143,11 @@ textarea {
   min-width: 42px;
   border: 0;
   border-radius: 999px;
-  padding: 8px 14px;
+  padding: var(--space-2) var(--space-4);
   color: var(--muted);
   background: transparent;
   cursor: pointer;
-  transition: background 150ms ease, color 150ms ease;
+  transition: background 150ms ease, color 150ms ease, box-shadow 150ms ease;
 }
 
 .nav button:hover {
@@ -148,8 +157,8 @@ textarea {
 
 .nav button.active {
   color: var(--text);
-  background: var(--elevated);
-  box-shadow: inset 0 0 0 1px var(--border);
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px rgba(110, 139, 255, 0.32);
 }
 
 .panel,
@@ -157,6 +166,13 @@ textarea {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface);
+}
+
+.panel {
+  box-shadow: var(--shadow-sm);
+}
+
+.card {
   box-shadow: var(--shadow);
 }
 
@@ -165,7 +181,7 @@ textarea {
   display: grid;
   min-height: calc(100vh - 132px);
   place-items: center;
-  padding: 24px 0 56px;
+  padding: var(--space-5) 0 56px;
 }
 
 .onboarding-wrap::before {
@@ -199,9 +215,9 @@ textarea {
 
 .steps {
   display: flex;
-  gap: 8px;
+  gap: var(--space-2);
   justify-content: flex-start;
-  margin-bottom: 24px;
+  margin-bottom: var(--space-5);
 }
 
 .dot {
@@ -236,10 +252,13 @@ h1 {
   line-height: 1.18;
 }
 
+/* h2 is reserved for panel titles (see .panel-header below); h3 is used both
+   for model card names and, more subordinately, dictionary section labels. */
 h2 {
-  font-size: 21px;
-  letter-spacing: -0.005em;
-  line-height: 1.22;
+  font-size: 17px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  line-height: 1.3;
 }
 
 h3 {
@@ -248,7 +267,7 @@ h3 {
 }
 
 p {
-  margin: 10px 0 0;
+  margin: var(--space-3) 0 0;
   color: var(--muted);
   line-height: 1.6;
 }
@@ -257,24 +276,38 @@ p {
   max-width: 52ch;
 }
 
+.panel-header {
+  margin-bottom: var(--space-4);
+}
+
+.panel-desc {
+  margin-top: var(--space-1);
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 .actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
-  margin-top: 24px;
+  gap: var(--space-3);
+  margin-top: var(--space-5);
 }
 
 .button {
+  display: inline-flex;
   min-height: 42px;
+  align-items: center;
+  justify-content: center;
   border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 10px 16px;
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-4);
   color: var(--text);
   background: var(--elevated);
   cursor: pointer;
   font-weight: 550;
   transition: border-color 150ms ease, background 150ms ease, box-shadow 150ms ease,
-    transform 150ms ease;
+    color 150ms ease, transform 150ms ease;
 }
 
 .button.primary {
@@ -299,14 +332,48 @@ p {
   transform: translateY(0);
 }
 
+/* Ghost + danger are the "quiet" button variants: same family, no hover
+   lift, and no bold fill until the user is actually about to do something
+   destructive (danger only turns red on hover). */
+.button.ghost,
+.button.danger {
+  min-height: 36px;
+  border-color: transparent;
+  padding: 0 var(--space-3);
+  background: transparent;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.button.ghost {
+  color: var(--muted);
+}
+
+.button.danger {
+  color: var(--error);
+}
+
+.button.ghost:hover,
+.button.danger:hover {
+  border-color: var(--border);
+  background: var(--surface);
+  transform: none;
+}
+
+.button.danger:hover {
+  border-color: rgba(255, 107, 107, 0.35);
+  color: var(--error);
+  background: rgba(255, 107, 107, 0.08);
+}
+
 .status-pill {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  margin-top: 18px;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
   border: 1px solid var(--border);
   border-radius: 999px;
-  padding: 7px 12px;
+  padding: var(--space-2) var(--space-3);
   color: var(--text);
   background: var(--elevated);
   font-size: 13px;
@@ -338,13 +405,13 @@ p {
 .grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
+  gap: var(--space-4);
   max-width: 1040px;
   margin: 0 auto;
 }
 
 .panel {
-  padding: 22px;
+  padding: var(--space-5);
 }
 
 .panel.full {
@@ -353,8 +420,8 @@ p {
 
 .form-row {
   display: grid;
-  gap: 8px;
-  margin-top: 16px;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
 }
 
 label {
@@ -368,17 +435,33 @@ select,
 textarea {
   width: 100%;
   border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 11px 14px;
+  border-radius: var(--radius-sm);
   color: var(--text);
   background: var(--elevated);
   outline: none;
   transition: border-color 150ms ease, box-shadow 150ms ease;
 }
 
+input,
+select {
+  min-height: 42px;
+  padding: 0 var(--space-4);
+}
+
 textarea {
   min-height: 96px;
+  padding: var(--space-3) var(--space-4);
   resize: vertical;
+}
+
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 36px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%239aa0aa' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right var(--space-4) center;
+  background-size: 10px 6px;
 }
 
 input::placeholder,
@@ -394,24 +477,34 @@ textarea:focus {
 
 .model-list {
   display: grid;
-  gap: 10px;
-  margin-top: 16px;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
 }
 
 .dictionary-list {
   display: grid;
-  gap: 12px;
-  margin-top: 16px;
+  gap: var(--space-4);
+  margin-top: var(--space-4);
+}
+
+.dictionary-section-header {
+  display: grid;
+  gap: var(--space-1);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border);
 }
 
 .dictionary-list h3 {
-  margin: 8px 0 0;
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
 .dictionary-section-description {
-  margin: 0 0 4px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid var(--border);
+  margin: 0;
   color: var(--muted);
   font-size: 13px;
 }
@@ -421,10 +514,10 @@ textarea:focus {
   display: grid;
   grid-template-columns: 1fr auto;
   align-items: center;
-  gap: 16px;
+  gap: var(--space-4);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 16px 18px;
+  padding: var(--space-4) var(--space-5);
   background: var(--elevated);
   cursor: pointer;
   transition: border-color 150ms ease, transform 150ms ease;
@@ -442,8 +535,8 @@ textarea:focus {
 .model-card.selected::before {
   content: "";
   position: absolute;
-  top: 14px;
-  bottom: 14px;
+  top: var(--space-4);
+  bottom: var(--space-4);
   left: 0;
   width: 3px;
   border-radius: 0 3px 3px 0;
@@ -454,7 +547,7 @@ textarea:focus {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-1);
 }
 
 .model-card h3 {
@@ -491,7 +584,7 @@ textarea:focus {
   align-items: center;
   flex-wrap: wrap;
   justify-content: flex-end;
-  gap: 10px;
+  gap: var(--space-3);
 }
 
 .model-error-text {
@@ -513,8 +606,8 @@ textarea:focus {
   display: flex;
   grid-column: 1 / -1;
   align-items: center;
-  gap: 10px;
-  margin-top: 12px;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
 }
 
 .model-percent {
@@ -529,7 +622,8 @@ textarea:focus {
   height: 6px;
   overflow: hidden;
   border-radius: 999px;
-  background: #0c0e12;
+  background: rgba(0, 0, 0, 0.32);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.3);
 }
 
 .model-progress-row .progress {
@@ -566,10 +660,10 @@ textarea:focus {
 .dictionary-row {
   position: relative;
   display: grid;
-  gap: 10px;
+  gap: var(--space-3);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 14px;
+  padding: var(--space-4);
   background: var(--elevated);
   transition: border-color 150ms ease, background 150ms ease;
 }
@@ -580,16 +674,26 @@ textarea:focus {
 
 .dictionary-row-header {
   display: flex;
-  align-items: center;
-  gap: 10px;
+  align-items: flex-end;
+  gap: var(--space-3);
 }
 
-.dictionary-row-header input {
+.dictionary-row-header .dictionary-field {
   flex: 1;
+  min-width: 0;
+}
+
+.dictionary-field {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.dictionary-field label {
+  font-size: 12px;
 }
 
 .dictionary-row.invalid {
-  border-color: rgba(255, 107, 107, 0.45);
+  border-color: rgba(255, 107, 107, 0.35);
   background: rgba(255, 107, 107, 0.06);
 }
 
@@ -598,47 +702,16 @@ textarea:focus {
   font-size: 12.5px;
 }
 
-.button.ghost {
-  width: auto;
-  min-height: 32px;
-  flex: none;
-  border-color: transparent;
-  padding: 6px 12px;
-  color: var(--muted);
-  background: transparent;
-  font-size: 13px;
-}
-
-.button.ghost:hover {
-  border-color: var(--border);
-  background: var(--surface);
-  transform: none;
-}
-
-.button.ghost.danger:hover,
-.button.danger:hover {
-  border-color: rgba(255, 107, 107, 0.4);
-  color: var(--error);
-  background: rgba(255, 107, 107, 0.06);
-  transform: none;
-}
-
 .empty-state {
   display: grid;
-  gap: 8px;
+  gap: var(--space-3);
   justify-items: center;
   border: 1px dashed var(--border);
   border-radius: var(--radius);
-  padding: 24px 18px;
+  padding: var(--space-6) var(--space-4);
   color: var(--muted);
   font-size: 13px;
   text-align: center;
-}
-
-.empty-state .dictionary-section-description {
-  margin: 0;
-  padding: 0;
-  border: none;
 }
 
 .unsaved-indicator {
@@ -652,21 +725,22 @@ textarea:focus {
 }
 
 .alert {
-  margin-top: 14px;
+  margin-top: var(--space-4);
   border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  padding: var(--space-3) var(--space-4);
   font-size: 13px;
+  line-height: 1.5;
 }
 
 .alert.error {
-  border-color: rgba(255, 107, 107, 0.35);
+  border-color: rgba(255, 107, 107, 0.32);
   color: var(--error);
   background: rgba(255, 107, 107, 0.08);
 }
 
 .alert.success {
-  border-color: rgba(61, 214, 140, 0.35);
+  border-color: rgba(61, 214, 140, 0.32);
   color: var(--success);
   background: rgba(61, 214, 140, 0.08);
 }
@@ -675,8 +749,8 @@ textarea:focus {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 16px;
-  padding: 16px 20px;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-5);
   box-shadow: none;
 }
 
@@ -687,7 +761,7 @@ textarea:focus {
 
 .action-bar .button.primary {
   min-height: 44px;
-  padding: 11px 22px;
+  padding: 0 var(--space-5);
 }
 
 button:focus-visible,
@@ -702,14 +776,14 @@ textarea:focus-visible,
 }
 
 .error {
-  margin-top: 14px;
+  margin-top: var(--space-4);
   color: var(--error);
   font-size: 13px;
 }
 
 @media (max-width: 760px) {
   .app-shell {
-    padding: 18px;
+    padding: var(--space-4);
   }
 
   .grid {

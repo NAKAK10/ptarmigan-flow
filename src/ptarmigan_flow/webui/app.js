@@ -311,13 +311,17 @@ function renderSettings() {
   return `
     <section class="grid">
       <div class="panel full">
-        <h2>${escapeHtml(t("settings_models_section_title"))}</h2>
+        <div class="panel-header">
+          <h2>${escapeHtml(t("settings_models_section_title"))}</h2>
+        </div>
         <div class="model-list">
           ${models.map((model) => renderModelCard(model, settings.model)).join("")}
         </div>
       </div>
       <div class="panel">
-        <h2>${escapeHtml(t("settings_window_title"))}</h2>
+        <div class="panel-header">
+          <h2>${escapeHtml(t("settings_window_title"))}</h2>
+        </div>
         ${selectRow("language", "settings_language_label", settings.language, [
           ["en", t("language_english")],
           ["ja", t("language_japanese")],
@@ -335,7 +339,9 @@ function renderSettings() {
         </div>
       </div>
       <div class="panel">
-        <h2>${escapeHtml(t("settings_llm_section_title"))}</h2>
+        <div class="panel-header">
+          <h2>${escapeHtml(t("settings_llm_section_title"))}</h2>
+        </div>
         ${selectRow("llm_mode", "settings_llm_mode_label", llm.mode, [
           ["always", t("settings_llm_mode_always")],
           ["never", t("settings_llm_mode_never")],
@@ -602,7 +608,9 @@ function renderDictionary() {
   return `
     <section class="grid">
       <div class="panel full">
-        <h2>${escapeHtml(t("dictionary_editor_title"))}</h2>
+        <div class="panel-header">
+          <h2>${escapeHtml(t("dictionary_editor_title"))}</h2>
+        </div>
         ${dictionarySection("exact", dictDraft.exact, "dictionary_exact_rules_title", "dictionary_exact_rules_description", "dictionary_add_exact_button")}
         ${dictionarySection("regex", dictDraft.regex, "dictionary_regex_rules_title", "dictionary_regex_rules_description", "dictionary_add_regex_button")}
         <div class="actions">
@@ -641,21 +649,24 @@ function dictionaryMessageBox() {
 function dictionarySection(section, rows, titleKey, descriptionKey, addLabelKey) {
   const body = rows.length
     ? rows.map((row) => dictionaryRow(section, row)).join("")
-    : dictionaryEmptyState(section, descriptionKey, addLabelKey);
+    : dictionaryEmptyState(section, addLabelKey);
   return `
     <div class="dictionary-list" data-section="${section}">
-      <h3>${escapeHtml(t(titleKey))}</h3>
-      <p class="dictionary-section-description">${escapeHtml(t(descriptionKey))}</p>
+      <div class="dictionary-section-header">
+        <h3>${escapeHtml(t(titleKey))}</h3>
+        <p class="dictionary-section-description">${escapeHtml(t(descriptionKey))}</p>
+      </div>
       ${body}
     </div>
   `;
 }
 
-function dictionaryEmptyState(section, descriptionKey, addLabelKey) {
+// The section description already lives next to the h3 above; the empty
+// state only needs the "no rules yet" message plus an inline way to add one.
+function dictionaryEmptyState(section, addLabelKey) {
   return `
     <div class="empty-state">
       <p>${escapeHtml(t("dictionary_no_rules"))}</p>
-      <p class="dictionary-section-description">${escapeHtml(t(descriptionKey))}</p>
       <button class="button ghost" data-add-dictionary="${section}">${escapeHtml(t(addLabelKey))}</button>
     </div>
   `;
@@ -663,18 +674,21 @@ function dictionaryEmptyState(section, descriptionKey, addLabelKey) {
 
 function dictionaryRow(section, row) {
   const invalidClass = row.error ? " invalid" : "";
+  const keyId = `dict-key-${row.id}`;
+  const valuesId = `dict-values-${row.id}`;
   return `
     <div class="dictionary-row${invalidClass}" data-dictionary-row="${row.id}" data-section="${section}">
       <div class="dictionary-row-header">
-        <input
-          data-dictionary-key
-          value="${escapeHtml(row.key)}"
-          aria-label="${escapeHtml(t("dictionary_canonical_label"))}"
-        />
+        <div class="dictionary-field">
+          <label for="${keyId}">${escapeHtml(t("dictionary_canonical_label"))}</label>
+          <input id="${keyId}" data-dictionary-key value="${escapeHtml(row.key)}" />
+        </div>
         <button class="button ghost danger" data-delete-row>${escapeHtml(t("dictionary_delete_button"))}</button>
       </div>
-      <label>${escapeHtml(t("dictionary_candidates_patterns_label"))}</label>
-      <textarea data-dictionary-values>${escapeHtml(row.valuesText)}</textarea>
+      <div class="dictionary-field">
+        <label for="${valuesId}">${escapeHtml(t("dictionary_candidates_patterns_label"))}</label>
+        <textarea id="${valuesId}" data-dictionary-values>${escapeHtml(row.valuesText)}</textarea>
+      </div>
       ${row.error ? `<div class="field-error">${escapeHtml(row.error.message)}</div>` : ""}
     </div>
   `;
@@ -717,17 +731,64 @@ function updateDictRow(section, id, patch) {
   if (!row) {
     return;
   }
+  const keyChanged = Object.prototype.hasOwnProperty.call(patch, "key");
   Object.assign(row, patch);
   const hadError = Boolean(row.error);
   row.error = null;
   dictDraft.dirty = true;
   clearDictionaryMessage();
   if (hadError) {
-    const rowEl = app.querySelector(`[data-dictionary-row="${id}"]`);
-    rowEl?.classList.remove("invalid");
-    rowEl?.querySelector(".field-error")?.remove();
+    clearDictRowErrorInDom(id);
+  }
+  if (keyChanged) {
+    // Editing this row's key may resolve a duplicate-key collision on other
+    // rows (e.g. renaming one of two rows both keyed "foo"). Recompute the
+    // per-section duplicate set and drop any sibling's now-stale error.
+    reconcileDuplicateKeyErrors(section);
   }
   app.querySelector("[data-dictionary-unsaved]")?.classList.toggle("hidden", !dictDraft.dirty);
+}
+
+function clearDictRowErrorInDom(id) {
+  const rowEl = app.querySelector(`[data-dictionary-row="${id}"]`);
+  rowEl?.classList.remove("invalid");
+  rowEl?.querySelector(".field-error")?.remove();
+}
+
+// Rows with both an empty key and no values are treated as blank/ignorable
+// throughout the editor (see buildDictionaryPayload); mirror that here so
+// duplicate-key grouping stays consistent between live edits and save-time
+// validation.
+function parseDictionaryValues(valuesText) {
+  return valuesText
+    .split(/[,\n]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function reconcileDuplicateKeyErrors(section) {
+  const rows = dictDraft?.[section] || [];
+  const counts = new Map();
+  rows.forEach((row) => {
+    const key = row.key.trim();
+    const values = parseDictionaryValues(row.valuesText);
+    if (!key && values.length === 0) {
+      return;
+    }
+    counts.set(key, (counts.get(key) || 0) + 1);
+  });
+  rows.forEach((row) => {
+    if (!row.error) {
+      return;
+    }
+    const key = row.key.trim();
+    const duplicateMessage = t("dictionary_duplicate_key_message").replace("{key}", key);
+    const stillDuplicate = (counts.get(key) || 0) > 1;
+    if (row.error.message === duplicateMessage && !stillDuplicate) {
+      row.error = null;
+      clearDictRowErrorInDom(row.id);
+    }
+  });
 }
 
 function addDictRow(section) {
@@ -801,10 +862,7 @@ function buildDictionaryPayload() {
     for (const row of dictDraft[section]) {
       row.error = null;
       const key = row.key.trim();
-      const values = row.valuesText
-        .split(/[,\n]/)
-        .map((item) => item.trim())
-        .filter(Boolean);
+      const values = parseDictionaryValues(row.valuesText);
       computed.set(row.id, { key, values });
       if (!key && values.length === 0) {
         continue;
