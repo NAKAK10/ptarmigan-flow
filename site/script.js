@@ -107,8 +107,13 @@
 
       var dpr   = window.devicePixelRatio || 1;
       var dark  = window.matchMedia("(prefers-color-scheme: dark)").matches;
-      var R = 232, G = 85, B = 64;
-      var aScale = dark ? 1.0 : 0.55;
+      /* Alpine glass palette: mid-tone steel blues with alpha read on both
+         light and dark backgrounds; one rust "comb" line at low opacity. */
+      var STEEL  = [90, 130, 160];   /* ice-steel blue        */
+      var ALPINE = [68, 112, 143];   /* steel blue (--alpine) */
+      var FROST  = [127, 168, 201];  /* lighter ice           */
+      var COMB   = [199, 92, 58];    /* rust comb accent      */
+      var aScale = dark ? 1.0 : 0.75;
       var W = lw, H = lh;
 
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -118,21 +123,21 @@
       var cy = H * 0.48;
 
       /* ── Waveform layers ──────────────────────────── */
-      /* [freq, amplitude, speed, alpha, lineWidth, glowBlur, phaseOffset] */
+      /* [freq, amplitude, speed, alpha, lineWidth, glowBlur, phaseOffset, rgb] */
       var waves = [
-        [1.1,  H * 0.19, 0.006, 0.06, 2.5,  0,  0.0],
-        [2.3,  H * 0.12, 0.011, 0.22, 2.2, 16,  0.5],
-        [3.7,  H * 0.07, 0.018, 0.13, 1.5,  0,  1.1],
-        [5.4,  H * 0.04, 0.027, 0.08, 1.0,  0,  2.3],
-        [0.7,  H * 0.10, 0.004, 0.05, 2.0,  0,  3.7],
+        [1.1,  H * 0.19, 0.006, 0.07, 2.5,  0,  0.0, STEEL],
+        [2.3,  H * 0.12, 0.011, 0.24, 2.2, 16,  0.5, ALPINE],
+        [3.7,  H * 0.07, 0.018, 0.14, 1.5,  0,  1.1, FROST],
+        [5.4,  H * 0.04, 0.027, 0.10, 1.0,  0,  2.3, COMB],
+        [0.7,  H * 0.10, 0.004, 0.06, 2.0,  0,  3.7, STEEL],
       ];
 
       for (var wi = 0; wi < waves.length; wi++) {
         var wv = waves[wi];
         var freq = wv[0], amp = wv[1], speed = wv[2],
             alpha = wv[3] * aScale, lwidth = wv[4],
-            glow  = wv[5], ph = wv[6];
-        var col = "rgba(" + R + "," + G + "," + B + ",";
+            glow  = wv[5], ph = wv[6], rgb = wv[7];
+        var col = "rgba(" + rgb[0] + "," + rgb[1] + "," + rgb[2] + ",";
 
         var grd = ctx.createLinearGradient(0, 0, W, 0);
         grd.addColorStop(0,    col + "0)");
@@ -180,17 +185,18 @@
 
         /* smooth edge fade-out */
         var ef = Math.min(i / (N * 0.07), 1) * Math.min((N - 1 - i) / (N * 0.07), 1);
-        var bAlpha = (dark ? 0.30 : 0.18) * ef;
+        var bAlpha = (dark ? 0.30 : 0.20) * ef;
+        var bc = STEEL;
 
         var bGrd = ctx.createLinearGradient(0, baseY - bh, 0, baseY);
-        bGrd.addColorStop(0, "rgba(" + R + "," + G + "," + B + "," + bAlpha + ")");
-        bGrd.addColorStop(1, "rgba(" + R + "," + G + "," + B + ",0)");
+        bGrd.addColorStop(0, "rgba(" + bc[0] + "," + bc[1] + "," + bc[2] + "," + bAlpha + ")");
+        bGrd.addColorStop(1, "rgba(" + bc[0] + "," + bc[1] + "," + bc[2] + ",0)");
         ctx.fillStyle = bGrd;
         ctx.fillRect(bx - barW / 2, baseY - bh, barW, bh);
 
         /* peak dot on each bar */
         if (dark && ef > 0.5) {
-          ctx.fillStyle = "rgba(" + R + "," + G + "," + B + "," + (bAlpha * 1.5) + ")";
+          ctx.fillStyle = "rgba(" + bc[0] + "," + bc[1] + "," + bc[2] + "," + (bAlpha * 1.5) + ")";
           ctx.fillRect(bx - barW / 2, baseY - bh - 2, barW, 2);
         }
       }

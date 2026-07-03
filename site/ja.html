@@ -7,11 +7,15 @@
   <meta name="description" content="キーを押して話し、離すだけ。ローカルの音声認識モデルが文字起こしして、アクティブなアプリへそのまま入力します。macOS（Apple Silicon）向けのプッシュトゥトーク音声入力。音声がMacの外に出ることはありません。">
   <meta property="og:title" content="ptarmigan-flow — macOSのための完全ローカル音声入力">
   <meta property="og:description" content="キーを押して話し、離すだけ。ローカルの音声認識モデルが文字起こしして、アクティブなアプリへ入力します。音声がMacの外に出ることはありません。">
-  <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f3f5f6">
-  <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#14181b">
+  <meta property="og:image" content="https://nakak10.github.io/ptarmigan-flow/icon-512.png">
+  <meta name="twitter:card" content="summary">
+  <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f4f7fa">
+  <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0b1218">
   <link rel="alternate" hreflang="en" href="./index.html">
   <link rel="alternate" hreflang="ja" href="./ja.html">
-  <link rel="icon" type="image/svg+xml" href="./favicon.svg">
+  <link rel="icon" type="image/png" sizes="32x32" href="./favicon-32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="./favicon-16.png">
+  <link rel="apple-touch-icon" href="./apple-touch-icon.png">
   <link rel="stylesheet" href="./styles.css">
 </head>
 <body>
@@ -20,18 +24,7 @@
   <header class="site-header">
     <div class="wrap header-inner">
       <a class="brand" href="./ja.html">
-        <svg class="logo-badge" width="28" height="28" viewBox="0 0 64 64" role="img" aria-label="ptarmigan-flow のロゴ">
-          <rect width="64" height="64" rx="14" fill="var(--badge)"/>
-          <g fill="var(--badge-bird)">
-            <ellipse cx="29" cy="39" rx="17.5" ry="13"/>
-            <circle cx="43" cy="23" r="8.2"/>
-            <path d="M31 31 L47 21 L45 37 Z"/>
-            <path d="M50 19.5 L58.5 23 L50 26.5 Z"/>
-            <path d="M14.5 33 L3.5 44.5 L17 49 Z"/>
-          </g>
-          <circle cx="44.5" cy="21.5" r="1.9" fill="var(--badge)"/>
-          <path d="M37.5 14.6 Q43 10.2 48.5 14.6 Q43 17.2 37.5 14.6 Z" fill="var(--comb)"/>
-        </svg>
+        <img class="brand-icon" src="./icon-512.png" width="40" height="40" alt="">
         <span class="brand-name">ptarmigan-flow</span>
       </a>
       <nav class="site-nav" aria-label="メイン">
@@ -49,33 +42,69 @@
   <main id="main">
     <section class="hero">
       <canvas class="hero-canvas" aria-hidden="true"></canvas>
-      <div class="wrap">
-        <p class="eyebrow">macOS · Apple Silicon · 完全ローカル処理</p>
-        <h1>押して話す。<br>離せば、文字に。</h1>
-        <p class="lede">ptarmigan-flow は macOS 向けのプッシュトゥトーク音声入力デーモンです。右 <strong>&#8984;</strong> キーを押している間だけ録音し、離すと<strong>ローカル</strong>の音声認識モデルが文字起こしして、アクティブなアプリへそのまま入力します。<strong>音声があなたの Mac の外へ送られることはありません。</strong></p>
+      <svg class="hero-ridge" aria-hidden="true" viewBox="0 0 1440 260" preserveAspectRatio="none" focusable="false">
+        <!-- back range -->
+        <polygon points="0,260 150,110 155,260" fill="var(--facet-1)" fill-opacity="0.55"/>
+        <polygon points="150,110 155,260 330,260" fill="var(--facet-2)" fill-opacity="0.5"/>
+        <polygon points="240,260 425,70 430,260" fill="var(--facet-2)" fill-opacity="0.6"/>
+        <polygon points="425,70 430,260 620,260" fill="var(--facet-3)" fill-opacity="0.55"/>
+        <polygon points="383,113 425,70 468,113" fill="var(--facet-snow)" fill-opacity="0.8"/>
+        <polygon points="600,260 765,100 770,260" fill="var(--facet-1)" fill-opacity="0.55"/>
+        <polygon points="765,100 770,260 935,260" fill="var(--facet-2)" fill-opacity="0.5"/>
+        <polygon points="880,260 1080,50 1085,260" fill="var(--facet-2)" fill-opacity="0.6"/>
+        <polygon points="1080,50 1085,260 1300,260" fill="var(--facet-3)" fill-opacity="0.55"/>
+        <polygon points="1028,105 1080,50 1133,105" fill="var(--facet-snow)" fill-opacity="0.85"/>
+        <polygon points="1240,260 1365,120 1370,260" fill="var(--facet-1)" fill-opacity="0.5"/>
+        <polygon points="1365,120 1440,195 1440,260 1370,260" fill="var(--facet-2)" fill-opacity="0.5"/>
+        <!-- front range -->
+        <polygon points="-30,260 95,155 100,260" fill="var(--facet-4)" fill-opacity="0.85"/>
+        <polygon points="95,155 100,260 230,260" fill="var(--facet-5)" fill-opacity="0.8"/>
+        <polygon points="180,260 335,180 340,260" fill="var(--facet-3)" fill-opacity="0.7"/>
+        <polygon points="335,180 340,260 485,260" fill="var(--facet-4)" fill-opacity="0.8"/>
+        <polygon points="440,260 565,150 570,260" fill="var(--facet-4)" fill-opacity="0.8"/>
+        <polygon points="565,150 570,260 725,260" fill="var(--facet-5)" fill-opacity="0.85"/>
+        <polygon points="523,192 565,150 608,192" fill="var(--facet-snow)" fill-opacity="0.7"/>
+        <polygon points="705,260 865,190 870,260" fill="var(--facet-3)" fill-opacity="0.7"/>
+        <polygon points="865,190 870,260 1005,260" fill="var(--facet-4)" fill-opacity="0.75"/>
+        <polygon points="1000,260 1155,160 1160,260" fill="var(--facet-4)" fill-opacity="0.8"/>
+        <polygon points="1155,160 1160,260 1315,260" fill="var(--facet-5)" fill-opacity="0.8"/>
+        <polygon points="1275,260 1405,185 1410,260" fill="var(--facet-3)" fill-opacity="0.7"/>
+        <polygon points="1405,185 1440,225 1440,260 1410,260" fill="var(--facet-4)" fill-opacity="0.75"/>
+      </svg>
+      <div class="wrap hero-grid">
+        <div class="hero-copy">
+          <p class="eyebrow">macOS · Apple Silicon · 完全ローカル処理</p>
+          <h1>押して話す。<br>離せば、文字に。</h1>
+          <p class="lede">ptarmigan-flow は macOS 向けのプッシュトゥトーク音声入力デーモンです。右 <strong>&#8984;</strong> キーを押している間だけ録音し、離すと<strong>ローカル</strong>の音声認識モデルが文字起こしして、アクティブなアプリへそのまま入力します。<strong>音声があなたの Mac の外へ送られることはありません。</strong></p>
 
-        <div class="flow-strip" aria-hidden="true">
-          <span class="keycap"><span class="keycap-glyph">&#8984;</span><span class="keycap-label">hold</span></span>
-          <span class="rec"><span class="rec-dot"></span>REC</span>
-          <span class="wave"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
-          <span class="flow-arrow">&#8594;</span>
-          <span class="typed"><span class="typed-text">金曜までにリリースノートをお送りします。</span><span class="caret"></span></span>
-        </div>
-
-        <div class="cta-grid">
-          <div class="cta-card">
-            <h2 class="cta-title">Mac アプリをダウンロード</h2>
-            <p class="cta-note">署名・公証済み · macOS 14 以降 · Apple Silicon（arm64）</p>
-            <a class="btn" href="https://github.com/NAKAK10/ptarmigan-flow/releases/latest/download/PtarmiganFlow-macos-arm64.zip">PtarmiganFlow.zip をダウンロード</a>
+          <div class="flow-strip" aria-hidden="true">
+            <span class="keycap"><span class="keycap-glyph">&#8984;</span><span class="keycap-label">hold</span></span>
+            <span class="rec"><span class="rec-dot"></span>REC</span>
+            <span class="wave"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+            <span class="flow-arrow">&#8594;</span>
+            <span class="typed"><span class="typed-text">金曜までにリリースノートをお送りします。</span><span class="caret"></span></span>
           </div>
-          <div class="cta-card">
-            <h2 class="cta-title">Homebrew でインストール</h2>
-            <div class="cmd">
-              <pre><code>brew tap nakak10/ptarmigan-flow https://github.com/NAKAK10/ptarmigan-flow
-brew install ptarmigan-flow</code></pre>
-              <button type="button" class="copy-btn" data-done="コピーしました">コピー</button>
+
+          <div class="cta-grid">
+            <div class="cta-card">
+              <h2 class="cta-title">Mac アプリをダウンロード</h2>
+              <p class="cta-note">署名・公証済み · macOS 14 以降 · Apple Silicon（arm64）</p>
+              <a class="btn" href="https://github.com/NAKAK10/ptarmigan-flow/releases/latest/download/PtarmiganFlow-macos-arm64.zip">PtarmiganFlow.zip をダウンロード</a>
             </div>
-            <p class="cta-note">続けて<a href="#install">3 つのセットアップコマンド</a>を実行してください。</p>
+            <div class="cta-card">
+              <h2 class="cta-title">Homebrew でインストール</h2>
+              <div class="cmd">
+                <pre><code>brew tap nakak10/ptarmigan-flow https://github.com/NAKAK10/ptarmigan-flow
+brew install ptarmigan-flow</code></pre>
+                <button type="button" class="copy-btn" data-done="コピーしました">コピー</button>
+              </div>
+              <p class="cta-note">続けて<a href="#install">3 つのセットアップコマンド</a>を実行してください。</p>
+            </div>
+          </div>
+        </div>
+        <div class="hero-visual">
+          <div class="hero-icon-tile">
+            <img class="hero-icon" src="./icon-512.png" width="280" height="280" alt="Ptarmigan Flow アプリアイコン">
           </div>
         </div>
       </div>
@@ -86,10 +115,16 @@ brew install ptarmigan-flow</code></pre>
         <p class="eyebrow">デモ</p>
         <h2>実際の入力の様子</h2>
         <p class="section-intro">ptarmigan-flow を使っている様子の短い録画です。キーを押して話すと、文字起こし結果がアクティブなアプリに入力されます。</p>
-        <video class="demo-video" controls preload="metadata" playsinline>
-          <source src="./assets/usage-sample.mp4" type="video/mp4">
-          お使いのブラウザではこの動画を再生できません。<a href="https://github.com/NAKAK10/ptarmigan-flow">GitHub</a> でご覧いただけます。
-        </video>
+        <div class="demo-window">
+          <div class="demo-chrome" aria-hidden="true">
+            <span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span>
+            <span class="demo-filename">usage-sample.mp4</span>
+          </div>
+          <video class="demo-video" controls preload="metadata" playsinline>
+            <source src="./assets/usage-sample.mp4" type="video/mp4">
+            お使いのブラウザではこの動画を再生できません。<a href="https://github.com/NAKAK10/ptarmigan-flow">GitHub</a> でご覧いただけます。
+          </video>
+        </div>
       </div>
     </section>
 
@@ -201,16 +236,19 @@ pflow run</code></pre>
         </div>
         <div class="perm-grid">
           <div class="perm-card">
+            <span class="perm-badge" aria-hidden="true">MIC</span>
             <h3>マイク</h3>
             <p>音声を録音するために必要です。録音するのはホットキーを押している間だけです。</p>
             <span class="settings-path">システム設定 &#8594; プライバシーとセキュリティ &#8594; マイク</span>
           </div>
           <div class="perm-card">
+            <span class="perm-badge" aria-hidden="true">AX</span>
             <h3>アクセシビリティ</h3>
             <p>文字起こし結果をアクティブなアプリへ入力（または貼り付けのキー操作を送信）するために必要です。</p>
             <span class="settings-path">システム設定 &#8594; プライバシーとセキュリティ &#8594; アクセシビリティ</span>
           </div>
           <div class="perm-card">
+            <span class="perm-badge" aria-hidden="true">INPUT</span>
             <h3>入力監視</h3>
             <p>ほかのアプリにフォーカスがあるときでも、グローバルホットキー（右 <kbd>&#8984;</kbd>）を検出するために必要です。</p>
             <span class="settings-path">システム設定 &#8594; プライバシーとセキュリティ &#8594; 入力監視</span>
@@ -229,18 +267,7 @@ pflow run</code></pre>
   <footer class="site-footer">
     <div class="wrap footer-inner">
       <div class="footer-brand">
-        <svg class="logo-badge" width="22" height="22" viewBox="0 0 64 64" aria-hidden="true">
-          <rect width="64" height="64" rx="14" fill="var(--badge)"/>
-          <g fill="var(--badge-bird)">
-            <ellipse cx="29" cy="39" rx="17.5" ry="13"/>
-            <circle cx="43" cy="23" r="8.2"/>
-            <path d="M31 31 L47 21 L45 37 Z"/>
-            <path d="M50 19.5 L58.5 23 L50 26.5 Z"/>
-            <path d="M14.5 33 L3.5 44.5 L17 49 Z"/>
-          </g>
-          <circle cx="44.5" cy="21.5" r="1.9" fill="var(--badge)"/>
-          <path d="M37.5 14.6 Q43 10.2 48.5 14.6 Q43 17.2 37.5 14.6 Z" fill="var(--comb)"/>
-        </svg>
+        <img class="brand-icon" src="./icon-512.png" width="26" height="26" alt="">
         <span class="brand-name">ptarmigan-flow</span>
       </div>
       <ul class="footer-links">
