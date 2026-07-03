@@ -363,6 +363,12 @@ function renderModelCard(model, selected) {
   const isSelected = selected === model.token;
   const selectedClass = isSelected ? "selected" : "";
   const download = downloadStates.get(model.token);
+  // Once the cache confirms the model is downloaded, drop a stale "done"
+  // entry so a later cache change (e.g. manual deletion) doesn't leave a
+  // phantom "Download complete" badge behind.
+  if (model.downloaded && download?.status === "done") {
+    downloadStates.delete(model.token);
+  }
   const status = model.downloaded ? "downloaded" : download?.status || "idle";
   return `
     <div class="model-card ${selectedClass}" data-select-model="${escapeHtml(model.token)}" tabindex="0" role="button">
@@ -462,8 +468,17 @@ function updateModelCardInPlace(token) {
   if (!model) {
     return;
   }
+  // outerHTML replacement drops the live DOM node, so focus inside the card
+  // (e.g. on the Download/Retry button) would otherwise be silently lost.
+  const hadFocus = cardEl.contains(document.activeElement);
+  const focusWasButton = hadFocus && document.activeElement !== cardEl;
   cardEl.outerHTML = renderModelCard(model, state.settings?.model);
-  bindModelCard(findModelCardElement(token));
+  const newCardEl = findModelCardElement(token);
+  bindModelCard(newCardEl);
+  if (hadFocus) {
+    const target = focusWasButton ? newCardEl?.querySelector("[data-download-model]") : newCardEl;
+    (target || newCardEl)?.focus();
+  }
 }
 
 // `button` here is the whole `.model-card` element (selection target), named
@@ -503,7 +518,7 @@ async function handleDownloadModelClick(event) {
     return;
   }
   downloadStates.set(token, { status: "preparing" });
-  render();
+  updateModelCardInPlace(token);
   let result = null;
   try {
     result = await bridge("downloadModel", { model: token });
@@ -516,12 +531,13 @@ async function handleDownloadModelClick(event) {
     if (result.already_downloaded) {
       downloadStates.delete(token);
       state = await bridge("getState");
-      render();
+      updateModelCardInPlace(token);
       return;
     }
-    // Store the raw detail; downloadErrorText() applies the localized
-    // "download failed" template at render time.
-    downloadStates.set(token, { status: "error", message: (result.errors || []).join(", ") });
+    // Bridge errors carry raw field/reason names (e.g. "busy"), not
+    // user-facing text; fall back to the generic no-detail error copy
+    // rather than surfacing the raw token via downloadErrorText().
+    downloadStates.set(token, { status: "error", message: null });
     updateModelCardInPlace(token);
     return;
   }
@@ -602,7 +618,10 @@ async function saveSettings(modelOverride = null) {
 }
 
 function renderDictionary() {
-  if (!dictDraft) {
+  // A clean (no unsaved edits) draft is safe to rebuild from the latest
+  // state so external config changes become visible; a dirty draft is left
+  // alone to protect in-progress edits.
+  if (!dictDraft || dictDraft.dirty === false) {
     dictDraft = buildDictDraft(state.dictionary);
   }
   return `
@@ -957,8 +976,18 @@ async function saveDictionary() {
     render();
     return;
   }
+  const refreshedState = await bridge("getState").catch((error) => {
+    dictionaryMessage = { kind: "error", text: `${t("webui_error_title")}: ${error.message || error}` };
+    return null;
+  });
+  if (!refreshedState) {
+    // Keep the draft (it was already saved server-side) so the user's edits
+    // stay visible even though we couldn't refresh `state`.
+    render();
+    return;
+  }
+  state = refreshedState;
   dictDraft = null;
-  state = await bridge("getState");
   dictionaryMessage = { kind: "success", text: t("dictionary_saved_message") };
   render();
 }

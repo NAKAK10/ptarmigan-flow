@@ -456,13 +456,32 @@ def test_download_model_starts_download_for_valid_not_downloaded_token(
             config_path=lambda: tmp_path / "config.toml",
             available_model_entries=lambda: [_entry("granite:ibm/test")],
             is_model_downloaded=lambda _token: False,
-            start_model_download=lambda token: calls.append(token),
+            start_model_download=lambda token: calls.append(token) or True,
         ),
     )
 
     result = dispatcher.handle_action("downloadModel", {"model": "granite:ibm/test"})
 
     assert result == {"started": True, "model": "granite:ibm/test"}
+    assert calls == ["granite:ibm/test"]
+
+
+def test_download_model_reports_busy_when_dependency_reports_not_started(
+    tmp_path: Path,
+) -> None:
+    calls: list[str] = []
+    dispatcher = WebBridgeDispatcher(
+        deps=BridgeDependencies(
+            config_path=lambda: tmp_path / "config.toml",
+            available_model_entries=lambda: [_entry("granite:ibm/test")],
+            is_model_downloaded=lambda _token: False,
+            start_model_download=lambda token: calls.append(token) or False,
+        ),
+    )
+
+    result = dispatcher.handle_action("downloadModel", {"model": "granite:ibm/test"})
+
+    assert result == {"started": False, "errors": ["busy"]}
     assert calls == ["granite:ibm/test"]
 
 

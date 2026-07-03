@@ -90,8 +90,8 @@ def _noop() -> None:
     return
 
 
-def _noop_model_download(_token: str) -> None:
-    return
+def _noop_model_download(_token: str) -> bool:
+    return True
 
 
 @dataclass(slots=True)
@@ -111,7 +111,7 @@ class BridgeDependencies:
     open_config_file: Callable[[], None] = _default_open_config_file
     start_dictation: Callable[[], object | None] = _noop
     stop_dictation: Callable[[], None] = _noop
-    start_model_download: Callable[[str], None] = _noop_model_download
+    start_model_download: Callable[[str], bool] = _noop_model_download
     daemon_is_running: Callable[[], bool] = lambda: False
     restart_app: Callable[[], bool] = app_relaunch.relaunch_app
     mark_language_selected: Callable[[], None] = onboarding_flow_module.mark_language_selected
@@ -302,7 +302,9 @@ class WebBridgeDispatcher:
             return {"started": False, "errors": ["model"]}
         if self.deps.is_model_downloaded(token):
             return {"started": False, "already_downloaded": True}
-        self.deps.start_model_download(token)
+        started = bool(self.deps.start_model_download(token))
+        if not started:
+            return {"started": False, "errors": ["busy"]}
         return {"started": True, "model": token}
 
     def _load_dictionary(self, _payload: dict[str, Any]) -> dict[str, dict[str, list[str]]]:

@@ -715,6 +715,58 @@ def test_macos_app_guards_daemon_start_by_permissions_backend_and_model_download
     assert "self._push_daemon_state()" in start_method
 
 
+def test_macos_app_download_done_event_starts_daemon_only_for_configured_model(
+    monkeypatch,
+) -> None:
+    class FakeDaemonController:
+        def __init__(self, _config_path) -> None:
+            self.is_running = False
+
+        def start(self) -> None:
+            self.is_running = True
+
+        def stop(self) -> None:
+            self.is_running = False
+
+        def notify_hotkey_press(self) -> None:
+            pass
+
+        def notify_hotkey_release(self) -> None:
+            pass
+
+    captured = _capture_app_delegate(monkeypatch, FakeDaemonController)
+    controller = captured["delegate"]
+    controller.web_ui = types.SimpleNamespace(push_event=lambda _event, _payload: None)
+    controller._configured_model_token = lambda: "moonshine/base"
+
+    start_daemon_calls: list[dict[str, object]] = []
+    push_daemon_state_calls: list[None] = []
+    controller._start_daemon_if_ready = lambda **kwargs: start_daemon_calls.append(kwargs)
+    controller._push_daemon_state = lambda: push_daemon_state_calls.append(None)
+
+    controller.applyModelDownloadProgress_(
+        {
+            "type": "done",
+            "model": "moonshine/base",
+            "success_message_key": "voice_input_started_message",
+        }
+    )
+
+    assert start_daemon_calls == [{"success_message_key": "voice_input_started_message"}]
+    assert push_daemon_state_calls == []
+
+    controller.applyModelDownloadProgress_(
+        {
+            "type": "done",
+            "model": "granite:ibm/other",
+            "success_message_key": "voice_input_started_message",
+        }
+    )
+
+    assert start_daemon_calls == [{"success_message_key": "voice_input_started_message"}]
+    assert push_daemon_state_calls == [None]
+
+
 def test_macos_app_surfaces_missing_permission_message_when_daemon_start_is_blocked() -> None:
     source = _macos_app_source()
     start_method = source.split("def _start_daemon_if_ready", maxsplit=1)[1].split(

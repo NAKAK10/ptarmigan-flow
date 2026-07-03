@@ -612,14 +612,10 @@ def _run_appkit_app() -> int:
             return False
 
         @objc.python_method
-        def _start_model_download(self, model_token: str, success_message_key: str) -> None:
+        def _start_model_download(self, model_token: str, success_message_key: str) -> bool:
             process = self._model_download_process
             if process is not None and process.poll() is None:
-                self._push_event(
-                    "downloadProgress",
-                    {"type": "progress", "model": model_token, "fraction": None},
-                )
-                return
+                return False
 
             self._model_download_success_message_key = success_message_key
             self._push_event(
@@ -647,7 +643,7 @@ def _run_appkit_app() -> int:
                     {"type": "error", "model": model_token, "message": str(exc)},
                 )
                 self._push_daemon_state()
-                return
+                return True
 
             self._model_download_process = process
             thread = threading.Thread(
@@ -665,6 +661,7 @@ def _run_appkit_app() -> int:
                     {"type": "error", "model": model_token, "message": str(exc)},
                 )
                 self._push_daemon_state()
+            return True
 
         @objc.python_method
         def _read_model_download_progress(
