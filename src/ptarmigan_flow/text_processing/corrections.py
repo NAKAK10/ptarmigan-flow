@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from ptarmigan_flow.text_processing.interfaces import TextPostProcessor
 from ptarmigan_flow.text_processing.normalizer import normalize_transcript_text
@@ -25,7 +25,7 @@ class CorrectionRuleSet(TextPostProcessor):
     regex_rules: list[CompiledRegexRule]
 
     @classmethod
-    def empty(cls) -> "CorrectionRuleSet":
+    def empty(cls) -> CorrectionRuleSet:
         return cls(exact_lookup={}, regex_rules=[])
 
     @property
@@ -81,3 +81,22 @@ class CorrectionRuleSet(TextPostProcessor):
         if cursor < len(normalized):
             parts.append(normalized[cursor:])
         return "".join(parts)
+
+
+def merge_rulesets(
+    base: CorrectionRuleSet,
+    override: CorrectionRuleSet,
+) -> CorrectionRuleSet:
+    """Merge two rulesets, with ``override`` taking precedence over ``base``.
+
+    Exact lookups from ``override`` replace matching keys in ``base``. Regex
+    rules from ``override`` are placed before those from ``base`` and renumbered
+    so ``override`` rules receive smaller ``order`` values and therefore win
+    ties during application.
+    """
+    exact_lookup = {**base.exact_lookup, **override.exact_lookup}
+    merged_regex = [
+        replace(rule, order=index)
+        for index, rule in enumerate([*override.regex_rules, *base.regex_rules])
+    ]
+    return CorrectionRuleSet(exact_lookup=exact_lookup, regex_rules=merged_regex)

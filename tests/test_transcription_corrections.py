@@ -1,15 +1,32 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
 
+from ptarmigan_flow.text_processing.corrections import (
+    CompiledRegexRule,
+    CorrectionRuleSet,
+    merge_rulesets,
+)
+from ptarmigan_flow.text_processing.service import CorrectionService
 from ptarmigan_flow.transcription_corrections import (
     CorrectionDictionaryError,
     default_dictionary_path,
     load_corrections_dictionary,
     resolve_dictionary_path,
 )
+
+
+@dataclass
+class _StubTextConfig:
+    dictionary_path: str | None
+
+
+@dataclass
+class _StubConfig:
+    text: _StubTextConfig
 
 
 def test_load_missing_default_dictionary_is_disabled_without_warning(tmp_path: Path) -> None:
@@ -35,7 +52,7 @@ def test_load_missing_explicit_dictionary_warns_and_continues(tmp_path: Path) ->
 
 def test_load_invalid_toml_reports_line_and_column(tmp_path: Path) -> None:
     path = tmp_path / "dictionary.toml"
-    path.write_text("[exact]\n\"Ptarmigan Flow\" = [\"a\"\n", encoding="utf-8")
+    path.write_text('[exact]\n"Ptarmigan Flow" = ["a"\n', encoding="utf-8")
 
     with pytest.raises(CorrectionDictionaryError) as exc_info:
         load_corrections_dictionary(path, explicitly_configured=False)
@@ -96,3 +113,68 @@ def test_resolve_dictionary_path_defaults_and_explicit(tmp_path: Path) -> None:
     )
     assert explicit is True
     assert explicit_path == (tmp_path / "dictionary.toml").resolve()
+
+
+def test_load_for_config_merges_defaults_without_dictionary_file(tmp_path: Path) -> None:
+    # Point at a non-existent file so there are no user rules, only defaults.
+    missing = tmp_path / "missing.toml"
+    config = _StubConfig(text=_StubTextConfig(dictionary_path=str(missing)))
+    service = CorrectionService.create_default()
+
+    result = service.load_for_config(config=config, config_path=tmp_path / "config.toml")
+
+    assert result.loaded is False
+    assert result.rules.apply("クロードで実装して") == "Claudeで実装して"
+
+
+def test_load_for_config_user_rule_wins_over_default(tmp_path: Path) -> None:
+    dictionary = tmp_path / "dictionary.toml"
+    dictionary.write_text(
+        """
+[regex]
+"CLAUDE_CUSTOM" = ["クロード"]
+""".strip(),
+        encoding="utf-8",
+    )
+    config = _StubConfig(text=_StubTextConfig(dictionary_path=str(dictionary)))
+    service = CorrectionService.create_default()
+
+    result = service.load_for_config(config=config, config_path=tmp_path / "config.toml")
+
+    assert result.loaded is True
+    # The user's mapping (クロード -> CLAUDE_CUSTOM) wins over the default Claude rule.
+    assert result.rules.apply("クロードで実装して") == "CLAUDE_CUSTOMで実装して"
+
+
+def _regex_rule(canonical: str, pattern: str, order: int) -> CompiledRegexRule:
+    import re
+
+    return CompiledRegexRule(
+        canonical=canonical,
+        pattern=pattern,
+        compiled=re.compile(pattern),
+        order=order,
+    )
+
+
+def test_merge_rulesets_override_wins_on_exact_and_regex_order() -> None:
+    base = CorrectionRuleSet(
+        exact_lookup={"a": "BASE_A", "b": "BASE_B"},
+        regex_rules=[_regex_rule("BASE", "x", 0)],
+    )
+    override = CorrectionRuleSet(
+        exact_lookup={"a": "OVERRIDE_A"},
+        regex_rules=[_regex_rule("OVERRIDE", "x", 0)],
+    )
+
+    merged = merge_rulesets(base, override)
+
+    # Exact: override wins on shared key, base-only key preserved.
+    assert merged.exact_lookup == {"a": "OVERRIDE_A", "b": "BASE_B"}
+    # Regex: override placed first with renumbered orders 0..n.
+    assert [(r.canonical, r.order) for r in merged.regex_rules] == [
+        ("OVERRIDE", 0),
+        ("BASE", 1),
+    ]
+    # And the override (smaller order) wins the tie during application.
+    assert merged.apply("x") == "OVERRIDE"

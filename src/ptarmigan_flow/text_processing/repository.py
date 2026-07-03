@@ -80,17 +80,47 @@ class TomlCorrectionRepository:
 
         payload = self._load_toml(path)
         exact_table, regex_table = self._validate_top_level(path, payload)
-        exact_lookup = self._build_exact_lookup(path, exact_table)
-        regex_rules, regex_warnings, disabled_regex_count = self._build_regex_rules(path, regex_table)
-        warnings.extend(regex_warnings)
+        rules, build_warnings, disabled_regex_count = self._build_ruleset(
+            path, exact_table, regex_table
+        )
+        warnings.extend(build_warnings)
 
         return CorrectionDictionaryLoadResult(
             path=path,
             loaded=True,
-            rules=CorrectionRuleSet(exact_lookup=exact_lookup, regex_rules=regex_rules),
+            rules=rules,
             warnings=warnings,
             disabled_regex_count=disabled_regex_count,
         )
+
+    def build_ruleset_from_tables(
+        self,
+        exact_table: dict[object, object],
+        regex_table: dict[object, object],
+        *,
+        source_label: str,
+    ) -> CorrectionRuleSet:
+        """Build a ruleset from in-memory tables (e.g. built-in defaults).
+
+        Reuses the same validation and compilation logic as :meth:`load`.
+        Any warnings/disabled-regex counts are discarded; callers supplying
+        built-in tables are expected to provide only valid patterns.
+        """
+        rules, _warnings, _disabled = self._build_ruleset(source_label, exact_table, regex_table)
+        return rules
+
+    def _build_ruleset(
+        self,
+        source: str | Path,
+        exact_table: dict[object, object],
+        regex_table: dict[object, object],
+    ) -> tuple[CorrectionRuleSet, list[CorrectionLoadWarning], int]:
+        exact_lookup = self._build_exact_lookup(source, exact_table)
+        regex_rules, regex_warnings, disabled_regex_count = self._build_regex_rules(
+            source, regex_table
+        )
+        rules = CorrectionRuleSet(exact_lookup=exact_lookup, regex_rules=regex_rules)
+        return rules, regex_warnings, disabled_regex_count
 
     @staticmethod
     def _load_toml(path: Path) -> dict[object, object]:
@@ -132,12 +162,12 @@ class TomlCorrectionRepository:
 
     def _build_exact_lookup(
         self,
-        path: Path,
+        source: str | Path,
         exact_table: dict[object, object],
     ) -> dict[str, str]:
         exact_lookup: dict[str, str] = {}
         for canonical, variants in exact_table.items():
-            self._validate_key_and_values(path, "exact", canonical, variants)
+            self._validate_key_and_values(source, "exact", canonical, variants)
             canonical_text = normalize_transcript_text(str(canonical))
             assert isinstance(variants, list)
             for index, variant in enumerate(variants):
@@ -145,19 +175,20 @@ class TomlCorrectionRepository:
                 normalized_variant = normalize_transcript_text(variant)
                 if not normalized_variant:
                     raise CorrectionDictionaryError(
-                        f"{path}: [exact].{canonical}[{index}] is empty after normalization"
+                        f"{source}: [exact].{canonical}[{index}] is empty after normalization"
                     )
                 prev = exact_lookup.get(normalized_variant)
                 if prev is not None and prev != canonical_text:
                     raise CorrectionDictionaryError(
-                        f"{path}: exact variant {variant!r} maps to both {prev!r} and {canonical_text!r}"
+                        f"{source}: exact variant {variant!r} maps to both "
+                        f"{prev!r} and {canonical_text!r}"
                     )
                 exact_lookup[normalized_variant] = canonical_text
         return exact_lookup
 
     def _build_regex_rules(
         self,
-        path: Path,
+        source: str | Path,
         regex_table: dict[object, object],
     ) -> tuple[list[CompiledRegexRule], list[CorrectionLoadWarning], int]:
         regex_rules: list[CompiledRegexRule] = []
@@ -166,7 +197,7 @@ class TomlCorrectionRepository:
         order = 0
 
         for canonical, patterns in regex_table.items():
-            self._validate_key_and_values(path, "regex", canonical, patterns)
+            self._validate_key_and_values(source, "regex", canonical, patterns)
             canonical_text = normalize_transcript_text(str(canonical))
             assert isinstance(patterns, list)
             for index, pattern in enumerate(patterns):
@@ -180,7 +211,7 @@ class TomlCorrectionRepository:
                             message=(
                                 "Disabled invalid regex rule: "
                                 f'canonical="{canonical_text}" pattern_index={index} '
-                                f"pattern={pattern!r} error=\"{exc}\""
+                                f'pattern={pattern!r} error="{exc}"'
                             )
                         )
                     )
@@ -192,7 +223,8 @@ class TomlCorrectionRepository:
                         CorrectionLoadWarning(
                             message=(
                                 "Disabled zero-length regex rule: "
-                                f'canonical="{canonical_text}" pattern_index={index} pattern={pattern!r}'
+                                f'canonical="{canonical_text}" pattern_index={index} '
+                                f"pattern={pattern!r}"
                             )
                         )
                     )
@@ -212,27 +244,27 @@ class TomlCorrectionRepository:
 
     @staticmethod
     def _validate_key_and_values(
-        path: Path,
+        source: str | Path,
         table_name: str,
         canonical: object,
         values: object,
     ) -> None:
         if not isinstance(canonical, str):
-            raise CorrectionDictionaryError(f"{path}: [{table_name}] keys must be strings")
+            raise CorrectionDictionaryError(f"{source}: [{table_name}] keys must be strings")
         if not canonical.strip():
-            raise CorrectionDictionaryError(f"{path}: [{table_name}] keys cannot be empty")
+            raise CorrectionDictionaryError(f"{source}: [{table_name}] keys cannot be empty")
         if not isinstance(values, list):
             raise CorrectionDictionaryError(
-                f"{path}: [{table_name}].{canonical} must be an array of strings"
+                f"{source}: [{table_name}].{canonical} must be an array of strings"
             )
         if not values:
-            raise CorrectionDictionaryError(f"{path}: [{table_name}].{canonical} cannot be empty")
+            raise CorrectionDictionaryError(f"{source}: [{table_name}].{canonical} cannot be empty")
         for index, item in enumerate(values):
             if not isinstance(item, str):
                 raise CorrectionDictionaryError(
-                    f"{path}: [{table_name}].{canonical}[{index}] must be a string"
+                    f"{source}: [{table_name}].{canonical}[{index}] must be a string"
                 )
             if not item.strip():
                 raise CorrectionDictionaryError(
-                    f"{path}: [{table_name}].{canonical}[{index}] cannot be empty"
+                    f"{source}: [{table_name}].{canonical}[{index}] cannot be empty"
                 )
