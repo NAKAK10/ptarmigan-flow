@@ -31,6 +31,45 @@ def _webui_app_source() -> str:
     return _source("src/ptarmigan_flow/webui/app.js")
 
 
+class _FakeNSMenuItem:
+    def __init__(self, title, action, key):
+        self.title = title
+        self.action = action
+        self.key = key
+        self.submenu = None
+
+    def setSubmenu_(self, submenu):  # noqa: N802
+        self.submenu = submenu
+
+    @classmethod
+    def alloc(cls):
+        return cls._Alloc()
+
+    class _Alloc:
+        def initWithTitle_action_keyEquivalent_(self, title, action, key):  # noqa: N802
+            return _FakeNSMenuItem(title, action, key)
+
+
+class _FakeNSMenu:
+    def __init__(self, title=""):
+        self.title = title
+        self.items = []
+
+    def addItem_(self, item):  # noqa: N802
+        self.items.append(item)
+
+    @classmethod
+    def alloc(cls):
+        return cls._Alloc()
+
+    class _Alloc:
+        def init(self):
+            return _FakeNSMenu()
+
+        def initWithTitle_(self, title):  # noqa: N802
+            return _FakeNSMenu(title)
+
+
 def _capture_app_delegate(monkeypatch, daemon_controller_cls):
     captured: dict[str, object] = {
         "global_handlers": [],
@@ -52,6 +91,9 @@ def _capture_app_delegate(monkeypatch, daemon_controller_cls):
     class FakeApp:
         def setApplicationIconImage_(self, _image) -> None:
             pass
+
+        def setMainMenu_(self, menu) -> None:  # noqa: N802
+            captured["main_menu"] = menu
 
         def setActivationPolicy_(self, _policy) -> None:
             pass
@@ -138,8 +180,8 @@ def _capture_app_delegate(monkeypatch, daemon_controller_cls):
         NSEvent=FakeNSEvent,
         NSEventMaskFlagsChanged=1,
         NSImage=FakeNSImage,
-        NSMenu=object,
-        NSMenuItem=object,
+        NSMenu=_FakeNSMenu,
+        NSMenuItem=_FakeNSMenuItem,
         NSStatusBar=object,
         NSVariableStatusItemLength=0,
         NSWorkspace=object,
@@ -265,6 +307,31 @@ def test_main_calls_freeze_support_before_dispatch(monkeypatch) -> None:
 
     assert macos_app.main() == 0
     assert calls == ["freeze_support", "dispatch"]
+
+
+def test_install_edit_menu_wires_standard_paste_actions() -> None:
+    class _FakeApp:
+        def __init__(self):
+            self.main_menu = None
+
+        def setMainMenu_(self, menu):  # noqa: N802
+            self.main_menu = menu
+
+    app = _FakeApp()
+    macos_app._install_edit_menu(app, _FakeNSMenu, _FakeNSMenuItem)
+
+    assert app.main_menu is not None
+    edit_root = app.main_menu.items[0]
+    actions = {(item.action, item.key) for item in edit_root.submenu.items}
+    assert ("paste:", "v") in actions
+    assert ("copy:", "c") in actions
+    assert ("cut:", "x") in actions
+    assert ("selectAll:", "a") in actions
+
+
+def test_macos_app_installs_edit_menu_before_run() -> None:
+    source = _macos_app_source()
+    assert "_install_edit_menu(app, NSMenu, NSMenuItem)" in source
 
 
 def test_macos_app_sets_runtime_application_icon() -> None:
@@ -797,6 +864,9 @@ def test_macos_app_daemon_start_reuses_latest_combined_permission_report(monkeyp
         def setApplicationIconImage_(self, _image) -> None:
             pass
 
+        def setMainMenu_(self, menu) -> None:  # noqa: N802
+            captured["main_menu"] = menu
+
         def setActivationPolicy_(self, _policy) -> None:
             pass
 
@@ -878,8 +948,8 @@ def test_macos_app_daemon_start_reuses_latest_combined_permission_report(monkeyp
         NSEvent=FakeNSEvent,
         NSEventMaskFlagsChanged=1,
         NSImage=FakeNSImage,
-        NSMenu=object,
-        NSMenuItem=object,
+        NSMenu=_FakeNSMenu,
+        NSMenuItem=_FakeNSMenuItem,
         NSStatusBar=object,
         NSVariableStatusItemLength=0,
         NSWorkspace=object,

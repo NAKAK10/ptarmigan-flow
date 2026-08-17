@@ -66,6 +66,35 @@ def _set_application_icon(app: object, ns_image_cls: object, ns_data_cls: object
         app.setApplicationIconImage_(icon_image)
 
 
+_EDIT_MENU_ITEMS: tuple[tuple[str, str, str], ...] = (
+    ("Undo", "undo:", "z"),
+    ("Redo", "redo:", "Z"),
+    ("Cut", "cut:", "x"),
+    ("Copy", "copy:", "c"),
+    ("Paste", "paste:", "v"),
+    ("Select All", "selectAll:", "a"),
+)
+
+
+def _install_edit_menu(app: object, ns_menu_cls: object, ns_menu_item_cls: object) -> None:
+    """Install a main menu with a standard Edit menu.
+
+    The app is an accessory (menu-bar) app with no visible menu bar, but
+    Cmd+C/V/X/A key equivalents are still resolved through the main menu.
+    Without this, paste does nothing inside WKWebView text fields.
+    """
+    main_menu = ns_menu_cls.alloc().init()
+    edit_root = ns_menu_item_cls.alloc().initWithTitle_action_keyEquivalent_("Edit", None, "")
+    edit_menu = ns_menu_cls.alloc().initWithTitle_("Edit")
+    for title, action, key in _EDIT_MENU_ITEMS:
+        edit_menu.addItem_(
+            ns_menu_item_cls.alloc().initWithTitle_action_keyEquivalent_(title, action, key)
+        )
+    edit_root.setSubmenu_(edit_menu)
+    main_menu.addItem_(edit_root)
+    app.setMainMenu_(main_menu)
+
+
 def open_config() -> Path:
     """Ensure the user config exists and open it with the default macOS editor."""
     config_path = default_config_path()
@@ -885,6 +914,7 @@ def _run_appkit_app() -> int:
 
     app = NSApplication.sharedApplication()
     _set_application_icon(app, NSImage, NSData)
+    _install_edit_menu(app, NSMenu, NSMenuItem)
     app.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
     delegate = OnboardingController.alloc().init()
     app.setDelegate_(delegate)
