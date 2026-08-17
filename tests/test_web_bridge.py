@@ -176,6 +176,60 @@ def test_get_state_returns_web_ui_snapshot_with_localized_strings_and_download_s
     assert state["strings"]["settings_window_title"] == "設定"
 
 
+def test_get_state_setup_required_true_when_onboarding_incomplete(tmp_path: Path) -> None:
+    dispatcher = _dispatcher(tmp_path)
+    dispatcher.deps.language_was_selected = lambda: True
+    dispatcher.deps.hotkey_was_confirmed = lambda: False
+
+    state = dispatcher.handle_action("getState", {})
+
+    assert state["setup_required"] is True
+
+
+def test_get_state_setup_required_false_when_onboarding_complete(tmp_path: Path) -> None:
+    dispatcher = _dispatcher(tmp_path)
+    dispatcher.deps.language_was_selected = lambda: True
+    dispatcher.deps.hotkey_was_confirmed = lambda: True
+
+    state = dispatcher.handle_action("getState", {})
+
+    assert state["setup_required"] is False
+
+
+def test_get_state_setup_required_true_when_state_file_missing(tmp_path: Path) -> None:
+    # Neither flag was ever recorded (state file absent), which must also
+    # count as "setup required" -- not just an explicit False on one flag.
+    dispatcher = _dispatcher(tmp_path)
+    dispatcher.deps.language_was_selected = lambda: False
+    dispatcher.deps.hotkey_was_confirmed = lambda: False
+
+    state = dispatcher.handle_action("getState", {})
+
+    assert state["setup_required"] is True
+
+
+def test_begin_hotkey_capture_calls_deps_callback(tmp_path: Path) -> None:
+    calls: list[bool] = []
+    dispatcher = _dispatcher(tmp_path)
+    dispatcher.deps.set_hotkey_capture_active = lambda active: calls.append(active)
+
+    result = dispatcher.handle_action("beginHotkeyCapture", {})
+
+    assert result == {"capturing": True}
+    assert calls == [True]
+
+
+def test_end_hotkey_capture_calls_deps_callback(tmp_path: Path) -> None:
+    calls: list[bool] = []
+    dispatcher = _dispatcher(tmp_path)
+    dispatcher.deps.set_hotkey_capture_active = lambda active: calls.append(active)
+
+    result = dispatcher.handle_action("endHotkeyCapture", {})
+
+    assert result == {"capturing": False}
+    assert calls == [False]
+
+
 def test_choose_language_writes_config_marks_persistence_and_advances_flow(
     tmp_path: Path,
 ) -> None:

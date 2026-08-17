@@ -20,6 +20,14 @@ let dictRowSeq = 1;
 // dictionary sections; cleared on the next edit.
 let dictionaryMessage = null;
 
+// Active press-to-set hotkey capture session, or null when idle. Holds a
+// `cleanup` callback that removes the window-level listeners, tells the
+// native side capture has ended (so the dictation hotkey monitor stops
+// suppressing itself), and resets the widget's UI. Kept as a single
+// module-level slot (only one capture widget is ever visible at a time)
+// so a route change / re-render can always find and tear it down.
+let hotkeyCapture = null;
+
 function bridge(action, payload = {}) {
   const id = String(nextId++);
   const message = { id, action, payload };
@@ -113,7 +121,7 @@ function shell(content) {
         </div>
       </div>
       <nav class="nav">
-        ${navButton("onboarding", "route_onboarding")}
+        ${state.setup_required ? navButton("onboarding", "route_onboarding") : ""}
         ${navButton("settings", "route_settings")}
         ${navButton("dictionary", "route_dictionary")}
       </nav>
@@ -137,6 +145,12 @@ function render() {
   if (!state) {
     return;
   }
+  // Any in-progress hotkey capture is about to lose its DOM (rebuilt below);
+  // tear it down so the native side stops suppressing the dictation hotkey.
+  endActiveHotkeyCapture();
+  if (route === "onboarding" && !state.setup_required) {
+    route = "settings";
+  }
   if (route === "settings") {
     shell(renderSettings());
     bindSettings();
@@ -151,17 +165,98 @@ function render() {
   bindOnboarding();
 }
 
-function hotkeyOptions() {
-  return [
-    ["right_cmd", "right_cmd"],
-    ["left_cmd", "left_cmd"],
-    ["right_shift", "right_shift"],
-    ["left_shift", "left_shift"],
-    ["right_alt", "right_alt"],
-    ["left_alt", "left_alt"],
-    ["right_ctrl", "right_ctrl"],
-    ["left_ctrl", "left_ctrl"],
-  ];
+// KeyboardEvent.code -> supported hotkey token. Only these eight modifier
+// keys are valid (see SUPPORTED_HOTKEYS in app_settings_model.py /
+// onboarding_flow.py / hotkey_monitor.py); anything else is "unsupported".
+const HOTKEY_CODE_TO_TOKEN = {
+  MetaRight: "right_cmd",
+  MetaLeft: "left_cmd",
+  ShiftRight: "right_shift",
+  ShiftLeft: "left_shift",
+  AltRight: "right_alt",
+  AltLeft: "left_alt",
+  ControlRight: "right_ctrl",
+  ControlLeft: "left_ctrl",
+};
+
+function hotkeyLabel(token) {
+  return t(`hotkey_label_${token}`);
+}
+
+// Renders a press-to-set hotkey widget: a localized label for the current
+// key plus a "Change" button. `id` becomes the container's DOM id so
+// settingsPayload()/onboarding's confirm handler can read the captured
+// value back out via `.dataset.hotkeyValue`.
+function renderHotkeyCapture(id, value) {
+  return `
+    <div class="hotkey-capture" id="${id}" data-hotkey-capture data-hotkey-value="${escapeHtml(value)}">
+      <span class="hotkey-capture-badge" data-hotkey-badge>${escapeHtml(hotkeyLabel(value))}</span>
+      <button type="button" class="button ghost" data-hotkey-change>${escapeHtml(t("hotkey_capture_change_button"))}</button>
+      <span class="hotkey-capture-message" data-hotkey-message></span>
+    </div>
+  `;
+}
+
+// Tears down whatever hotkey capture session is active, if any. Safe to
+// call when nothing is capturing. Called before every re-render (the
+// capture widget's DOM is about to be replaced/removed) and on window
+// blur, so the native hotkey monitor never stays suppressed longer than
+// the capture UI is actually visible.
+function endActiveHotkeyCapture() {
+  if (hotkeyCapture) {
+    hotkeyCapture.cleanup();
+  }
+}
+
+function bindHotkeyCapture(containerEl) {
+  const changeButton = containerEl?.querySelector("[data-hotkey-change]");
+  const badge = containerEl?.querySelector("[data-hotkey-badge]");
+  const messageEl = containerEl?.querySelector("[data-hotkey-message]");
+  if (!containerEl || !changeButton || !badge || !messageEl) {
+    return;
+  }
+  changeButton.addEventListener("click", () => {
+    beginHotkeyCaptureUi(containerEl, badge, messageEl, changeButton);
+  });
+}
+
+function beginHotkeyCaptureUi(containerEl, badge, messageEl, changeButton) {
+  endActiveHotkeyCapture();
+  changeButton.disabled = true;
+  messageEl.textContent = t("hotkey_capture_prompt");
+  bridge("beginHotkeyCapture").catch(() => {});
+
+  const onKeydown = (event) => {
+    event.preventDefault();
+    if (event.key === "Escape") {
+      finish();
+      return;
+    }
+    const token = HOTKEY_CODE_TO_TOKEN[event.code];
+    if (!token) {
+      messageEl.textContent = t("hotkey_capture_unsupported");
+      return;
+    }
+    containerEl.dataset.hotkeyValue = token;
+    badge.textContent = hotkeyLabel(token);
+    finish();
+  };
+  const onBlur = () => finish();
+
+  function finish() {
+    window.removeEventListener("keydown", onKeydown, true);
+    window.removeEventListener("blur", onBlur);
+    changeButton.disabled = false;
+    messageEl.textContent = "";
+    bridge("endHotkeyCapture").catch(() => {});
+    if (hotkeyCapture && hotkeyCapture.cleanup === finish) {
+      hotkeyCapture = null;
+    }
+  }
+
+  window.addEventListener("keydown", onKeydown, true);
+  window.addEventListener("blur", onBlur);
+  hotkeyCapture = { cleanup: finish };
 }
 
 function renderOnboarding() {
@@ -193,12 +288,6 @@ function renderOnboarding() {
   }
   if (current === "hotkey") {
     const hotkey = state.settings?.hotkey || "right_cmd";
-    const options = hotkeyOptions()
-      .map(([value, label]) => {
-        const attr = value === hotkey ? "selected" : "";
-        return `<option value="${escapeHtml(value)}" ${attr}>${escapeHtml(label)}</option>`;
-      })
-      .join("");
     return `
       <section class="onboarding-wrap">
         <div class="card">
@@ -206,10 +295,8 @@ function renderOnboarding() {
           <h1>${escapeHtml(t("hotkey_confirm_title"))}</h1>
           <p>${escapeHtml(t("hotkey_confirm_body"))}</p>
           <div class="form-row">
-            <label for="onboarding-hotkey">${escapeHtml(t("hotkey_select_label"))}</label>
-            <select id="onboarding-hotkey">
-              ${options}
-            </select>
+            <label>${escapeHtml(t("hotkey_select_label"))}</label>
+            ${renderHotkeyCapture("onboarding-hotkey", hotkey)}
           </div>
           <div class="actions">
             <button class="button primary" data-action="confirm-hotkey">${escapeHtml(t("hotkey_confirm_button"))}</button>
@@ -271,9 +358,10 @@ function bindOnboarding() {
       render();
     });
   });
+  app.querySelectorAll("[data-hotkey-capture]").forEach((el) => bindHotkeyCapture(el));
   app.querySelector("[data-action='confirm-hotkey']")?.addEventListener("click", async () => {
     const selectedHotkey =
-      document.getElementById("onboarding-hotkey")?.value || state.settings?.hotkey;
+      document.getElementById("onboarding-hotkey")?.dataset.hotkeyValue || state.settings?.hotkey;
     const result = await bridge("confirmHotkey", { hotkey: selectedHotkey }).catch((error) => {
       showError(error);
       return null;
@@ -322,18 +410,32 @@ function renderSettings() {
         <div class="panel-header">
           <h2>${escapeHtml(t("settings_window_title"))}</h2>
         </div>
-        ${selectRow("language", "settings_language_label", settings.language, [
-          ["en", t("language_english")],
-          ["ja", t("language_japanese")],
-          ["zh", t("language_chinese")],
-        ])}
-        ${selectRow("hotkey", "settings_hotkey_label", settings.hotkey, [
-          ...hotkeyOptions(),
-        ])}
-        ${selectRow("output_mode", "settings_output_mode_label", settings.output_mode, [
-          ["direct_typing", t("output_direct_typing")],
-          ["clipboard_paste", t("output_clipboard_paste")],
-        ])}
+        ${selectRow(
+          "language",
+          "settings_language_label",
+          settings.language,
+          [
+            ["en", t("language_english")],
+            ["ja", t("language_japanese")],
+            ["zh", t("language_chinese")],
+          ],
+          "settings_language_help",
+        )}
+        <div class="form-row">
+          <label>${escapeHtml(t("settings_hotkey_label"))}</label>
+          ${renderHotkeyCapture("hotkey", settings.hotkey)}
+          <p class="form-help">${escapeHtml(t("settings_hotkey_help"))}</p>
+        </div>
+        ${selectRow(
+          "output_mode",
+          "settings_output_mode_label",
+          settings.output_mode,
+          [
+            ["direct_typing", t("output_direct_typing")],
+            ["clipboard_paste", t("output_clipboard_paste")],
+          ],
+          "settings_output_mode_help",
+        )}
         <div class="form-row">
           <button class="button" data-action="open-config">${escapeHtml(t("settings_open_config_button"))}</button>
         </div>
@@ -545,7 +647,7 @@ async function handleDownloadModelClick(event) {
   // events drive the rest of the state machine from here.
 }
 
-function selectRow(id, labelKey, selected, options) {
+function selectRow(id, labelKey, selected, options, helpKey = null) {
   return `
     <div class="form-row">
       <label for="${id}">${escapeHtml(t(labelKey))}</label>
@@ -557,6 +659,7 @@ function selectRow(id, labelKey, selected, options) {
           })
           .join("")}
       </select>
+      ${helpKey ? `<p class="form-help">${escapeHtml(t(helpKey))}</p>` : ""}
     </div>
   `;
 }
@@ -575,7 +678,7 @@ function settingsPayload(modelOverride = null) {
   return {
     model: modelOverride || settings.model,
     language: document.getElementById("language")?.value || settings.language,
-    hotkey: document.getElementById("hotkey")?.value || settings.hotkey,
+    hotkey: document.getElementById("hotkey")?.dataset.hotkeyValue || settings.hotkey,
     output_mode: document.getElementById("output_mode")?.value || settings.output_mode,
     llm_correction: {
       mode: document.getElementById("llm_mode")?.value || settings.llm_correction?.mode,
@@ -596,6 +699,7 @@ function bindSettings() {
   app.querySelectorAll("[data-select-model]").forEach((cardEl) => {
     bindModelCard(cardEl);
   });
+  app.querySelectorAll("[data-hotkey-capture]").forEach((el) => bindHotkeyCapture(el));
 }
 
 async function saveSettings(modelOverride = null) {

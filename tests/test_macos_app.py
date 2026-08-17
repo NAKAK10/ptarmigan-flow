@@ -961,7 +961,8 @@ def test_webui_onboarding_includes_hotkey_confirmation_step() -> None:
     assert 't("hotkey_confirm_title")' in source
     assert 't("hotkey_confirm_body")' in source
     assert 't("hotkey_select_label")' in source
-    assert 'id="onboarding-hotkey"' in source
+    assert 'renderHotkeyCapture("onboarding-hotkey", hotkey)' in source
+    assert 'getElementById("onboarding-hotkey")' in source
     assert 'data-action="confirm-hotkey"' in source
     assert 'bridge("confirmHotkey", { hotkey: selectedHotkey })' in source
     for hotkey in (
@@ -975,6 +976,45 @@ def test_webui_onboarding_includes_hotkey_confirmation_step() -> None:
         "left_ctrl",
     ):
         assert f'"{hotkey}"' in source
+
+
+def test_webui_hotkey_capture_widget_replaces_dropdowns() -> None:
+    source = _webui_app_source()
+
+    # The old <select>-based hotkey pickers are gone from both onboarding
+    # and settings; a shared press-to-set capture widget is used instead.
+    assert "function hotkeyOptions()" not in source
+    assert 'data-hotkey-capture' in source
+    assert 'data-hotkey-change' in source
+    assert 'data-hotkey-badge' in source
+    assert 'data-hotkey-message' in source
+    assert 't("hotkey_capture_change_button")' in source
+    assert 't("hotkey_capture_prompt")' in source
+    assert 't("hotkey_capture_unsupported")' in source
+
+    # KeyboardEvent.code -> supported hotkey token mapping.
+    for code, token in (
+        ("MetaRight", "right_cmd"),
+        ("MetaLeft", "left_cmd"),
+        ("ShiftRight", "right_shift"),
+        ("ShiftLeft", "left_shift"),
+        ("AltRight", "right_alt"),
+        ("AltLeft", "left_alt"),
+        ("ControlRight", "right_ctrl"),
+        ("ControlLeft", "left_ctrl"),
+    ):
+        assert f"{code}: \"{token}\"" in source
+
+    assert 'bridge("beginHotkeyCapture")' in source
+    assert 'bridge("endHotkeyCapture")' in source
+    assert "endActiveHotkeyCapture()" in source
+
+
+def test_webui_nav_hides_onboarding_tab_when_setup_not_required() -> None:
+    source = _webui_app_source()
+
+    assert "state.setup_required ? navButton(\"onboarding\", \"route_onboarding\") : \"\"" in source
+    assert 'if (route === "onboarding" && !state.setup_required)' in source
 
 
 def test_macos_app_exposes_menu_actions_to_web_routes_and_bridge_side_effects() -> None:

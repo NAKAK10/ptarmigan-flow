@@ -9,6 +9,7 @@ import multiprocessing
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -177,6 +178,8 @@ def _run_appkit_app() -> int:
             self.daemon_controller = InProcessDaemonController(default_config_path())
             self._hotkey_global_monitor = None
             self._hotkey_local_monitor = None
+            self._hotkey_capture_active = False
+            self._hotkey_capture_started_at: float | None = None
             self.daemon_status_timer = None
             self.permission_timer = None
             self._permission_check_generation = 0
@@ -210,6 +213,7 @@ def _run_appkit_app() -> int:
                     restart_app=self._restart_app,
                     mark_language_selected=onboarding_flow_module.mark_language_selected,
                     mark_hotkey_confirmed=onboarding_flow_module.mark_hotkey_confirmed,
+                    set_hotkey_capture_active=self._set_hotkey_capture_active,
                 )
             )
             return self
@@ -373,6 +377,29 @@ def _run_appkit_app() -> int:
             self._daemon_error_message = message
             self._push_daemon_state()
 
+        # Auto-heals a stuck capture flag (e.g. the JS side never called
+        # endHotkeyCapture because of a crash/navigation edge case) so the
+        # dictation hotkey doesn't stay suppressed indefinitely.
+        _HOTKEY_CAPTURE_TIMEOUT_SECONDS = 30.0
+
+        @objc.python_method
+        def _set_hotkey_capture_active(self, active: bool) -> None:
+            self._hotkey_capture_active = bool(active)
+            self._hotkey_capture_started_at = time.monotonic() if active else None
+
+        @objc.python_method
+        def _is_hotkey_capture_active(self) -> bool:
+            if not self._hotkey_capture_active:
+                return False
+            started_at = self._hotkey_capture_started_at
+            if (
+                started_at is not None
+                and time.monotonic() - started_at > self._HOTKEY_CAPTURE_TIMEOUT_SECONDS
+            ):
+                self._set_hotkey_capture_active(False)
+                return False
+            return True
+
         @objc.python_method
         def _install_hotkey_event_monitor(self) -> None:
             if (
@@ -392,6 +419,8 @@ def _run_appkit_app() -> int:
 
             def _handle(event):
                 try:
+                    if self._is_hotkey_capture_active():
+                        return
                     if int(event.keyCode()) != keycode:
                         return
                     if flag_bit is not None:

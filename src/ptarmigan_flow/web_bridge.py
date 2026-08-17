@@ -94,6 +94,10 @@ def _noop_model_download(_token: str) -> bool:
     return True
 
 
+def _noop_set_hotkey_capture_active(_active: bool) -> None:
+    return
+
+
 @dataclass(slots=True)
 class BridgeDependencies:
     """External effects used by the Web UI bridge."""
@@ -116,6 +120,9 @@ class BridgeDependencies:
     restart_app: Callable[[], bool] = app_relaunch.relaunch_app
     mark_language_selected: Callable[[], None] = onboarding_flow_module.mark_language_selected
     mark_hotkey_confirmed: Callable[[], None] = onboarding_flow_module.mark_hotkey_confirmed
+    language_was_selected: Callable[[], bool] = onboarding_flow_module.language_was_selected
+    hotkey_was_confirmed: Callable[[], bool] = onboarding_flow_module.hotkey_was_confirmed
+    set_hotkey_capture_active: Callable[[bool], None] = _noop_set_hotkey_capture_active
 
 
 @dataclass(slots=True)
@@ -146,6 +153,8 @@ class WebBridgeDispatcher:
             "saveDictionary": self._save_dictionary,
             "toggleLogin": self._toggle_login,
             "restartApp": self._restart_app,
+            "beginHotkeyCapture": self._begin_hotkey_capture,
+            "endHotkeyCapture": self._end_hotkey_capture,
         }
         handler = handlers.get(action)
         if handler is None:
@@ -183,7 +192,13 @@ class WebBridgeDispatcher:
             "login_enabled": bool(self.deps.login_is_enabled()),
             "daemon_running": bool(self.deps.daemon_is_running()),
             "strings": onboarding_strings.strings_for(language),
+            "setup_required": self._setup_required(),
         }
+
+    def _setup_required(self) -> bool:
+        language_selected = bool(self.deps.language_was_selected())
+        hotkey_confirmed = bool(self.deps.hotkey_was_confirmed())
+        return not (language_selected and hotkey_confirmed)
 
     def _choose_language(self, payload: dict[str, Any]) -> dict[str, Any]:
         code = str(payload.get("code", "")).strip().lower()
@@ -337,6 +352,14 @@ class WebBridgeDispatcher:
 
     def _restart_app(self, _payload: dict[str, Any]) -> dict[str, bool]:
         return {"restarted": bool(self.deps.restart_app())}
+
+    def _begin_hotkey_capture(self, _payload: dict[str, Any]) -> dict[str, bool]:
+        self.deps.set_hotkey_capture_active(True)
+        return {"capturing": True}
+
+    def _end_hotkey_capture(self, _payload: dict[str, Any]) -> dict[str, bool]:
+        self.deps.set_hotkey_capture_active(False)
+        return {"capturing": False}
 
 
 _DEFAULT_DISPATCHER = WebBridgeDispatcher()
