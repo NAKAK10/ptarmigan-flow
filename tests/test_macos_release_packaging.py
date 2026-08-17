@@ -216,7 +216,9 @@ def test_release_workflow_builds_notarizes_and_uploads_draft_release() -> None:
     assert "uv venv .release-venv --python 3.11 --managed-python" in workflow
     assert "uv pip install --python .release-venv" in workflow
     assert "moonshine-ai/moonshine" in workflow
-    assert "ref: v${{ steps.moonshine-version.outputs.version }}" in workflow
+    # Pinned to the original v0.0.49 commit because upstream moved the tag
+    # to a rewritten commit that no longer builds from source.
+    assert "ref: 15c8bb9412c3db3b78c56e897e6574dbee51a0d2" in workflow
     assert "lfs: true" in workflow
     assert "onnxruntime-osx-x86_64" in workflow
     assert "libonnxruntime.*.dylib" in workflow

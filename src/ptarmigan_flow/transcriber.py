@@ -17,6 +17,15 @@ from ptarmigan_flow.text_processing.normalizer import normalize_transcript_text
 LOGGER = logging.getLogger(__name__)
 _BUNDLED_TINY_EN_MODEL = "tiny-en"
 
+# moonshine-voice caps decoding at max_tokens_per_second=6.5, tuned for
+# English. CJK output needs roughly one token per character, so longer
+# utterances get truncated mid-sentence unless the budget is raised.
+_CJK_LANGUAGES = frozenset({"ja", "zh", "ko"})
+_CJK_MAX_TOKENS_PER_SECOND = 13.0
+# Without leading silence the VAD can clip the first segment and misalign
+# the rest of the decode (dropped head, per-character spacing).
+_LEADING_SILENCE_SECONDS = 0.5
+
 
 def _moonshine_model_arch(model_size: str):
     from moonshine_voice.moonshine_api import ModelArch
@@ -166,7 +175,21 @@ class MoonshineTranscriber:
         self._resolved_model_path = str(model_path)
         self._resolved_model_arch = str(getattr(model_arch, "name", self.model_size)).lower()
         transcriber_class = _moonshine_transcriber_class()
-        self._transcriber = transcriber_class(model_path=str(model_path), model_arch=model_arch)
+        options: dict[str, object] | None = None
+        if self._resolved_language in _CJK_LANGUAGES:
+            options = {"max_tokens_per_second": _CJK_MAX_TOKENS_PER_SECOND}
+        try:
+            self._transcriber = transcriber_class(
+                model_path=str(model_path),
+                model_arch=model_arch,
+                options=options,
+            )
+        except TypeError:
+            # Older moonshine-voice wrappers have no options kwarg.
+            self._transcriber = transcriber_class(
+                model_path=str(model_path),
+                model_arch=model_arch,
+            )
 
         # Smoke test so startup fails early when model/bootstrap is broken.
         probe = np.zeros(3200, dtype=np.float32)
@@ -188,10 +211,15 @@ class MoonshineTranscriber:
         assert self._transcriber is not None
 
         normalized = self._normalize_audio(audio)
+        leading_silence_samples = int(sample_rate * _LEADING_SILENCE_SECONDS)
         trailing_silence_samples = int(sample_rate * self.trailing_silence_seconds)
-        if trailing_silence_samples > 0:
+        if leading_silence_samples > 0 or trailing_silence_samples > 0:
             normalized = np.concatenate(
-                (normalized, np.zeros(trailing_silence_samples, dtype=np.float32))
+                (
+                    np.zeros(leading_silence_samples, dtype=np.float32),
+                    normalized,
+                    np.zeros(trailing_silence_samples, dtype=np.float32),
+                )
             )
         transcript = self._transcriber.transcribe_without_streaming(
             normalized.tolist(),

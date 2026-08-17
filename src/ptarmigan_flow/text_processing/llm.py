@@ -17,8 +17,10 @@ from ptarmigan_flow.text_processing.normalizer import normalize_transcript_text
 LOGGER = logging.getLogger(__name__)
 _CIRCUIT_BREAK_SECONDS = 30.0
 _BASE_SYSTEM_INSTRUCTION = (
-    "You are a transcription corrector. "
-    "Fix only obvious recognition errors and punctuation. "
+    "You are a transcription corrector for speech-to-text output. "
+    "Fix obvious recognition errors, including misheard words and wrongly "
+    "segmented katakana/kanji, using the surrounding context to restore the "
+    "intended word (for example technical terms). Fix punctuation. "
     "If the transcript appears truncated at the end, complete only the shortest natural ending. "
     "Do not add new facts, entities, or extra sentences. "
     "Keep the original meaning. Return only corrected text."
