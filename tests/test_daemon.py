@@ -457,7 +457,7 @@ def test_hotkey_up_schedules_delayed_stop(monkeypatch) -> None:
     assert daemon._audio_queue.qsize() == 1
 
 
-def test_hotkey_up_skips_delay_for_default_realtime_model(monkeypatch) -> None:
+def test_hotkey_up_uses_short_tail_floor_for_default_realtime_model(monkeypatch) -> None:
     _reset_fake_timer()
     monkeypatch.setattr(daemon_module.threading, "Timer", _FakeTimer)
     config = AppConfig()
@@ -467,7 +467,14 @@ def test_hotkey_up_skips_delay_for_default_realtime_model(monkeypatch) -> None:
 
     daemon._on_hotkey_up()
 
-    assert len(_FakeTimer.instances) == 0
+    assert len(_FakeTimer.instances) == 1
+    timer = _FakeTimer.instances[0]
+    assert timer.started is True
+    assert timer.interval == 0.15
+    assert daemon.recorder.stop_calls == 0
+
+    timer.fire()
+
     assert daemon.recorder.stop_calls == 1
     assert daemon._audio_queue.qsize() == 1
 

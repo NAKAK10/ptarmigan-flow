@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import threading
+import time
 
 import numpy as np
 import pytest
@@ -277,6 +279,48 @@ def test_stop_captures_final_callback_frames(monkeypatch) -> None:
 
     assert merged.shape == (2, 1)
     assert np.allclose(merged[:, 0], np.array([0.25, 0.5], dtype=np.float32))
+
+
+def test_stop_drains_late_callback_frames_before_dispose(monkeypatch) -> None:
+    class _DelayedDeliveryStream:
+        def __init__(self, **kwargs):
+            self._callback = kwargs["callback"]
+            self.stopped = False
+            self.closed = False
+
+        def start(self) -> None:
+            return None
+
+        def stop(self) -> None:
+            self.stopped = True
+
+        def close(self) -> None:
+            self.closed = True
+
+    monkeypatch.setattr("ptarmigan_flow.audio_recorder.sd.InputStream", _DelayedDeliveryStream)
+
+    recorder = AudioRecorder(
+        sample_rate=16000,
+        channels=1,
+        dtype="float32",
+        max_record_seconds=30,
+    )
+
+    recorder.start()
+
+    tail = np.array([[0.75]], dtype=np.float32)
+
+    def _deliver_late_frame() -> None:
+        time.sleep(0.03)
+        recorder._callback(tail, 1, None, 0)
+
+    thread = threading.Thread(target=_deliver_late_frame)
+    thread.start()
+    merged = recorder.stop()
+    thread.join()
+
+    assert merged.shape[0] >= 1
+    assert np.isclose(merged[-1, 0], 0.75)
 
 
 def test_recorder_uses_system_default_when_policy_is_system_default(monkeypatch) -> None:

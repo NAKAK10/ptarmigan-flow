@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from typing import Any
 
 import numpy as np
@@ -265,6 +266,8 @@ class AudioRecorder:
             "channels": self.channels,
             "dtype": self.dtype,
             "callback": self._callback,
+            "blocksize": 512,
+            "latency": "low",
         }
         resolved_input_device = self._resolve_input_device()
         if resolved_input_device is not None:
@@ -324,8 +327,20 @@ class AudioRecorder:
             self.close()
             raise
 
+    def _drain_before_stop(self) -> None:
+        """Give the driver a brief window to deliver buffered tail frames.
+
+        CoreAudio buffers a few frames beyond what has already reached the
+        callback; without this, the trailing syllable(s) of an utterance can
+        be lost when the stream is torn down immediately on release. Sleep
+        for a short, fixed drain window so this never meaningfully delays
+        stop().
+        """
+        time.sleep(0.06)
+
     def stop(self) -> np.ndarray:
         """Stop recording and return audio samples."""
+        self._drain_before_stop()
         self._dispose_stream()
 
         with self._lock:

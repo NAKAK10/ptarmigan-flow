@@ -162,9 +162,10 @@ def _is_macos_arm64() -> bool:
 def _effective_trailing_silence_seconds_for_realtime(audio_cfg: object | None) -> float:
     configured = float(getattr(audio_cfg, "trailing_silence_seconds", 1.0))
     # Keep backward compatibility for explicit user overrides while making realtime
-    # models low-latency by default.
+    # models low-latency by default. A hard 0.0 truncates trailing syllables, so
+    # keep a small non-zero floor.
     if abs(configured - 1.0) < 1e-9:
-        return 0.0
+        return 0.2
     return configured
 
 

@@ -369,9 +369,12 @@ class PtarmiganFlowDaemon:
         except Exception:
             return configured
 
-        # Keep explicit user overrides, but default realtime STT to zero extra tail.
+        # Keep explicit user overrides, but default realtime STT to a small
+        # non-zero tail floor so the driver has time to deliver buffered tail
+        # frames before the stream is torn down (a hard 0.0 truncates
+        # trailing syllables).
         if prefix in {"voxtral", "vllm"} and abs(configured - 0.25) < 1e-9:
-            return 0.0
+            return 0.15
         return configured
 
     def _cancel_pending_stop_locked(self) -> bool:

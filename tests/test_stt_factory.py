@@ -59,7 +59,7 @@ def test_create_stt_backend_builds_moonshine_backend() -> None:
 def test_create_stt_backend_builds_vllm_backend() -> None:
     backend = create_stt_backend(_config("vllm:mistralai/Voxtral-Mini-4B-Realtime-2602"))
     assert backend.__class__.__name__ == "VLLMRealtimeSTTBackend"
-    assert backend._settings.trailing_silence_seconds == 0.0
+    assert backend._settings.trailing_silence_seconds == 0.2
     assert backend._settings.idle_shutdown_seconds == 30.0
     assert backend._settings.startup_preset == "off"
     assert backend._settings.max_model_len == 2048
@@ -117,7 +117,7 @@ def test_create_stt_backend_builds_voxtral_backend(monkeypatch) -> None:
     monkeypatch.setattr(factory_module.platform, "machine", lambda: "x86_64")
     backend = create_stt_backend(_config("voxtral:mistralai/Voxtral-Mini-4B-Realtime-2602"))
     assert backend.__class__.__name__ == "VoxtralTransformersSTTBackend"
-    assert backend._settings.trailing_silence_seconds == 0.0
+    assert backend._settings.trailing_silence_seconds == 0.2
 
 
 def test_create_stt_backend_prefers_voxmlx_on_macos_arm64(monkeypatch) -> None:
@@ -125,7 +125,7 @@ def test_create_stt_backend_prefers_voxmlx_on_macos_arm64(monkeypatch) -> None:
     monkeypatch.setattr(factory_module.platform, "machine", lambda: "arm64")
     backend = create_stt_backend(_config("voxtral:mistralai/Voxtral-Mini-4B-Realtime-2602"))
     assert backend.__class__.__name__ == "VoxtralMLXSTTBackend"
-    assert backend._settings.trailing_silence_seconds == 0.0
+    assert backend._settings.trailing_silence_seconds == 0.2
 
 
 def test_create_stt_backend_keeps_explicit_realtime_trailing_silence(monkeypatch) -> None:
