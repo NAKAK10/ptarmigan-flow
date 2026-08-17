@@ -10,8 +10,13 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Protocol
 
+from ptarmigan_flow.application.use_cases.llm_runtime import (
+    build_runtime_post_processor,
+    llm_enabled_for_this_run,
+)
 from ptarmigan_flow.config import AppConfig, ensure_config_exists, load_config
 from ptarmigan_flow.text_processing.interfaces import TextPostProcessor
+from ptarmigan_flow.text_processing.service import CorrectionService
 
 LOGGER = logging.getLogger(__name__)
 
@@ -275,8 +280,41 @@ def build_daemon_from_config(
     *,
     use_pynput_listener: bool = True,
 ) -> DaemonLike:
-    """Ensure, load, and build a daemon from a config path."""
+    """Ensure, load, and build a daemon from a config path.
+
+    Mirrors the CLI ``run`` wiring: correction rules and optional LLM
+    post-processing are applied here too, so the in-process app daemon
+    behaves the same as ``pflow run``. The app has no terminal, so
+    ``mode = "ask"`` cannot prompt and resolves to disabled.
+    """
     resolved_path = Path(config_path).expanduser()
     ensure_config_exists(resolved_path)
     config = load_config(resolved_path)
-    return build_daemon(config, use_pynput_listener=use_pynput_listener)
+
+    correction_result = CorrectionService.create_default().load_for_config(
+        config=config,
+        config_path=resolved_path,
+    )
+    llm_enabled = llm_enabled_for_this_run(
+        config,
+        is_interactive_session=lambda: False,
+        prompt_llm_for_this_run=lambda: False,
+    )
+    post_processor = build_runtime_post_processor(
+        config,
+        base_processor=correction_result.rules,
+        llm_enabled_override=llm_enabled,
+        is_interactive_session=lambda: False,
+        prompt_llm_for_this_run=lambda: False,
+    )
+    output_cfg = getattr(config, "output", None)
+    output_mode = str(getattr(output_cfg, "mode", "direct_typing")).strip().lower()
+    enable_streaming = (not llm_enabled) and output_mode == "direct_typing"
+    if llm_enabled:
+        LOGGER.info("LLM correction is enabled; STT streaming output is disabled for this run")
+    return build_daemon(
+        config,
+        post_processor=post_processor,
+        enable_streaming=enable_streaming,
+        use_pynput_listener=use_pynput_listener,
+    )

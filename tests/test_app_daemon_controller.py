@@ -218,12 +218,9 @@ def test_in_process_daemon_controller_builds_daemon_with_pynput_disabled(
     finally:
         controller.stop()
 
-    assert build_calls == [
-        {
-            "config": config,
-            "use_pynput_listener": False,
-        }
-    ]
+    assert len(build_calls) == 1
+    assert build_calls[0]["config"] is config
+    assert build_calls[0]["use_pynput_listener"] is False
 
 
 def test_in_process_daemon_controller_hotkey_notifications_are_noops_without_hotkey(
@@ -255,7 +252,9 @@ def test_build_daemon_from_config_ensures_loads_and_builds_daemon(monkeypatch, t
         return config
 
     def fake_build(loaded_config: AppConfig, **kwargs) -> _FakeDaemon:
-        assert kwargs == {"use_pynput_listener": True}
+        assert kwargs["use_pynput_listener"] is True
+        assert "post_processor" in kwargs
+        assert "enable_streaming" in kwargs
         calls.append(("build", loaded_config))
         return daemon
 
@@ -271,6 +270,72 @@ def test_build_daemon_from_config_ensures_loads_and_builds_daemon(monkeypatch, t
         ("load", config_path),
         ("build", config),
     ]
+
+
+def test_build_daemon_from_config_wires_llm_post_processor(monkeypatch, tmp_path) -> None:
+    config_path = tmp_path / "config.toml"
+    config = AppConfig()
+    config.text.llm_correction.mode = "always"
+    config.text.llm_correction.provider = "ollama"
+    config.text.llm_correction.base_url = "http://localhost:11434"
+    config.text.llm_correction.model = "test-model"
+    daemon = _FakeDaemon()
+    captured: dict[str, object] = {}
+
+    class _FakeLLMProcessor:
+        def __init__(self, settings) -> None:
+            captured["settings"] = settings
+
+        def preflight(self) -> None:
+            return None
+
+        def apply(self, text: str) -> str:
+            return text
+
+    def fake_build(loaded_config: AppConfig, **kwargs) -> _FakeDaemon:
+        captured.update(kwargs)
+        return daemon
+
+    monkeypatch.setattr(controller_module, "ensure_config_exists", lambda _path: None)
+    monkeypatch.setattr(controller_module, "load_config", lambda _path: config)
+    monkeypatch.setattr(controller_module, "build_daemon", fake_build)
+    monkeypatch.setattr(
+        "ptarmigan_flow.application.use_cases.llm_runtime.LLMPostProcessor",
+        _FakeLLMProcessor,
+    )
+
+    result = build_daemon_from_config(config_path)
+
+    assert result is daemon
+    # mode=always must produce a chained post-processor and disable streaming.
+    assert captured["enable_streaming"] is False
+    assert captured["post_processor"] is not None
+    assert getattr(captured["settings"], "model", None) == "test-model"
+
+
+def test_build_daemon_from_config_ask_mode_disables_llm(monkeypatch, tmp_path) -> None:
+    config_path = tmp_path / "config.toml"
+    config = AppConfig()
+    config.text.llm_correction.mode = "ask"
+    config.text.llm_correction.provider = "ollama"
+    config.text.llm_correction.base_url = "http://localhost:11434"
+    config.text.llm_correction.model = "test-model"
+    daemon = _FakeDaemon()
+    captured: dict[str, object] = {}
+
+    def fake_build(loaded_config: AppConfig, **kwargs) -> _FakeDaemon:
+        captured.update(kwargs)
+        return daemon
+
+    monkeypatch.setattr(controller_module, "ensure_config_exists", lambda _path: None)
+    monkeypatch.setattr(controller_module, "load_config", lambda _path: config)
+    monkeypatch.setattr(controller_module, "build_daemon", fake_build)
+
+    result = build_daemon_from_config(config_path)
+
+    assert result is daemon
+    # The app has no terminal, so ask cannot prompt and resolves to disabled.
+    assert captured["enable_streaming"] is True
 
 
 def test_cli_run_uses_shared_daemon_builder(monkeypatch, tmp_path) -> None:
