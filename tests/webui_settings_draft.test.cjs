@@ -19,12 +19,44 @@ function fixture() {
     const token = markup.match(/data-select-model="([^"]+)"/)[1];
     const node = element(token);
     node.dataset.selectModel = token;
-    Object.defineProperty(node, 'outerHTML', {
-      set(value) { card(value); },
-      get() { return markup; },
+    let selected = /model-card selected/.test(markup);
+    node.classList = { toggle(name, value) { if (name === 'selected') selected = value; } };
+    node.focus = () => { context.document.activeElement = node; };
+    const status = { innerHTML: markup.match(/aria-atomic="true">([\s\S]*?)<\/div>/)[1] };
+    let button = null;
+    const buttonMarkup = markup.match(/<button[^>]+data-download-model[^>]*>([^<]*)<\/button>/);
+    if (buttonMarkup) {
+      button = element(token);
+      button.dataset.downloadModel = token;
+      button.textContent = buttonMarkup[1];
+      button.disabled = /disabled/.test(buttonMarkup[0]);
+    }
+    let progress = markup.match(/<div class="model-progress-row">[\s\S]*?\n      <\/div>/)?.[0];
+    const progressNode = value => ({
+      markup: value,
+      isEqualNode(other) { return value === other.markup; },
+      replaceWith(other) { progress = other.markup; },
+      remove() { progress = null; },
     });
-    nodes.set(token, node);
+    node.querySelector = selector => {
+      if (selector === '[role="status"]') return status;
+      if (selector === '[data-download-model]') {
+        if (button) button.remove = () => { button = null; };
+        return button;
+      }
+      if (selector === '.model-action') return { append(value) { button = value; } };
+      if (selector === '.model-progress-row') return progress ? progressNode(progress) : null;
+      return null;
+    };
+    node.append = value => { progress = value.markup; };
+    Object.defineProperty(node, 'outerHTML', {
+      get() {
+        return `<div class="model-card ${selected ? 'selected' : ''}">${status.innerHTML}${progress || ''}</div>`;
+      },
+    });
+    return node;
   }
+  const brand = { innerHTML: '', running: false, classList: { toggle(name, value) { brand.running = value; } } };
   const app = {
     set innerHTML(value) {
       html = value;
@@ -42,9 +74,12 @@ function fixture() {
         node.dataset.hotkeyValue = hotkey[1];
         nodes.set('hotkey', node);
       }
-      for (const match of value.matchAll(/<div class="model-card[^>]+>/g)) card(match[0]);
+      for (const match of value.matchAll(/<div class="model-card[\s\S]*?\n    <\/div>/g)) {
+        const node = card(match[0]);
+        nodes.set(node.dataset.selectModel, node);
+      }
     },
-    querySelector() { return null; },
+    querySelector(selector) { return selector === '.brand-status' ? brand : null; },
     querySelectorAll(selector) {
       if (selector === 'select[id], input[id]') {
         return [...nodes.values()].filter(node => !node.dataset.selectModel && node.id !== 'hotkey');
@@ -61,7 +96,12 @@ function fixture() {
     removeEventListener(type) { keys.delete(type); },
   };
   const context = vm.createContext({
-    window, document: { getElementById: id => id === 'app' ? app : nodes.get(id) },
+    window, document: {
+      getElementById: id => id === 'app' ? app : nodes.get(id),
+      createElement() {
+        return { content: {}, set innerHTML(value) { this.content.firstElementChild = card(value); } };
+      },
+    },
   });
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../src/ptarmigan_flow/webui/app.js'), 'utf8'), context);
   const run = script => vm.runInContext(script, context);
@@ -76,7 +116,8 @@ function fixture() {
   };
   run(`state = ${JSON.stringify(initial)}; render();`);
   return {
-    run, nodes, window, initial, html: () => html,
+    run, nodes, window, initial,
+    html: () => html + [...nodes.values()].filter(node => node.dataset.selectModel).map(node => node.outerHTML).join('') + (brand.running ? 'brand-status running' : ''),
     payload: () => JSON.parse(run('JSON.stringify(settingsPayload())')),
     edit(id, value, type = 'input') {
       const node = nodes.get(id);
@@ -235,4 +276,79 @@ test('download progress patches only the card and keeps the draft selection', ()
   assert.equal(f.payload().language, 'ja');
   assert.match(f.nodes.get('moonshine:base').outerHTML, /model-card selected/);
   assert.match(f.nodes.get('moonshine:base').outerHTML, /42%/);
+});
+
+for (const alreadyDownloaded of [false, true]) {
+  test(`${alreadyDownloaded ? 'already-downloaded' : 'done'} sync preserves draft selection, mounted inputs/cards and clean external settings`, async () => {
+    const f = fixture();
+    f.edit('language', 'ja');
+    f.edit('llm_provider', 'draft-provider');
+    f.edit('llm_base_url', '');
+    f.select('Enter');
+    const input = f.nodes.get('language');
+    const selectedCard = f.nodes.get('moonshine:base');
+    const downloadingCard = f.nodes.get('moonshine:tiny');
+    const liveStatus = downloadingCard.querySelector('[role="status"]');
+    selectedCard.focus();
+    const snapshot = structuredClone(f.initial);
+    snapshot.daemon_running = true;
+    snapshot.models[0].downloaded = true;
+    snapshot.settings.output_mode = 'clipboard_paste';
+    snapshot.settings.hotkey = 'left_shift';
+    snapshot.settings.llm_correction = {
+      mode: 'ask', provider: 'external-provider', model: 'external-model', base_url: 'http://external',
+    };
+    f.run(`bridge = async action => action === 'getState' ? ${JSON.stringify(snapshot)} :
+      ${JSON.stringify(alreadyDownloaded ? { started: false, already_downloaded: true } : { started: true })};`);
+    const start = f.run(`handleDownloadModelClick({ stopPropagation() {}, currentTarget: {
+      dataset: { downloadModel: 'moonshine:tiny' },
+    } })`);
+    assert.equal(f.run('activeDownloadToken'), 'moonshine:tiny');
+    assert.equal(selectedCard.querySelector('[data-download-model]').disabled, true);
+    assert.equal(f.nodes.get('moonshine:base'), selectedCard);
+    if (!alreadyDownloaded) {
+      await start;
+      f.push('downloadProgress', { model: 'moonshine:tiny', type: 'progress', fraction: 0.42 });
+      assert.match(downloadingCard.outerHTML, /42%/);
+      assert.match(selectedCard.outerHTML, /model-card selected/);
+      f.push('downloadProgress', { model: 'moonshine:tiny', type: 'done' });
+      await new Promise(resolve => setImmediate(resolve));
+    } else {
+      await start;
+    }
+    assert.equal(f.run('activeDownloadToken'), null);
+    assert.equal(selectedCard.querySelector('[data-download-model]').disabled, false);
+    assert.equal(f.run('state.models[0].downloaded'), true);
+    f.push('daemonState', snapshot);
+    assert.deepEqual(f.payload(), {
+      model: 'moonshine:base', language: 'ja', hotkey: 'left_shift', output_mode: 'clipboard_paste',
+      llm_correction: { mode: 'ask', provider: 'draft-provider', model: 'external-model', base_url: '' },
+    });
+    assert.equal(f.run('state.settings.model'), 'moonshine:tiny');
+    assert.equal(f.nodes.get('language'), input);
+    assert.equal(f.nodes.get('moonshine:base'), selectedCard);
+    assert.equal(f.nodes.get('moonshine:tiny'), downloadingCard);
+    assert.equal(downloadingCard.querySelector('[role="status"]'), liveStatus);
+    assert.equal(f.run('document.activeElement.dataset.selectModel'), 'moonshine:base');
+    assert.match(selectedCard.outerHTML, /model-card selected/);
+    assert.match(downloadingCard.outerHTML, /settings_model_downloaded_badge/);
+    assert.match(f.html(), /brand-status running/);
+  });
+}
+
+test('daemon snapshot acknowledges matching drafts without losing a captured hotkey', () => {
+  const f = fixture();
+  f.edit('language', 'ja');
+  f.hotkey();
+  const hotkey = f.nodes.get('hotkey');
+  const snapshot = structuredClone(f.initial);
+  snapshot.settings.language = 'ja';
+  snapshot.settings.hotkey = 'left_shift';
+  f.push('daemonState', snapshot);
+  assert.equal(f.payload().hotkey, 'left_alt');
+  assert.equal(f.nodes.get('hotkey'), hotkey);
+  assert.equal(f.run('settingsDraft.language'), undefined);
+  snapshot.settings.language = 'zh';
+  f.push('daemonState', snapshot);
+  assert.equal(f.payload().language, 'zh');
 });
