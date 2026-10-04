@@ -147,7 +147,7 @@ test('save sends the displayed draft and acknowledged edits allow subsequent ext
     if (action === 'saveSettings') {
       if (JSON.stringify(payload) !== ${JSON.stringify(JSON.stringify(expected))}) throw Error('wrong payload');
       state = { ...state, settings: payload };
-      return { saved: true };
+      return { saved: true, settings: payload };
     }
     return state;
   };`);
@@ -159,6 +159,70 @@ test('save sends the displayed draft and acknowledged edits allow subsequent ext
   f.push('daemonState', snapshot);
   assert.equal(f.payload().language, 'zh');
   assert.equal(f.payload().model, 'moonshine:tiny');
+});
+
+test('normalized save acknowledges sent LLM drafts and allows external updates', async () => {
+  const f = fixture();
+  f.edit('llm_provider', ' openai ');
+  f.edit('llm_model', ' demo-model ');
+  f.edit('llm_base_url', ' http://localhost:12345 ');
+  f.select();
+  f.run(`bridge = async (action, payload) => {
+    if (action === 'saveSettings') {
+      const settings = { ...payload, llm_correction: { ...payload.llm_correction } };
+      for (const field of ['provider', 'model', 'base_url']) {
+        settings.llm_correction[field] = settings.llm_correction[field].trim();
+      }
+      state = { ...state, settings };
+      return { saved: true, settings };
+    }
+    return state;
+  };`);
+  await f.run('saveSettings()');
+  assert.equal(f.run('Object.keys(settingsDraft).length'), 0);
+  assert.deepEqual(f.payload().llm_correction, {
+    mode: 'always', provider: 'openai', model: 'demo-model', base_url: 'http://localhost:12345',
+  });
+  const snapshot = structuredClone(f.initial);
+  snapshot.settings.llm_correction = {
+    mode: 'ask', provider: 'external-provider', model: 'external-model', base_url: 'http://external',
+  };
+  f.push('daemonState', snapshot);
+  assert.deepEqual(f.payload().llm_correction, snapshot.settings.llm_correction);
+});
+
+test('save acknowledgement does not discard edits made while saving', async () => {
+  const f = fixture();
+  f.edit('llm_provider', ' openai ');
+  f.edit('llm_model', ' demo-model ');
+  f.run(`bridge = (action, payload) => {
+    if (action === 'saveSettings') {
+      const settings = { ...payload, llm_correction: {
+        ...payload.llm_correction, provider: 'openai', model: 'demo-model',
+      } };
+      state = { ...state, settings };
+      return new Promise(resolve => { finishSave = () => resolve({ saved: true, settings }); });
+    }
+    return Promise.resolve(state);
+  };`);
+  const saving = f.run('saveSettings()');
+  f.edit('llm_provider', 'new-unsaved-provider');
+  f.run('finishSave()');
+  await saving;
+  assert.equal(f.payload().llm_correction.provider, 'new-unsaved-provider');
+  assert.equal(f.payload().llm_correction.model, 'demo-model');
+  assert.equal(f.run('JSON.stringify(settingsDraft)'), '{"llm_provider":"new-unsaved-provider"}');
+});
+
+test('failed save leaves the sent draft intact', async () => {
+  for (const response of ["return { saved: false, errors: ['llm_provider'] };", "throw Error('save failed');"]) {
+    const f = fixture();
+    f.edit('llm_provider', ' openai ');
+    f.run(`bridge = async () => { ${response} };`);
+    await f.run('saveSettings()');
+    assert.equal(f.payload().llm_correction.provider, ' openai ');
+    assert.equal(f.run('settingsDraft.llm_provider'), ' openai ');
+  }
 });
 
 test('download progress patches only the card and keeps the draft selection', () => {

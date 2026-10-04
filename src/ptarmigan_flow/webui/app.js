@@ -729,7 +729,9 @@ function bindSettings() {
 }
 
 async function saveSettings(modelOverride = null) {
-  const result = await bridge("saveSettings", settingsPayload(modelOverride)).catch((error) => {
+  const payload = settingsPayload(modelOverride);
+  const submittedDraft = { ...settingsDraft };
+  const result = await bridge("saveSettings", payload).catch((error) => {
     showError(error, "settings-error");
     return null;
   });
@@ -742,6 +744,15 @@ async function saveSettings(modelOverride = null) {
       target.textContent = result.errors.join(", ");
     }
     return;
+  }
+  for (const [key, value] of Object.entries(submittedDraft)) {
+    const target = key.startsWith("llm_") ? result.settings.llm_correction : result.settings;
+    const field = key.startsWith("llm_") ? key.slice(4) : key;
+    // The saved value may be normalized. Acknowledge only the sent edit,
+    // not a newer draft entered while the save request was in flight.
+    if (target[field] !== undefined && settingsDraft[key] === value) {
+      delete settingsDraft[key];
+    }
   }
   state = await bridge("getState");
   render();
