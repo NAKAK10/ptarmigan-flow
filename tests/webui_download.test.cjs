@@ -10,7 +10,7 @@ function setup() {
   const requests = [];
   const context = vm.createContext({
     window: { webkit: { messageHandlers: { bridge: { postMessage: message => requests.push(message) } } } },
-    document: { getElementById: () => ({ querySelector: () => null }) },
+    document: { getElementById: () => ({ dataset: {}, querySelector: () => null, querySelectorAll: () => [] }) },
   });
   vm.runInContext(source.replace('boot().catch(showError);', ''), context);
   const run = code => vm.runInContext(code, context);
@@ -90,7 +90,7 @@ test('done requests getState, patches cache only and preserves selection/setting
   assert.equal(h.run(`downloadStates.has('a')`), false);
 });
 
-test('completion daemonState push and model selection never full-render the form', () => {
+test('completion daemonState syncs the saved snapshot while selection stays in the draft without a full render', () => {
   const h = setup();
   h.context.window.app.dispatch({ event: 'daemonState', payload: { settings: { model: 'a' }, models: [{ token: 'a', downloaded: true }], daemon_running: true } });
   h.run(`
@@ -100,7 +100,8 @@ test('completion daemonState push and model selection never full-render the form
     handlers.click();
     handlers.keydown({target:card, currentTarget:card, key:'Enter', preventDefault() {}});
   `);
-  assert.equal(h.run('state.settings.model'), 'b');
+  assert.equal(h.run('state.settings.model'), 'a');
+  assert.equal(h.run('settingsDraft.model'), 'b');
   assert.equal(h.run('state.daemon_running'), true);
   assert.equal(h.run('renders'), 0);
 });

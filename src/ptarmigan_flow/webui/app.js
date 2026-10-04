@@ -7,6 +7,9 @@ const pending = new Map();
 // absence of an entry means "idle" (no download in progress).
 const downloadStates = new Map();
 let activeDownloadToken = null;
+// Only edited fields override snapshots, so native state updates still reach
+// untouched settings. Keep these outside `state`, like the dictionary draft.
+const settingsDraft = {};
 
 // Dictionary editor draft state, kept OUTSIDE `state` on purpose: `state` is
 // wholesale replaced by daemonState/permissionsChanged push events (see
@@ -57,8 +60,8 @@ window.app = {
       // Native download completion also pushes daemonState. While settings is
       // open, update the cards/status without replacing any live form inputs.
       if (message.event === "daemonState" && state && route === "settings") {
-        const settings = state.settings;
-        state = { ...message.payload, settings };
+        state = message.payload;
+        updateSettingsInputsInPlace();
         updateModelCardsInPlace();
         const status = app.querySelector(".brand-status");
         if (status) {
@@ -257,6 +260,9 @@ function beginHotkeyCaptureUi(containerEl, badge, messageEl, changeButton) {
       return;
     }
     containerEl.dataset.hotkeyValue = token;
+    if (containerEl.id === "hotkey") {
+      settingsDraft.hotkey = token;
+    }
     badge.textContent = hotkeyLabel(token);
     finish();
   };
@@ -411,8 +417,39 @@ function bindOnboarding() {
   bindSharedActions();
 }
 
+function settingsValues() {
+  const settings = { ...state.settings, llm_correction: { ...state.settings?.llm_correction } };
+  for (const [key, value] of Object.entries(settingsDraft)) {
+    const target = key.startsWith("llm_") ? settings.llm_correction : settings;
+    const field = key.startsWith("llm_") ? key.slice(4) : key;
+    if (target[field] === value) {
+      // Saved/acknowledged edits no longer mask later external changes.
+      delete settingsDraft[key];
+    } else {
+      target[field] = value;
+    }
+  }
+  return settings;
+}
+
+// Apply the new snapshot plus edited-field overrides without remounting the form.
+function updateSettingsInputsInPlace() {
+  const settings = settingsValues();
+  app.querySelectorAll("select[id], input[id]").forEach((input) => {
+    const target = input.id.startsWith("llm_") ? settings.llm_correction : settings;
+    const field = input.id.startsWith("llm_") ? input.id.slice(4) : input.id;
+    input.value = target[field] ?? "";
+  });
+  const hotkey = document.getElementById("hotkey");
+  if (hotkey) {
+    hotkey.dataset.hotkeyValue = settings.hotkey;
+    const badge = hotkey.querySelector("[data-hotkey-badge]");
+    if (badge) badge.textContent = hotkeyLabel(settings.hotkey);
+  }
+}
+
 function renderSettings() {
-  const settings = state.settings || {};
+  const settings = settingsValues();
   const llm = settings.llm_correction || {};
   const models = state.models || [];
   return `
@@ -618,9 +655,10 @@ function updateModelCardInPlace(token) {
   // Keep the selection target and live status region mounted. Only replace
   // changed card contents; unrelated cards and the settings form stay intact.
   const template = document.createElement("template");
-  template.innerHTML = renderModelCard(model, state.settings?.model);
+  const selected = settingsValues().model;
+  template.innerHTML = renderModelCard(model, selected);
   const nextCard = template.content.firstElementChild;
-  cardEl.classList.toggle("selected", state.settings?.model === token);
+  cardEl.classList.toggle("selected", selected === token);
   const statusEl = cardEl.querySelector('[role="status"]');
   const nextStatus = nextCard.querySelector('[role="status"]');
   if (statusEl.innerHTML !== nextStatus.innerHTML) statusEl.innerHTML = nextStatus.innerHTML;
@@ -656,7 +694,7 @@ function bindModelCard(button) {
     return;
   }
   button.addEventListener("click", () => {
-    state.settings.model = button.dataset.selectModel;
+    settingsDraft.model = button.dataset.selectModel;
     updateModelCardsInPlace();
   });
   button.addEventListener("keydown", (event) => {
@@ -668,7 +706,7 @@ function bindModelCard(button) {
     }
     if (event.key === "Enter" || event.key === " " || event.key === "Spacebar") {
       event.preventDefault();
-      state.settings.model = button.dataset.selectModel;
+      settingsDraft.model = button.dataset.selectModel;
       updateModelCardsInPlace();
     }
   });
@@ -743,22 +781,27 @@ function inputRow(id, labelKey, value) {
 }
 
 function settingsPayload(modelOverride = null) {
-  const settings = state.settings || {};
+  const settings = settingsValues();
   return {
     model: modelOverride || settings.model,
-    language: document.getElementById("language")?.value || settings.language,
-    hotkey: document.getElementById("hotkey")?.dataset.hotkeyValue || settings.hotkey,
-    output_mode: document.getElementById("output_mode")?.value || settings.output_mode,
+    language: document.getElementById("language")?.value ?? settings.language,
+    hotkey: document.getElementById("hotkey")?.dataset.hotkeyValue ?? settings.hotkey,
+    output_mode: document.getElementById("output_mode")?.value ?? settings.output_mode,
     llm_correction: {
-      mode: document.getElementById("llm_mode")?.value || settings.llm_correction?.mode,
-      provider: document.getElementById("llm_provider")?.value || settings.llm_correction?.provider,
-      model: document.getElementById("llm_model")?.value || settings.llm_correction?.model,
-      base_url: document.getElementById("llm_base_url")?.value || settings.llm_correction?.base_url,
+      mode: document.getElementById("llm_mode")?.value ?? settings.llm_correction?.mode,
+      provider: document.getElementById("llm_provider")?.value ?? settings.llm_correction?.provider,
+      model: document.getElementById("llm_model")?.value ?? settings.llm_correction?.model,
+      base_url: document.getElementById("llm_base_url")?.value ?? settings.llm_correction?.base_url,
     },
   };
 }
 
 function bindSettings() {
+  app.querySelectorAll("select[id], input[id]").forEach((input) => {
+    const remember = () => { settingsDraft[input.id] = input.value; };
+    input.addEventListener("input", remember);
+    input.addEventListener("change", remember);
+  });
   app.querySelector("[data-action='save-settings']")?.addEventListener("click", async () => {
     await saveSettings();
   });
@@ -772,7 +815,9 @@ function bindSettings() {
 }
 
 async function saveSettings(modelOverride = null) {
-  const result = await bridge("saveSettings", settingsPayload(modelOverride)).catch((error) => {
+  const payload = settingsPayload(modelOverride);
+  const submittedDraft = { ...settingsDraft };
+  const result = await bridge("saveSettings", payload).catch((error) => {
     showError(error, "settings-error");
     return null;
   });
@@ -785,6 +830,15 @@ async function saveSettings(modelOverride = null) {
       target.textContent = result.errors.join(", ");
     }
     return;
+  }
+  for (const [key, value] of Object.entries(submittedDraft)) {
+    const target = key.startsWith("llm_") ? result.settings.llm_correction : result.settings;
+    const field = key.startsWith("llm_") ? key.slice(4) : key;
+    // The saved value may be normalized. Acknowledge only the sent edit,
+    // not a newer draft entered while the save request was in flight.
+    if (target[field] !== undefined && settingsDraft[key] === value) {
+      delete settingsDraft[key];
+    }
   }
   state = await bridge("getState");
   render();

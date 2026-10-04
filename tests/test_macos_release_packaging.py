@@ -103,7 +103,7 @@ def test_webui_assets_exist_and_do_not_hardcode_english_ui_copy() -> None:
     assert "window.app.dispatch" in script
     assert "strings." in script
     assert "data-select-model" in script
-    assert "state.settings.model = button.dataset.selectModel" in script
+    assert "settingsDraft.model = button.dataset.selectModel" in script
     assert "data-download-model" in script
     assert 'data-action="restart"' in script
     for literal in (
