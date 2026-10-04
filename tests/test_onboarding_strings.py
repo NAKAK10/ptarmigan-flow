@@ -106,6 +106,8 @@ REQUIRED_KEYS = {
     "settings_menu",
     "settings_model_download_button",
     "settings_model_download_done_message",
+    "settings_model_busy_message",
+    "settings_model_refresh_failed_message",
     "settings_model_download_error_message",
     "settings_model_downloaded_badge",
     "settings_model_label",
