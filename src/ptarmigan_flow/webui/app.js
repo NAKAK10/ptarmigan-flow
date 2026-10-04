@@ -3,9 +3,13 @@ let state = null;
 let route = "onboarding";
 let nextId = 1;
 const pending = new Map();
-// token -> { status: "preparing" | "downloading" | "done" | "error", fraction, message }
+// token -> { status: "preparing" | "downloading" | "done" | "error" | "busy", fraction, message }
 // absence of an entry means "idle" (no download in progress).
 const downloadStates = new Map();
+let activeDownloadToken = null;
+// Only edited fields override snapshots, so native state updates still reach
+// untouched settings. Keep these outside `state`, like the dictionary draft.
+const settingsDraft = {};
 
 // Dictionary editor draft state, kept OUTSIDE `state` on purpose: `state` is
 // wholesale replaced by daemonState/permissionsChanged push events (see
@@ -56,8 +60,21 @@ window.app = {
       return;
     }
     if (message.event === "permissionsChanged" || message.event === "daemonState") {
-      state = message.payload;
-      render();
+      // Native download completion also pushes daemonState. While settings is
+      // open, update the cards/status without replacing any live form inputs.
+      if (message.event === "daemonState" && state && route === "settings") {
+        state = message.payload;
+        updateSettingsInputsInPlace();
+        updateModelCardsInPlace();
+        const status = app.querySelector(".brand-status");
+        if (status) {
+          status.classList.toggle("running", Boolean(state.daemon_running));
+          status.innerHTML = `<span class="status-dot" aria-hidden="true"></span>${escapeHtml(t(state.daemon_running ? "dictation_running_menu" : "dictation_stopped_menu"))}`;
+        }
+      } else {
+        state = message.payload;
+        render();
+      }
       return;
     }
     if (message.event === "downloadProgress") {
@@ -67,6 +84,7 @@ window.app = {
         return;
       }
       if (payload.type === "progress") {
+        activeDownloadToken = token;
         const fraction = payload.fraction;
         downloadStates.set(token, {
           status: fraction === null || fraction === undefined ? "preparing" : "downloading",
@@ -74,13 +92,17 @@ window.app = {
           message: payload.message,
         });
       } else if (payload.type === "done") {
+        if (activeDownloadToken === token) activeDownloadToken = null;
         downloadStates.set(token, { status: "done" });
+        void refreshDownloadedModels(token);
       } else if (payload.type === "error") {
+        if (activeDownloadToken === token) activeDownloadToken = null;
         downloadStates.set(token, { status: "error", message: payload.message });
+      } else {
+        return;
       }
-      // Never full-render here: it would wipe in-progress edits in the settings
-      // form while a download runs. Patch only the affected model card.
-      updateModelCardInPlace(token);
+      // Global Download/Retry availability changes, but never replace the form.
+      updateModelCardsInPlace();
       return;
     }
     if (message.event === "routeChanged") {
@@ -241,6 +263,9 @@ function beginHotkeyCaptureUi(containerEl, badge, messageEl, changeButton) {
       return;
     }
     containerEl.dataset.hotkeyValue = token;
+    if (containerEl.id === "hotkey") {
+      settingsDraft.hotkey = token;
+    }
     badge.textContent = hotkeyLabel(token);
     finish();
   };
@@ -395,8 +420,39 @@ function bindOnboarding() {
   bindSharedActions();
 }
 
+function settingsValues() {
+  const settings = { ...state.settings, llm_correction: { ...state.settings?.llm_correction } };
+  for (const [key, value] of Object.entries(settingsDraft)) {
+    const target = key.startsWith("llm_") ? settings.llm_correction : settings;
+    const field = key.startsWith("llm_") ? key.slice(4) : key;
+    if (target[field] === value) {
+      // Saved/acknowledged edits no longer mask later external changes.
+      delete settingsDraft[key];
+    } else {
+      target[field] = value;
+    }
+  }
+  return settings;
+}
+
+// Apply the new snapshot plus edited-field overrides without remounting the form.
+function updateSettingsInputsInPlace() {
+  const settings = settingsValues();
+  app.querySelectorAll("select[id], input[id]").forEach((input) => {
+    const target = input.id.startsWith("llm_") ? settings.llm_correction : settings;
+    const field = input.id.startsWith("llm_") ? input.id.slice(4) : input.id;
+    input.value = target[field] ?? "";
+  });
+  const hotkey = document.getElementById("hotkey");
+  if (hotkey) {
+    hotkey.dataset.hotkeyValue = settings.hotkey;
+    const badge = hotkey.querySelector("[data-hotkey-badge]");
+    if (badge) badge.textContent = hotkeyLabel(settings.hotkey);
+  }
+}
+
 function renderSettings() {
-  const settings = state.settings || {};
+  const settings = settingsValues();
   const llm = settings.llm_correction || {};
   const models = state.models || [];
   return `
@@ -483,19 +539,20 @@ function renderModelCard(model, selected) {
         <div class="model-token">${escapeHtml(model.token)}</div>
       </div>
       <div class="model-action">
-        ${renderModelAction(model, status, download)}
+        <div role="status" aria-live="polite" aria-atomic="true">${renderModelStatus(status, download)}</div>
+        ${renderModelAction(model, status)}
       </div>
       ${renderModelProgress(status, download)}
     </div>
   `;
 }
 
-function renderModelAction(model, status, download) {
+function renderModelStatus(status, download) {
   if (status === "downloaded") {
     return `<span class="badge">${escapeHtml(t("settings_model_downloaded_badge"))}</span>`;
   }
   if (status === "done") {
-    return `<span class="badge">${escapeHtml(t("settings_model_download_done_message"))}</span>`;
+    return `<span class="badge">${escapeHtml(t("settings_model_download_done_message"))}</span>${download?.message ? `<span class="model-error-text">${escapeHtml(download.message)}</span>` : ""}`;
   }
   if (status === "preparing") {
     return `<span class="model-downloading">${escapeHtml(t("settings_model_preparing_message"))}</span>`;
@@ -506,21 +563,26 @@ function renderModelAction(model, status, download) {
     return `<span class="model-downloading">${escapeHtml(text)}</span>`;
   }
   if (status === "error") {
-    return `
-      <div class="model-download-error">
-        <span class="model-error-text">${escapeHtml(downloadErrorText(download?.message))}</span>
-        <button class="button" data-download-model="${escapeHtml(model.token)}">${escapeHtml(t("settings_model_retry_button"))}</button>
-      </div>
-    `;
+    return `<span class="model-error-text">${escapeHtml(downloadErrorText(download?.message))}</span>`;
   }
-  return `<button class="button" data-download-model="${escapeHtml(model.token)}">${escapeHtml(t("settings_model_download_button"))}</button>`;
+  if (status === "busy") {
+    return `<span class="model-busy-text">${escapeHtml(t("settings_model_busy_message"))}</span>`;
+  }
+  return "";
+}
+
+function renderModelAction(model, status) {
+  if (!["idle", "error", "busy"].includes(status)) return "";
+  const disabled = activeDownloadToken ? "disabled" : "";
+  const label = status === "idle" ? "settings_model_download_button" : "settings_model_retry_button";
+  return `<button class="button" data-download-model="${escapeHtml(model.token)}" ${disabled}>${escapeHtml(t(label))}</button>`;
 }
 
 function renderModelProgress(status, download) {
   if (status === "preparing") {
     return `
       <div class="model-progress-row">
-        <div class="progress indeterminate"><span></span></div>
+        <div class="progress indeterminate" role="progressbar" aria-label="${escapeHtml(t("settings_model_preparing_message"))}"><span></span></div>
       </div>
     `;
   }
@@ -528,7 +590,7 @@ function renderModelProgress(status, download) {
     const percent = fractionToPercent(download?.fraction);
     return `
       <div class="model-progress-row">
-        <div class="progress"><span style="--value: ${percent}%"></span></div>
+        <div class="progress" role="progressbar" aria-label="${escapeHtml(t("settings_model_download_button"))}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percent}"><span style="--value: ${percent}%"></span></div>
         <span class="model-percent">${percent}%</span>
       </div>
     `;
@@ -559,6 +621,26 @@ function findModelCardElement(token) {
   );
 }
 
+function updateModelCardsInPlace() {
+  for (const model of state?.models || []) updateModelCardInPlace(model.token);
+}
+
+async function refreshDownloadedModels(token) {
+  try {
+    const refreshed = await bridge("getState");
+    // Only synchronize model cache flags, not persisted settings/selection.
+    state.models = refreshed.models;
+    updateModelCardsInPlace();
+  } catch {
+    // Keep the truthful done state even if the cache snapshot cannot be read.
+    const download = downloadStates.get(token);
+    if (download?.status === "done") {
+      download.message = t("settings_model_refresh_failed_message");
+      updateModelCardInPlace(token);
+    }
+  }
+}
+
 function updateModelCardInPlace(token) {
   if (!state || route !== "settings") {
     return;
@@ -573,16 +655,38 @@ function updateModelCardInPlace(token) {
   if (!model) {
     return;
   }
-  // outerHTML replacement drops the live DOM node, so focus inside the card
-  // (e.g. on the Download/Retry button) would otherwise be silently lost.
-  const hadFocus = cardEl.contains(document.activeElement);
-  const focusWasButton = hadFocus && document.activeElement !== cardEl;
-  cardEl.outerHTML = renderModelCard(model, state.settings?.model);
-  const newCardEl = findModelCardElement(token);
-  bindModelCard(newCardEl);
-  if (hadFocus) {
-    const target = focusWasButton ? newCardEl?.querySelector("[data-download-model]") : newCardEl;
-    (target || newCardEl)?.focus();
+  // Keep the selection target and live status region mounted. Only replace
+  // changed card contents; unrelated cards and the settings form stay intact.
+  const template = document.createElement("template");
+  const selected = settingsValues().model;
+  template.innerHTML = renderModelCard(model, selected);
+  const nextCard = template.content.firstElementChild;
+  cardEl.classList.toggle("selected", selected === token);
+  const statusEl = cardEl.querySelector('[role="status"]');
+  const nextStatus = nextCard.querySelector('[role="status"]');
+  if (statusEl.innerHTML !== nextStatus.innerHTML) statusEl.innerHTML = nextStatus.innerHTML;
+  const button = cardEl.querySelector("[data-download-model]");
+  const nextButton = nextCard.querySelector("[data-download-model]");
+  if (button && nextButton) {
+    button.disabled = nextButton.disabled;
+    button.textContent = nextButton.textContent;
+    if (button.disabled && document.activeElement === button) cardEl.focus();
+  } else if (button) {
+    const hadFocus = document.activeElement === button;
+    button.remove();
+    if (hadFocus) cardEl.focus();
+  } else if (nextButton) {
+    cardEl.querySelector(".model-action").append(nextButton);
+    nextButton.addEventListener("click", handleDownloadModelClick);
+  }
+  const progress = cardEl.querySelector(".model-progress-row");
+  const nextProgress = nextCard.querySelector(".model-progress-row");
+  if (progress && nextProgress) {
+    if (!progress.isEqualNode(nextProgress)) progress.replaceWith(nextProgress);
+  } else if (progress) {
+    progress.remove();
+  } else if (nextProgress) {
+    cardEl.append(nextProgress);
   }
 }
 
@@ -593,8 +697,8 @@ function bindModelCard(button) {
     return;
   }
   button.addEventListener("click", () => {
-    state.settings.model = button.dataset.selectModel;
-    render();
+    settingsDraft.model = button.dataset.selectModel;
+    updateModelCardsInPlace();
   });
   button.addEventListener("keydown", (event) => {
     // Keydown bubbles up from the nested Download/Retry <button>; only handle
@@ -605,8 +709,8 @@ function bindModelCard(button) {
     }
     if (event.key === "Enter" || event.key === " " || event.key === "Spacebar") {
       event.preventDefault();
-      state.settings.model = button.dataset.selectModel;
-      render();
+      settingsDraft.model = button.dataset.selectModel;
+      updateModelCardsInPlace();
     }
   });
   button
@@ -619,31 +723,34 @@ async function handleDownloadModelClick(event) {
   // must not trigger that.
   event.stopPropagation();
   const token = event.currentTarget.dataset.downloadModel;
-  if (!token) {
+  if (!token || activeDownloadToken) {
     return;
   }
+  activeDownloadToken = token;
   downloadStates.set(token, { status: "preparing" });
-  updateModelCardInPlace(token);
+  updateModelCardsInPlace();
   let result = null;
   try {
     result = await bridge("downloadModel", { model: token });
   } catch (error) {
+    if (activeDownloadToken === token) activeDownloadToken = null;
     downloadStates.set(token, { status: "error", message: error.message });
-    updateModelCardInPlace(token);
+    updateModelCardsInPlace();
     return;
   }
   if (result?.started === false) {
+    if (activeDownloadToken === token) activeDownloadToken = null;
     if (result.already_downloaded) {
-      downloadStates.delete(token);
-      state = await bridge("getState");
-      updateModelCardInPlace(token);
+      downloadStates.set(token, { status: "done" });
+      updateModelCardsInPlace();
+      await refreshDownloadedModels(token);
       return;
     }
-    // Bridge errors carry raw field/reason names (e.g. "busy"), not
-    // user-facing text; fall back to the generic no-detail error copy
-    // rather than surfacing the raw token via downloadErrorText().
-    downloadStates.set(token, { status: "error", message: null });
-    updateModelCardInPlace(token);
+    // Busy is contention, not a failed download. Unknown reason tokens still
+    // use the existing localized generic failure copy.
+    const status = result.errors?.includes("busy") ? "busy" : "error";
+    downloadStates.set(token, { status, message: null });
+    updateModelCardsInPlace();
     return;
   }
   // result.started === true: leave status "preparing"; downloadProgress
@@ -677,22 +784,27 @@ function inputRow(id, labelKey, value) {
 }
 
 function settingsPayload(modelOverride = null) {
-  const settings = state.settings || {};
+  const settings = settingsValues();
   return {
     model: modelOverride || settings.model,
-    language: document.getElementById("language")?.value || settings.language,
-    hotkey: document.getElementById("hotkey")?.dataset.hotkeyValue || settings.hotkey,
-    output_mode: document.getElementById("output_mode")?.value || settings.output_mode,
+    language: document.getElementById("language")?.value ?? settings.language,
+    hotkey: document.getElementById("hotkey")?.dataset.hotkeyValue ?? settings.hotkey,
+    output_mode: document.getElementById("output_mode")?.value ?? settings.output_mode,
     llm_correction: {
-      mode: document.getElementById("llm_mode")?.value || settings.llm_correction?.mode,
-      provider: document.getElementById("llm_provider")?.value || settings.llm_correction?.provider,
-      model: document.getElementById("llm_model")?.value || settings.llm_correction?.model,
-      base_url: document.getElementById("llm_base_url")?.value || settings.llm_correction?.base_url,
+      mode: document.getElementById("llm_mode")?.value ?? settings.llm_correction?.mode,
+      provider: document.getElementById("llm_provider")?.value ?? settings.llm_correction?.provider,
+      model: document.getElementById("llm_model")?.value ?? settings.llm_correction?.model,
+      base_url: document.getElementById("llm_base_url")?.value ?? settings.llm_correction?.base_url,
     },
   };
 }
 
 function bindSettings() {
+  app.querySelectorAll("select[id], input[id]").forEach((input) => {
+    const remember = () => { settingsDraft[input.id] = input.value; };
+    input.addEventListener("input", remember);
+    input.addEventListener("change", remember);
+  });
   app.querySelector("[data-action='save-settings']")?.addEventListener("click", async () => {
     await saveSettings();
   });
@@ -771,6 +883,7 @@ async function saveSettings(modelOverride = null) {
     return;
   }
   const payload = settingsPayload(modelOverride);
+  const submittedDraft = { ...settingsDraft };
   settingsSaving = true;
   settingsMessage = null;
   updateSaveFeedback("settings");
@@ -780,6 +893,15 @@ async function saveSettings(modelOverride = null) {
     if (result.saved === false) {
       settingsMessage = { kind: "error", text: settingsValidationText(result.errors) };
       return;
+    }
+    for (const [key, value] of Object.entries(submittedDraft)) {
+      const target = key.startsWith("llm_") ? result.settings.llm_correction : result.settings;
+      const field = key.startsWith("llm_") ? key.slice(4) : key;
+      // The saved value may be normalized. Acknowledge only the sent edit,
+      // not a newer draft entered while the save request was in flight.
+      if (target[field] !== undefined && settingsDraft[key] === value) {
+        delete settingsDraft[key];
+      }
     }
     refreshing = true;
     state = await bridge("getState");

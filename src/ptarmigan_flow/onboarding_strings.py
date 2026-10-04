@@ -133,6 +133,10 @@ ONBOARDING_STRINGS: dict[str, dict[str, str]] = {
         "settings_menu": "Settings",
         "settings_model_download_button": "Download",
         "settings_model_download_done_message": "Download complete",
+        "settings_model_busy_message": (
+            "Another download is in progress. Try again when it finishes."
+        ),
+        "settings_model_refresh_failed_message": "Could not refresh model availability.",
         "settings_model_download_error_message": "Download failed: {error}",
         "settings_model_downloaded_badge": "Downloaded",
         "settings_model_label": "Model",
@@ -294,6 +298,8 @@ ONBOARDING_STRINGS: dict[str, dict[str, str]] = {
         "settings_menu": "設定",
         "settings_model_download_button": "ダウンロード",
         "settings_model_download_done_message": "ダウンロード完了",
+        "settings_model_busy_message": "別のダウンロードが進行中です。完了後に再試行してください。",
+        "settings_model_refresh_failed_message": "モデルの状態を更新できませんでした。",
         "settings_model_download_error_message": "ダウンロードに失敗しました: {error}",
         "settings_model_downloaded_badge": "DL済み",
         "settings_model_label": "モデル",
@@ -435,6 +441,8 @@ ONBOARDING_STRINGS: dict[str, dict[str, str]] = {
         "settings_menu": "设置",
         "settings_model_download_button": "下载",
         "settings_model_download_done_message": "下载完成",
+        "settings_model_busy_message": "另一个下载正在进行中。请在完成后重试。",
+        "settings_model_refresh_failed_message": "无法刷新模型状态。",
         "settings_model_download_error_message": "下载失败：{error}",
         "settings_model_downloaded_badge": "已下载",
         "settings_model_label": "模型",

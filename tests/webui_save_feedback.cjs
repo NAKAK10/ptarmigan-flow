@@ -85,7 +85,10 @@ function checkError(scope, text) {
     await save();
     assert.equal(requests.length, 1);
     context.window.app.dispatch({ event: "daemonState", payload: snapshot });
+    checkPending(scope); // Settings snapshots now patch the mounted form in place.
+    context.window.app.dispatch({ event: "routeChanged", payload: { route: scope } });
     assert.match(app.html, /aria-busy="true" disabled/);
+    checkPending(scope);
     await save();
     assert.equal(requests.length, 1);
     await reply(`save${scope === "settings" ? "Settings" : "Dictionary"}`, { saved: true });
