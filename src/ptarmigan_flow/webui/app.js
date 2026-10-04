@@ -6,6 +6,9 @@ const pending = new Map();
 // token -> { status: "preparing" | "downloading" | "done" | "error", fraction, message }
 // absence of an entry means "idle" (no download in progress).
 const downloadStates = new Map();
+// Only edited fields override snapshots, so native state updates still reach
+// untouched settings. Keep these outside `state`, like the dictionary draft.
+const settingsDraft = {};
 
 // Dictionary editor draft state, kept OUTSIDE `state` on purpose: `state` is
 // wholesale replaced by daemonState/permissionsChanged push events (see
@@ -238,6 +241,9 @@ function beginHotkeyCaptureUi(containerEl, badge, messageEl, changeButton) {
       return;
     }
     containerEl.dataset.hotkeyValue = token;
+    if (containerEl.id === "hotkey") {
+      settingsDraft.hotkey = token;
+    }
     badge.textContent = hotkeyLabel(token);
     finish();
   };
@@ -392,8 +398,23 @@ function bindOnboarding() {
   bindSharedActions();
 }
 
+function settingsValues() {
+  const settings = { ...state.settings, llm_correction: { ...state.settings?.llm_correction } };
+  for (const [key, value] of Object.entries(settingsDraft)) {
+    const target = key.startsWith("llm_") ? settings.llm_correction : settings;
+    const field = key.startsWith("llm_") ? key.slice(4) : key;
+    if (target[field] === value) {
+      // Saved/acknowledged edits no longer mask later external changes.
+      delete settingsDraft[key];
+    } else {
+      target[field] = value;
+    }
+  }
+  return settings;
+}
+
 function renderSettings() {
-  const settings = state.settings || {};
+  const settings = settingsValues();
   const llm = settings.llm_correction || {};
   const models = state.models || [];
   return `
@@ -574,7 +595,7 @@ function updateModelCardInPlace(token) {
   // (e.g. on the Download/Retry button) would otherwise be silently lost.
   const hadFocus = cardEl.contains(document.activeElement);
   const focusWasButton = hadFocus && document.activeElement !== cardEl;
-  cardEl.outerHTML = renderModelCard(model, state.settings?.model);
+  cardEl.outerHTML = renderModelCard(model, settingsValues().model);
   const newCardEl = findModelCardElement(token);
   bindModelCard(newCardEl);
   if (hadFocus) {
@@ -590,7 +611,7 @@ function bindModelCard(button) {
     return;
   }
   button.addEventListener("click", () => {
-    state.settings.model = button.dataset.selectModel;
+    settingsDraft.model = button.dataset.selectModel;
     render();
   });
   button.addEventListener("keydown", (event) => {
@@ -602,7 +623,7 @@ function bindModelCard(button) {
     }
     if (event.key === "Enter" || event.key === " " || event.key === "Spacebar") {
       event.preventDefault();
-      state.settings.model = button.dataset.selectModel;
+      settingsDraft.model = button.dataset.selectModel;
       render();
     }
   });
@@ -674,22 +695,27 @@ function inputRow(id, labelKey, value) {
 }
 
 function settingsPayload(modelOverride = null) {
-  const settings = state.settings || {};
+  const settings = settingsValues();
   return {
     model: modelOverride || settings.model,
-    language: document.getElementById("language")?.value || settings.language,
-    hotkey: document.getElementById("hotkey")?.dataset.hotkeyValue || settings.hotkey,
-    output_mode: document.getElementById("output_mode")?.value || settings.output_mode,
+    language: document.getElementById("language")?.value ?? settings.language,
+    hotkey: document.getElementById("hotkey")?.dataset.hotkeyValue ?? settings.hotkey,
+    output_mode: document.getElementById("output_mode")?.value ?? settings.output_mode,
     llm_correction: {
-      mode: document.getElementById("llm_mode")?.value || settings.llm_correction?.mode,
-      provider: document.getElementById("llm_provider")?.value || settings.llm_correction?.provider,
-      model: document.getElementById("llm_model")?.value || settings.llm_correction?.model,
-      base_url: document.getElementById("llm_base_url")?.value || settings.llm_correction?.base_url,
+      mode: document.getElementById("llm_mode")?.value ?? settings.llm_correction?.mode,
+      provider: document.getElementById("llm_provider")?.value ?? settings.llm_correction?.provider,
+      model: document.getElementById("llm_model")?.value ?? settings.llm_correction?.model,
+      base_url: document.getElementById("llm_base_url")?.value ?? settings.llm_correction?.base_url,
     },
   };
 }
 
 function bindSettings() {
+  app.querySelectorAll("select[id], input[id]").forEach((input) => {
+    const remember = () => { settingsDraft[input.id] = input.value; };
+    input.addEventListener("input", remember);
+    input.addEventListener("change", remember);
+  });
   app.querySelector("[data-action='save-settings']")?.addEventListener("click", async () => {
     await saveSettings();
   });
