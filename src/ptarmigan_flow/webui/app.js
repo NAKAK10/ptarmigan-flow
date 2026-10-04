@@ -16,8 +16,11 @@ const downloadStates = new Map();
 // row = { id, key, valuesText, error }. error is null or { message }.
 let dictDraft = null;
 let dictRowSeq = 1;
-// { kind: "success" | "error", text } | null — summary banner above the
-// dictionary sections; cleared on the next edit.
+// Save feedback survives re-renders; pending includes the getState refresh.
+let settingsSaving = false;
+let settingsMessage = null;
+let dictionarySaving = false;
+// { kind: "success" | "error", text } | null; cleared on the next edit.
 let dictionaryMessage = null;
 
 // Active press-to-set hotkey capture session, or null when idle. Holds a
@@ -454,8 +457,8 @@ function renderSettings() {
         ${inputRow("llm_base_url", "settings_llm_base_url_label", llm.base_url)}
       </div>
       <div class="panel full action-bar">
-        <div id="settings-error" class="error"></div>
-        <button class="button primary" data-action="save-settings">${escapeHtml(t("settings_save_button"))}</button>
+        ${saveMessageBox("settings-error", settingsMessage, settingsSaving)}
+        <button class="button primary" data-action="save-settings" aria-busy="${settingsSaving}" ${settingsSaving ? "disabled" : ""}>${escapeHtml(saveButtonLabel(settingsSaving, settingsMessage, "settings_save_button"))}</button>
       </div>
     </section>
   `;
@@ -694,7 +697,7 @@ function bindSettings() {
     await saveSettings();
   });
   app.querySelector("[data-action='open-config']")?.addEventListener("click", () => {
-    bridge("openConfigFile").catch(showError);
+    bridge("openConfigFile").catch((error) => showError(error, "settings-error"));
   });
   app.querySelectorAll("[data-select-model]").forEach((cardEl) => {
     bindModelCard(cardEl);
@@ -702,23 +705,92 @@ function bindSettings() {
   app.querySelectorAll("[data-hotkey-capture]").forEach((el) => bindHotkeyCapture(el));
 }
 
+function saveButtonLabel(saving, message, labelKey) {
+  return t(saving ? "save_in_progress" : message?.kind === "error" ? "save_retry_button" : labelKey);
+}
+
+function saveMessageBox(id, message, saving) {
+  const kind = saving ? "pending" : message?.kind;
+  const text = saving ? t("save_in_progress") : message?.text || "";
+  return `<div id="${id}" class="save-status${kind ? ` alert ${kind}` : ""}" role="status" aria-live="polite" aria-atomic="true">${escapeHtml(text)}</div>`;
+}
+
+// Patch feedback immediately without rebuilding the settings form. Rendering
+// after a push or navigation uses the same pending flags and keeps Save locked.
+function updateSaveFeedback(scope) {
+  const saving = scope === "settings" ? settingsSaving : dictionarySaving;
+  const message = scope === "settings" ? settingsMessage : dictionaryMessage;
+  const target = document.getElementById(`${scope}-error`);
+  if (target) {
+    const kind = saving ? "pending" : message?.kind;
+    target.className = `save-status${kind ? ` alert ${kind}` : ""}`;
+    target.textContent = saving ? t("save_in_progress") : message?.text || "";
+  }
+  const button = app.querySelector(`[data-action='save-${scope}']`);
+  if (button) {
+    button.disabled = saving;
+    button.setAttribute("aria-busy", String(saving));
+    button.textContent = saveButtonLabel(saving, message, `${scope}_save_button`);
+  }
+  if (scope === "dictionary") {
+    // A successful refresh replaces the saved draft, so don't allow newer
+    // edits to be made and then silently discarded while the save is pending.
+    app.querySelectorAll("[data-dictionary-row] input, [data-dictionary-row] textarea, [data-delete-row], [data-add-dictionary]").forEach((control) => {
+      control.disabled = saving;
+    });
+  }
+}
+
+function saveFailureText(scope, error, refreshing = false) {
+  const key = refreshing ? "save_refresh_failed_message" : `${scope}_save_failed_message`;
+  const detail = error?.message || t("save_error_unknown");
+  return `${t(key).replace("{error}", detail)} ${t("save_retry_hint")}`;
+}
+
+function settingsValidationText(errors) {
+  const labels = {
+    model: "settings_model_label",
+    language: "settings_language_label",
+    hotkey: "settings_hotkey_label",
+    output_mode: "settings_output_mode_label",
+    "llm_correction.mode": "settings_llm_mode_label",
+    "llm_correction.provider": "settings_llm_provider_label",
+    "llm_correction.model": "settings_llm_model_label",
+    "llm_correction.base_url": "settings_llm_base_url_label",
+  };
+  const fields = [...new Set((errors || []).map((field) => {
+    const label = t(labels[field] || "settings_window_title");
+    return field.startsWith("llm_correction.") && labels[field]
+      ? `${t("settings_llm_section_title")} / ${label}` : label;
+  }))];
+  return `${t("settings_validation_error").replace("{fields}", fields.join(", ") || t("settings_window_title"))} ${t("save_retry_hint")}`;
+}
+
 async function saveSettings(modelOverride = null) {
-  const result = await bridge("saveSettings", settingsPayload(modelOverride)).catch((error) => {
-    showError(error, "settings-error");
-    return null;
-  });
-  if (!result) {
+  if (settingsSaving) {
     return;
   }
-  if (result.saved === false) {
-    const target = document.getElementById("settings-error");
-    if (target) {
-      target.textContent = result.errors.join(", ");
+  const payload = settingsPayload(modelOverride);
+  settingsSaving = true;
+  settingsMessage = null;
+  updateSaveFeedback("settings");
+  let refreshing = false;
+  try {
+    const result = await bridge("saveSettings", payload);
+    if (result.saved === false) {
+      settingsMessage = { kind: "error", text: settingsValidationText(result.errors) };
+      return;
     }
-    return;
+    refreshing = true;
+    state = await bridge("getState");
+    settingsMessage = { kind: "success", text: t("settings_saved_message") };
+    render();
+  } catch (error) {
+    settingsMessage = { kind: "error", text: saveFailureText("settings", error, refreshing) };
+  } finally {
+    settingsSaving = false;
+    updateSaveFeedback("settings");
   }
-  state = await bridge("getState");
-  render();
 }
 
 function renderDictionary() {
@@ -739,10 +811,10 @@ function renderDictionary() {
         <div class="actions">
           <button class="button" data-add-dictionary="exact">${escapeHtml(t("dictionary_add_exact_button"))}</button>
           <button class="button" data-add-dictionary="regex">${escapeHtml(t("dictionary_add_regex_button"))}</button>
-          <button class="button primary" data-action="save-dictionary">${escapeHtml(t("dictionary_save_button"))}</button>
+          <button class="button primary" data-action="save-dictionary" aria-busy="${dictionarySaving}" ${dictionarySaving ? "disabled" : ""}>${escapeHtml(saveButtonLabel(dictionarySaving, dictionaryMessage, "dictionary_save_button"))}</button>
           <span class="unsaved-indicator${dictDraft.dirty ? "" : " hidden"}" data-dictionary-unsaved>${escapeHtml(t("dictionary_unsaved_changes_label"))}</span>
         </div>
-        ${dictionaryMessageBox()}
+        ${saveMessageBox("dictionary-error", dictionaryMessage, dictionarySaving)}
       </div>
     </section>
   `;
@@ -767,14 +839,6 @@ function buildDictDraft(dictionary) {
 function makeDictRow(section, key, values) {
   const joiner = section === "regex" ? "\n" : ", ";
   return { id: dictRowSeq++, key, valuesText: (values || []).join(joiner), error: null };
-}
-
-function dictionaryMessageBox() {
-  if (!dictionaryMessage) {
-    return `<div id="dictionary-error"></div>`;
-  }
-  const cls = dictionaryMessage.kind === "success" ? "alert success" : "alert error";
-  return `<div id="dictionary-error" class="${cls}">${escapeHtml(dictionaryMessage.text)}</div>`;
 }
 
 function dictionarySection(section, rows, titleKey, descriptionKey, addLabelKey) {
@@ -849,6 +913,7 @@ function bindDictionary() {
     });
   });
   app.querySelector("[data-action='save-dictionary']")?.addEventListener("click", saveDictionary);
+  updateSaveFeedback("dictionary");
 }
 
 function findDictRow(section, id) {
@@ -977,11 +1042,7 @@ function clearDictionaryMessage() {
     return;
   }
   dictionaryMessage = null;
-  const target = document.getElementById("dictionary-error");
-  if (target) {
-    target.className = "";
-    target.textContent = "";
-  }
+  updateSaveFeedback("dictionary");
 }
 
 // Builds the saveDictionary payload from the draft and runs the client-side
@@ -1055,45 +1116,48 @@ function applyDictionarySaveErrors(errors) {
     }
   });
   const first = errors[0];
-  dictionaryMessage = first ? { kind: "error", text: composeDictionaryErrorMessage(first) } : null;
+  dictionaryMessage = {
+    kind: "error",
+    text: `${t("dictionary_save_failed_message").replace("{error}", first ? composeDictionaryErrorMessage(first) : t("save_error_unknown"))} ${t("save_retry_hint")}`,
+  };
 }
 
 async function saveDictionary() {
-  if (!dictDraft) {
+  if (!dictDraft || dictionarySaving) {
     return;
   }
   const { payload, hasDuplicates } = buildDictionaryPayload();
   if (hasDuplicates) {
+    const first = [...dictDraft.exact, ...dictDraft.regex].find((row) => row.error);
+    dictionaryMessage = { kind: "error", text: `${first.error.message} ${t("save_retry_hint")}` };
     render();
     return;
   }
-  const result = await bridge("saveDictionary", payload).catch((error) => {
-    dictionaryMessage = { kind: "error", text: `${t("webui_error_title")}: ${error.message || error}` };
+  dictionarySaving = true;
+  dictionaryMessage = null;
+  updateSaveFeedback("dictionary");
+  let refreshing = false;
+  try {
+    const result = await bridge("saveDictionary", payload);
+    if (result.saved === false) {
+      applyDictionarySaveErrors(result.errors || []);
+      render();
+      return;
+    }
+    refreshing = true;
+    const refreshedState = await bridge("getState");
+    state = refreshedState;
+    dictDraft = null;
+    dictionaryMessage = { kind: "success", text: t("dictionary_saved_message") };
     render();
-    return null;
-  });
-  if (!result) {
-    return;
+  } catch (error) {
+    // Keep the draft on save/refresh failure, including a save which succeeded
+    // on disk but could not yet be reflected in the view.
+    dictionaryMessage = { kind: "error", text: saveFailureText("dictionary", error, refreshing) };
+  } finally {
+    dictionarySaving = false;
+    updateSaveFeedback("dictionary");
   }
-  if (result.saved === false) {
-    applyDictionarySaveErrors(result.errors || []);
-    render();
-    return;
-  }
-  const refreshedState = await bridge("getState").catch((error) => {
-    dictionaryMessage = { kind: "error", text: `${t("webui_error_title")}: ${error.message || error}` };
-    return null;
-  });
-  if (!refreshedState) {
-    // Keep the draft (it was already saved server-side) so the user's edits
-    // stay visible even though we couldn't refresh `state`.
-    render();
-    return;
-  }
-  state = refreshedState;
-  dictDraft = null;
-  dictionaryMessage = { kind: "success", text: t("dictionary_saved_message") };
-  render();
 }
 
 function bindSharedActions() {
@@ -1112,6 +1176,9 @@ function showError(error, targetId = null) {
   const text = `${title}: ${error.message || error}`;
   const target = targetId ? document.getElementById(targetId) : app.querySelector(".error");
   if (target) {
+    if (targetId === "settings-error") {
+      target.className = "save-status alert error";
+    }
     target.textContent = text;
   }
 }
