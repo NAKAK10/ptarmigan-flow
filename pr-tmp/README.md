@@ -1,3 +1,20 @@
+# Issue #3 save feedback screenshots
+
+Captured before PR creation from `http://127.0.0.1:8763/`, serving this worktree's real `webui` assets and real `WebBridgeDispatcher`. Harness/config/dictionary writes are isolated in `/tmp/ptarmigan-issue-3/`; the shared port 8765 harness was not changed. All displayed rules/errors are synthetic.
+
+Chrome DevTools MCP `wait_for` + `take_snapshot` preceded each full-page `take_screenshot`. Desktop viewports: 1440×1100 (settings), 1440×900 (dictionary); mobile: 390×844. The harness adapter initially rejected filesystem screenshot paths (missing workspace roots), so capture used a separate isolated Chrome DevTools MCP stdio client declaring only this worktree as its root, with its own dedicated pageId. No images were synthesized or edited.
+
+- `settings-pending-en.png`: immediate indeterminate status and disabled/busy Save; two click attempts produced one bridge request. Injected save delay 10 seconds, state-refresh delay 3 seconds.
+- `settings-success-en.png`: success only after saving and refreshed state; restart-to-apply note retained.
+- `settings-validation-ja-mobile.png`: real dispatcher rejects an injected unsupported LLM mode; localized field label, explanation and Retry save (no internal field key).
+- `dictionary-pending-zh.png`: pending dictionary save; Save/add/delete/edit controls locked; two click attempts produced one bridge request.
+- `dictionary-refresh-error-zh.png`: save succeeded on disk but injected getState failure prevents success; retained rule and actionable retry.
+- `dictionary-success-zh-mobile.png`: successful retry after state reflection. Document width verified 390px; no horizontal overflow. Browser error console empty.
+
+**Native limitation:** this is a mocked browser transport/effect preview, not WKWebView or native responsiveness verification. Permissions, daemon, cache/availability, login, restart, hotkey effects and downloads are mocked/no-op. Real settings/dictionary validation and persistence run only in temporary files. No native builds/launches, TCC changes, permission probes or model downloads were performed. Native synchronous bridge scheduling remains unverified. Settings draft/model-selection preservation and download lifecycle are deliberately out of scope.
+
+Screenshots are review aids only, not referenced by app code. No pr-tmp cleanup workflow exists here; retained in this PR branch.
+
 # Issue #4 — model download lifecycle
 
 Safe synthetic data; real worktree webui assets and WebBridgeDispatcher served by an isolated copy of `/tmp/ptarmigan-dogfood` on port **8764** (`/tmp/ptarmigan-issue-4`). Shared port 8765 was not changed.
@@ -81,3 +98,36 @@ writes are confined to `/tmp/ptarmigan-issue-4`; bridge transport/native effects
 permissions and model cache/download are mocked. No native build, TCC, real model
 or LLM request, inference or VoiceOver validation. Shared port 8765 untouched.
 Both PRs' earlier evidence/descriptions are retained; no cleanup workflow exists.
+
+## PR #7 integration with merged PR #5 and #6
+
+Latest `origin/dev` (`152bae0`) is integrated without replacing any earlier
+screenshots or descriptions. The original issue #3 scope limitation above applies
+to its first submission; this follow-up verifies the combined contracts.
+
+- `issue-3-integration-desktop-pending.png` / `issue-3-integration-mobile-pending.png`:
+  save held at the mocked transport, immediate busy/disabled Save, synthetic 42%
+  download with globally locked Download buttons, draft Moonshine base selection.
+  Whitespace-padded LLM values were submitted; `new-unsaved-provider` was entered
+  while saving and survives a daemon snapshot without replacing the mounted input.
+- `issue-3-integration-desktop-success.png` / `issue-3-integration-mobile-success.png`:
+  real dispatcher normalized the submitted values and acknowledged only those
+  edits, then `getState` completed before success appeared. Download completed and
+  availability/other Download buttons refreshed. A subsequent external dispatcher
+  save is visible as `external-model` and `http://localhost:23456`, while the newer
+  unsaved provider remains unchanged (the only remaining settings draft).
+
+Desktop viewport 1440×900; mobile-width 390×844; full-page uncropped PNGs. Chrome
+DevTools MCP verified the flow with assertions, snapshot and wait_for. The harness
+adapter denied file exports, so a separate isolated Chrome DevTools MCP stdio
+session declaring this worktree as its root repeated the same assertions and used
+`take_screenshot` directly to save all four files. No image synthesis/editing.
+Browser error consoles were empty and mobile document width was 390px.
+
+Real assets/dispatcher, safe synthetic values, isolated port 8763 and temporary
+configuration/dictionary writes only in `/tmp/ptarmigan-issue-3`. Native bridge
+transport/effects, permissions, daemon and cache/download are mocked; pending save
+is a manually released transport gate, not native performance evidence. Native
+WKWebView scheduling, build/launch, TCC, real downloads/inference and VoiceOver
+remain untested. Shared port 8765 untouched. No cleanup workflow; images retained
+as review-only evidence, never referenced by application code.

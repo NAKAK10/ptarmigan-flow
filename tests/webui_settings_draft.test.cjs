@@ -9,7 +9,8 @@ function fixture() {
   const nodes = new Map();
   const keys = new Map();
   const element = (id, value = '') => ({
-    id, value, dataset: {}, listeners: {}, textContent: '',
+    id, value, dataset: {}, listeners: {}, textContent: '', attrs: {},
+    setAttribute(name, value) { this.attrs[name] = value; },
     addEventListener(type, listener) { this.listeners[type] = listener; },
     querySelector() { return null; },
     contains() { return false; },
@@ -61,6 +62,20 @@ function fixture() {
     set innerHTML(value) {
       html = value;
       nodes.clear();
+      const status = value.match(/id="settings-error"[^>]*>([^<]*)/);
+      if (status) {
+        const node = element('settings-error');
+        node.textContent = status[1];
+        nodes.set(node.id, node);
+      }
+      const save = value.match(/data-action="save-settings"([^>]*)>([^<]*)/);
+      if (save) {
+        const node = element('save-settings');
+        node.disabled = save[1].includes('disabled');
+        node.attrs['aria-busy'] = save[1].match(/aria-busy="([^"]+)"/)[1];
+        node.textContent = save[2];
+        nodes.set(node.id, node);
+      }
       for (const match of value.matchAll(/<input id="([^"]+)" value="([^"]*)"/g)) {
         nodes.set(match[1], element(match[1], match[2]));
       }
@@ -79,10 +94,14 @@ function fixture() {
         nodes.set(node.dataset.selectModel, node);
       }
     },
-    querySelector(selector) { return selector === '.brand-status' ? brand : null; },
+    querySelector(selector) {
+      if (selector === '.brand-status') return brand;
+      if (selector === "[data-action='save-settings']") return nodes.get('save-settings');
+      return null;
+    },
     querySelectorAll(selector) {
       if (selector === 'select[id], input[id]') {
-        return [...nodes.values()].filter(node => !node.dataset.selectModel && node.id !== 'hotkey');
+        return [...nodes.values()].filter(node => !node.dataset.selectModel && !['hotkey', 'settings-error', 'save-settings'].includes(node.id));
       }
       if (selector === '[data-select-model]') {
         return [...nodes.values()].filter(node => node.dataset.selectModel);
@@ -253,6 +272,85 @@ test('save acknowledgement does not discard edits made while saving', async () =
   assert.equal(f.payload().llm_correction.provider, 'new-unsaved-provider');
   assert.equal(f.payload().llm_correction.model, 'demo-model');
   assert.equal(f.run('JSON.stringify(settingsDraft)'), '{"llm_provider":"new-unsaved-provider"}');
+});
+
+test('pending save and download completion retain new edits, acknowledge normalized drafts and wait for refresh', async () => {
+  const f = fixture();
+  f.edit('llm_provider', ' openai ');
+  f.edit('llm_model', ' demo-model ');
+  f.edit('llm_base_url', ' http://localhost:12345 ');
+  f.select();
+  f.run(`
+    let saveCalls = 0;
+    let refreshCalls = 0;
+    let savedSettings;
+    bridge = (action, payload) => {
+      if (action === 'saveSettings') {
+        saveCalls++;
+        savedSettings = { ...payload, llm_correction: { ...payload.llm_correction } };
+        for (const field of ['provider', 'model', 'base_url']) {
+          savedSettings.llm_correction[field] = savedSettings.llm_correction[field].trim();
+        }
+        return new Promise(resolve => { finishSave = () => resolve({ saved: true, settings: savedSettings }); });
+      }
+      if (action === 'downloadModel') return Promise.resolve({ started: true });
+      refreshCalls++;
+      return new Promise(resolve => {
+        const finish = () => resolve({ ...state, settings: savedSettings });
+        if (refreshCalls === 1) finishSaveRefresh = finish;
+        else finishRefresh = finish;
+      });
+    };
+  `);
+  const saving = f.run('saveSettings()');
+  const input = f.nodes.get('llm_provider');
+  const pending = () => {
+    assert.equal(f.nodes.get('save-settings').disabled, true);
+    assert.equal(f.nodes.get('save-settings').attrs['aria-busy'], 'true');
+    assert.equal(f.nodes.get('settings-error').textContent, 'save_in_progress');
+  };
+  pending();
+  await f.run('saveSettings()');
+  assert.equal(f.run('saveCalls'), 1);
+  await f.run(`handleDownloadModelClick({ stopPropagation() {}, currentTarget: {
+    dataset: { downloadModel: 'moonshine:tiny' },
+  } })`);
+  f.edit('llm_provider', 'new-unsaved-provider');
+  f.push('downloadProgress', { model: 'moonshine:tiny', type: 'progress', fraction: 0.42 });
+  const snapshot = structuredClone(f.initial);
+  snapshot.models[0].downloaded = true;
+  snapshot.settings.output_mode = 'clipboard_paste';
+  f.push('daemonState', snapshot);
+  assert.equal(f.nodes.get('llm_provider'), input);
+  pending();
+  f.run('finishSave()');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.run('refreshCalls'), 1);
+  assert.equal(f.run('JSON.stringify(settingsDraft)'), '{"llm_provider":"new-unsaved-provider"}');
+  pending();
+  f.edit('llm_model', 'new-unsaved-model'); // Also preserve edits during getState.
+  f.push('downloadProgress', { model: 'moonshine:tiny', type: 'done' });
+  assert.equal(f.run('activeDownloadToken'), null);
+  assert.equal(f.run('refreshCalls'), 2);
+  f.run('finishRefresh()'); // Download availability refresh must not report save success.
+  await new Promise(resolve => setImmediate(resolve));
+  pending();
+  await f.run('saveSettings()');
+  assert.equal(f.run('saveCalls'), 1);
+  // Resolve the save's earlier getState separately from the download refresh.
+  f.push('routeChanged', { route: 'settings' });
+  pending();
+  f.run('finishSaveRefresh()');
+  await saving;
+  assert.equal(f.nodes.get('save-settings').disabled, false);
+  assert.equal(f.nodes.get('settings-error').textContent, 'settings_saved_message');
+  assert.equal(f.payload().llm_correction.provider, 'new-unsaved-provider');
+  assert.equal(f.payload().llm_correction.model, 'new-unsaved-model');
+  assert.equal(f.payload().llm_correction.base_url, 'http://localhost:12345');
+  snapshot.settings.llm_correction.base_url = 'http://external';
+  f.push('daemonState', snapshot);
+  assert.equal(f.payload().llm_correction.base_url, 'http://external');
+  assert.equal(f.payload().llm_correction.provider, 'new-unsaved-provider');
 });
 
 test('failed save leaves the sent draft intact', async () => {
