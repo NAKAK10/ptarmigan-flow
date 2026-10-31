@@ -125,3 +125,30 @@ def test_available_model_entries_filters_mlx_models_without_runtime_packages(mon
     monkeypatch.setattr(availability.importlib.util, "find_spec", fake_find_spec)
 
     assert availability.available_model_entries() == entries[:2]
+
+
+def test_mlx_backends_require_their_import_time_dependencies(monkeypatch) -> None:
+    base_modules = {
+        "ptarmigan_flow.stt.granite_mlx",
+        "mlx_audio",
+        "ptarmigan_flow.stt.mlx_whisper",
+        "mlx_whisper",
+    }
+    available_modules = set(base_modules)
+
+    def fake_find_spec(module_name: str):
+        if module_name in available_modules:
+            return object()
+        return None
+
+    monkeypatch.setattr(availability.importlib.util, "find_spec", fake_find_spec)
+
+    # Granite(MLX) loads its tokenizer through transformers; mlx_whisper imports
+    # numba and scipy when the package is imported.
+    assert availability.is_backend_available("granite") is False
+    assert availability.is_backend_available("mlx") is False
+
+    available_modules |= {"transformers", "numba", "scipy"}
+
+    assert availability.is_backend_available("granite") is True
+    assert availability.is_backend_available("mlx") is True
