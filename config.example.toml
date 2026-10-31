@@ -108,3 +108,8 @@ max_input_chars = 500
 # api_key = "sk-..."
 # Enable tool calling only when using a model/server that supports it.
 enabled_tools = false
+# Preferred spellings of terms that may appear in dictation (passed to the LLM as hints).
+# glossary = ["issue", "PR", "Ollama"]
+# Ollama "think" parameter for reasoning models: "low" | "medium" | "high" | "true" | "false".
+# Omitted from requests when unset.
+# think = "low"

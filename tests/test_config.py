@@ -135,6 +135,51 @@ def test_write_config_round_trips_vllm_startup_preset(tmp_path: Path) -> None:
     assert loaded.stt.vllm.startup_preset == VLLMStartupPreset.BALANCED
 
 
+def test_write_config_round_trips_llm_glossary_and_think(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "config.toml"
+    config = load_config(cfg_path)
+    config.text.llm_correction.glossary = ["issue", "PR", 'say "hi"', "C:\\path", "日本語"]
+    config.text.llm_correction.think = "low"
+
+    write_config(cfg_path, config)
+
+    loaded = load_config(cfg_path)
+    assert loaded.text.llm_correction.glossary == [
+        "issue",
+        "PR",
+        'say "hi"',
+        "C:\\path",
+        "日本語",
+    ]
+    assert loaded.text.llm_correction.think == "low"
+
+
+def test_write_config_omits_unset_llm_think(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "config.toml"
+    config = load_config(cfg_path)
+    config.text.llm_correction.think = None
+
+    write_config(cfg_path, config)
+
+    assert "think" not in cfg_path.read_text(encoding="utf-8")
+    loaded = load_config(cfg_path)
+    assert loaded.text.llm_correction.think is None
+    assert loaded.text.llm_correction.glossary == []
+
+
+def test_load_config_accepts_llm_glossary_and_boolean_think(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(
+        '[text.llm_correction]\nglossary = ["issue", "PR"]\nthink = true\n',
+        encoding="utf-8",
+    )
+
+    loaded = load_config(cfg_path)
+
+    assert loaded.text.llm_correction.glossary == ["issue", "PR"]
+    assert loaded.text.llm_correction.think == "true"
+
+
 def test_load_config_rejects_invalid_vllm_startup_preset(tmp_path: Path) -> None:
     cfg_path = tmp_path / "config.toml"
     cfg_path.write_text(

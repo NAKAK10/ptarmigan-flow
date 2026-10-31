@@ -130,3 +130,12 @@ pflow list model --hub-search whisper --backend mlx --limit 20
 Hub 検索結果には `unverified Hub result`（未検証）と表示され、設定値は従来通り `stt.model = "<backend>:<repo_id>"` 形式で保存されます。`HF_TOKEN` は任意で、rate limit 対策やアカウントで閲覧可能なモデルへのアクセスが必要な場合だけ使われます。
 
 `pflow config language` または `pflow init` では、説明付きで `en`、`ja`、`zh`、custom を選択できます。
+
+## LLM 補正の用語集
+LLM 補正で優先する表記（`[text.llm_correction].glossary`）を CLI から管理できます。
+
+```bash
+pflow glossary list                  # 登録済み用語を表示
+pflow glossary add issue PR          # 用語を追加（重複はスキップ）
+pflow glossary remove PR             # 用語を削除
+```
