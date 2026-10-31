@@ -103,6 +103,35 @@ def build_parser() -> argparse.ArgumentParser:
     list_lmstudio_parser.add_argument("--config", default=None, help="Path to config TOML")
     list_lmstudio_parser.set_defaults(func=commands.cmd_list_lmstudio)
 
+    glossary_parser = subparsers.add_parser(
+        "glossary",
+        help="Manage LLM correction glossary terms",
+    )
+    glossary_parser.set_defaults(func=commands.cmd_glossary)
+    glossary_subparsers = glossary_parser.add_subparsers(dest="glossary_target")
+    glossary_list_parser = glossary_subparsers.add_parser(
+        "list",
+        help="List registered glossary terms",
+    )
+    glossary_list_parser.add_argument("--config", default=None, help="Path to config TOML")
+    glossary_list_parser.set_defaults(func=commands.cmd_glossary_list)
+
+    glossary_add_parser = glossary_subparsers.add_parser(
+        "add",
+        help="Add terms to the glossary",
+    )
+    glossary_add_parser.add_argument("terms", nargs="+", metavar="term", help="Term to add")
+    glossary_add_parser.add_argument("--config", default=None, help="Path to config TOML")
+    glossary_add_parser.set_defaults(func=commands.cmd_glossary_add)
+
+    glossary_remove_parser = glossary_subparsers.add_parser(
+        "remove",
+        help="Remove terms from the glossary",
+    )
+    glossary_remove_parser.add_argument("terms", nargs="+", metavar="term", help="Term to remove")
+    glossary_remove_parser.add_argument("--config", default=None, help="Path to config TOML")
+    glossary_remove_parser.set_defaults(func=commands.cmd_glossary_remove)
+
     download_model_parser = subparsers.add_parser(
         "download-model",
         help="Download the configured STT model snapshot",

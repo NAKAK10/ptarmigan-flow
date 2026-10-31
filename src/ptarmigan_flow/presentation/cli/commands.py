@@ -790,6 +790,89 @@ def cmd_list(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_glossary(args: argparse.Namespace) -> int:
+    del args
+    print("Available glossary commands:")
+    print("  list       List registered LLM correction glossary terms")
+    print("  add        Add terms to the LLM correction glossary")
+    print("  remove     Remove terms from the LLM correction glossary")
+    print("")
+    print("Usage:")
+    print("  pflow glossary list")
+    print("  pflow glossary add <term> [<term> ...]")
+    print("  pflow glossary remove <term> [<term> ...]")
+    return 0
+
+
+def cmd_glossary_list(args: argparse.Namespace) -> int:
+    config_path = _resolve_config_path(args.config)
+    config = load_config(config_path)
+    terms = config.text.llm_correction.glossary
+    if not terms:
+        print("No glossary terms registered. Add one with `pflow glossary add <term>`.")
+        return 0
+    for term in terms:
+        print(term)
+    return 0
+
+
+def cmd_glossary_add(args: argparse.Namespace) -> int:
+    config_path = _resolve_config_path(args.config)
+    config = load_config(config_path)
+    glossary = config.text.llm_correction.glossary
+    added: list[str] = []
+    invalid_count = 0
+    for raw_term in args.terms:
+        term = str(raw_term).strip()
+        if not term:
+            invalid_count += 1
+            continue
+        if term in glossary:
+            print(_yellow(f"Already registered, skipped: {term}"))
+            continue
+        glossary.append(term)
+        added.append(term)
+
+    if invalid_count:
+        print(
+            f"Error: ignored {invalid_count} empty term(s); terms must not be blank.",
+            file=sys.stderr,
+        )
+    if not added:
+        print("No glossary terms were added.")
+        return 1 if invalid_count else 0
+
+    write_config(config_path, config)
+    print(_green(f"Updated config: {config_path}"))
+    for term in added:
+        print(f"Added: {term}")
+    return 0
+
+
+def cmd_glossary_remove(args: argparse.Namespace) -> int:
+    config_path = _resolve_config_path(args.config)
+    config = load_config(config_path)
+    glossary = config.text.llm_correction.glossary
+    removed: list[str] = []
+    for raw_term in args.terms:
+        term = str(raw_term).strip()
+        if term and term in glossary:
+            glossary.remove(term)
+            removed.append(term)
+        else:
+            print(_yellow(f"Not registered, skipped: {term}"))
+
+    if not removed:
+        print("Error: no glossary terms were removed.", file=sys.stderr)
+        return 1
+
+    write_config(config_path, config)
+    print(_green(f"Updated config: {config_path}"))
+    for term in removed:
+        print(f"Removed: {term}")
+    return 0
+
+
 def _huggingface_cache_hub_dir() -> Path:
     return model_download.huggingface_cache_hub_dir()
 

@@ -142,3 +142,12 @@ pflow list model --hub-search whisper --backend mlx --limit 20
 Hub results are marked `unverified Hub result`; they keep the same `stt.model = "<backend>:<repo_id>"` format. `HF_TOKEN` is optional and is only used to raise rate limits or access models your account can see.
 
 Use `pflow config language` or `pflow init` to select `en`, `ja`, `zh`, or a custom language code with descriptions.
+
+## LLM Correction Glossary
+Register preferred spellings for the LLM correction step (`[text.llm_correction].glossary`):
+
+```bash
+pflow glossary list                  # show registered terms
+pflow glossary add issue PR          # add terms (duplicates are skipped)
+pflow glossary remove PR             # remove terms
+```

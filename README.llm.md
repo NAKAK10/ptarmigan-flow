@@ -98,6 +98,7 @@ Key settings:
 - `text.llm_correction.timeout_seconds`: clamped to `0.5..5.0`.
 - `text.llm_correction.max_input_chars`: clamped to `50..5000`.
 - `text.llm_correction.enabled_tools`: tool-calling switch for supporting endpoints.
+- `text.llm_correction.glossary`: preferred term spellings; manage with `pflow glossary list|add|remove`.
 - `stt.model`: backend/model token (`moonshine:tiny`, `moonshine:base`, `granite:<model-id>`, `voxtral:<model-id>`, `mlx:<model-id>`, `vllm:<model-id>`).
 - `stt.idle_shutdown_seconds`: idle seconds before releasing backend resources (`30.0` default, clamped to `>=0.0`, `0` disables idle shutdown).
 - `stt.vllm.startup_preset`: vLLM cold-start preset (`off` / `balanced` / `fastest`; default `off`, stored always, applied only for `vllm:` models).
