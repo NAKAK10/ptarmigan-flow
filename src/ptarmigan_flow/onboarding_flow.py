@@ -114,6 +114,20 @@ class OnboardingFlow:
                 return
             self.advance()
 
+    def rewind_to_missing_permission(self, report: PermissionReport) -> None:
+        """Step back to the earliest missing permission once past the hotkey step.
+
+        ``refresh`` only moves forward, so a permission revoked after onboarding
+        finished would otherwise leave the flow at ``done``.
+        """
+        for step, permission_attr in self._permission_step_attrs.items():
+            if bool(getattr(report, permission_attr)):
+                continue
+            step_index = self.steps.index(step)
+            if step_index < self._step_index:
+                self._step_index = step_index
+            return
+
     def choose_language(self, code: str) -> None:
         normalized = code.strip().lower()
         if normalized not in SUPPORTED_LANGUAGES:
