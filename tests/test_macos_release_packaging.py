@@ -261,3 +261,32 @@ def test_pyproject_includes_webkit_pyobjc_for_wkwebview_release_builds() -> None
         dependencies_block,
         re.MULTILINE,
     )
+
+
+def test_release_requirements_include_pyproject_pyobjc_dependencies() -> None:
+    payload = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    pyobjc_dependencies = {
+        dep.split(";", 1)[0].strip()
+        for dep in payload["project"]["dependencies"]
+        if dep.startswith("pyobjc-")
+    }
+    release_requirements = {
+        line.strip()
+        for line in (ROOT / "packaging/macos/requirements-release.txt")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip() and not line.startswith("#")
+    }
+
+    assert "pyobjc-framework-WebKit>=11.0" in pyobjc_dependencies
+    assert pyobjc_dependencies <= release_requirements
+
+
+def test_pyinstaller_spec_fails_when_runtime_modules_are_missing() -> None:
+    spec = (ROOT / "packaging/macos/PtarmiganFlow.spec").read_text(encoding="utf-8")
+    required_block = spec.split("REQUIRED_RUNTIME_MODULES = (", 1)[1].split(")", 1)[0]
+
+    for module in ("objc", "AppKit", "Foundation", "WebKit", "Quartz", "AVFoundation"):
+        assert f'"{module}"' in required_block
+    assert "find_spec(name) is None" in spec
+    assert "raise SystemExit(" in spec
