@@ -132,6 +132,7 @@ Correction dictionary:
 ## Installation and Runtime Notes
 - Recommended install: `brew install ptarmigan-flow`
 - Download release app: `PtarmiganFlow-macos-arm64.zip` for Apple Silicon or `PtarmiganFlow-macos-x86_64.zip` for Intel from GitHub Releases.
+- Update the release app: `Pt` menu → `Check for Updates…` (also checked once after launch). It downloads the matching zip, verifies codesign/spctl/Team ID/bundle ID/version, swaps the bundle in place, and relaunches; dev builds or non-writable locations open the release page instead.
 - Optional helper (legacy migration + retry): `./scripts/install_brew.sh`
 - Update: `pflow update`
 - Uninstall: `brew uninstall ptarmigan-flow`
