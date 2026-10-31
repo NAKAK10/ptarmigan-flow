@@ -59,13 +59,15 @@ OPTIONAL_BACKEND_MODULE_PREFIXES = (
     "ptarmigan_flow.stt._test_support",
 )
 
+# torch is pulled into the release venv by mlx-whisper's metadata but no bundled
+# backend imports it. transformers, numba and scipy are NOT excluded: mlx-audio's
+# Granite model loads its tokenizer through transformers, and mlx_whisper imports
+# numba + scipy at package import time.
 OPTIONAL_BACKEND_PACKAGE_EXCLUDES = (
     "torch",
-    "transformers",
-    "scipy",
+    "torchvision",
+    "torchaudio",
     "sklearn",
-    "numba",
-    "llvmlite",
     "pytest",
 )
 
@@ -113,9 +115,30 @@ REQUIRED_RUNTIME_MODULES = (
     "ServiceManagement",
 )
 
+# arm64 builds must ship the MLX backends (issue #20). They are installed via
+# arch-marked lines in requirements-release.txt, so a missing or mis-marked line
+# would otherwise silently produce an app with only Moonshine selectable.
+REQUIRED_ARM64_RUNTIME_MODULES = (
+    "mlx",
+    "mlx_audio",
+    "mlx_whisper",
+    "voxmlx",
+    "mistral_common",
+    "huggingface_hub",
+    "transformers",
+    "numba",
+    "scipy",
+)
+
 
 def _keep_release_module(name: str) -> bool:
     return not name.startswith(OPTIONAL_BACKEND_MODULE_PREFIXES)
+
+
+def _required_runtime_modules(arch: str) -> tuple[str, ...]:
+    if arch == "x86_64":
+        return REQUIRED_RUNTIME_MODULES
+    return REQUIRED_RUNTIME_MODULES + REQUIRED_ARM64_RUNTIME_MODULES
 
 
 def _release_backend_packages(arch: str) -> tuple[str, ...]:
@@ -133,7 +156,7 @@ def _drop_unneeded_moonshine_entries(entries):
 
 
 _missing_runtime_modules = [
-    name for name in REQUIRED_RUNTIME_MODULES if find_spec(name) is None
+    name for name in _required_runtime_modules(TARGET_ARCH) if find_spec(name) is None
 ]
 if _missing_runtime_modules:
     raise SystemExit(

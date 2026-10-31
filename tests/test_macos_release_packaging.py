@@ -131,9 +131,14 @@ def test_pyinstaller_spec_bundles_mlx_backends() -> None:
     assert '"mlx_whisper"' in release_packages_block
     assert '"voxmlx"' in release_packages_block
     assert '"mistral_common"' in release_packages_block
-    # The heavy Torch/Transformers fallbacks stay excluded (CLI/Homebrew only).
-    assert '"torch"' in spec
-    assert '"transformers"' in spec
+    # torch stays excluded; transformers (Granite tokenizer) and numba/scipy
+    # (imported by mlx_whisper at import time) must be bundled for MLX presets.
+    package_excludes_block = spec.split("OPTIONAL_BACKEND_PACKAGE_EXCLUDES = (", 1)[1].split(
+        ")", 1
+    )[0]
+    assert '"torch"' in package_excludes_block
+    for package in ("transformers", "numba", "llvmlite", "scipy"):
+        assert f'"{package}"' not in package_excludes_block
     # MLX backend modules are now shipped; only the Transformers fallbacks and
     # the test helper remain excluded.
     module_excludes_block = spec.split("OPTIONAL_BACKEND_MODULE_PREFIXES", 1)[1].split(")", 1)[0]
@@ -290,3 +295,67 @@ def test_pyinstaller_spec_fails_when_runtime_modules_are_missing() -> None:
         assert f'"{module}"' in required_block
     assert "find_spec(name) is None" in spec
     assert "raise SystemExit(" in spec
+
+
+ARM64_MARKER = "platform_system == 'Darwin' and platform_machine == 'arm64'"
+
+
+def _release_requirement_lines() -> list[str]:
+    return [
+        line.strip()
+        for line in (ROOT / "packaging/macos/requirements-release.txt")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip() and not line.startswith("#")
+    ]
+
+
+def test_release_requirements_include_arm64_mlx_backends() -> None:
+    payload = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    pyproject_specs = {
+        dep.split(";", 1)[0].strip()
+        for dep in payload["project"]["dependencies"]
+        if dep.startswith(("mlx-", "voxmlx", "mistral-common"))
+    }
+    release_lines = _release_requirement_lines()
+    arm64_release_specs = {
+        line.split(";", 1)[0].strip()
+        for line in release_lines
+        if ";" in line and line.split(";", 1)[1].strip() == ARM64_MARKER
+    }
+
+    assert {
+        "mlx-audio>=0.4.1",
+        "mlx-whisper>=0.4.2",
+        "voxmlx>=0.0.2",
+        "mistral-common[audio]>=1.5.0",
+    } <= pyproject_specs
+    # Same version floors as pyproject.toml, but arm64-only so the x86_64 app
+    # build does not try to install (or bundle) MLX.
+    assert pyproject_specs <= arm64_release_specs
+    assert any(spec.startswith("huggingface-hub") for spec in arm64_release_specs)
+    for line in release_lines:
+        name = re.split(r"[<>=\[;]", line, maxsplit=1)[0].strip().lower()
+        if name in {"mlx-audio", "mlx-whisper", "voxmlx", "mistral-common", "huggingface-hub"}:
+            assert line.endswith(f"; {ARM64_MARKER}"), line
+
+
+def test_pyinstaller_spec_fails_arm64_build_without_mlx_runtime_modules() -> None:
+    spec = (ROOT / "packaging/macos/PtarmiganFlow.spec").read_text(encoding="utf-8")
+    arm64_block = spec.split("REQUIRED_ARM64_RUNTIME_MODULES = (", 1)[1].split(")", 1)[0]
+
+    for module in (
+        "mlx",
+        "mlx_audio",
+        "mlx_whisper",
+        "voxmlx",
+        "mistral_common",
+        "huggingface_hub",
+        "transformers",
+        "numba",
+        "scipy",
+    ):
+        assert f'"{module}"' in arm64_block
+    assert "def _required_runtime_modules(arch: str)" in spec
+    assert "return REQUIRED_RUNTIME_MODULES + REQUIRED_ARM64_RUNTIME_MODULES" in spec
+    assert "for name in _required_runtime_modules(TARGET_ARCH) if find_spec(name) is None" in spec
