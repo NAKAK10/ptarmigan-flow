@@ -1240,6 +1240,7 @@ def _install_fake_status_menu(controller, language: str = "ja") -> types.SimpleN
         setattr(controller, name, _FakeStatusMenuItem())
     controller.bridge = types.SimpleNamespace(
         handle_action=lambda _action, _payload: {"language": language},
+        current_language=lambda: language,
     )
     return button
 
@@ -1344,6 +1345,57 @@ def test_status_menu_plain_stopped_after_setup_complete(monkeypatch) -> None:
     assert controller.dictation_status_menu_item.title == "音声入力 停止中"
     assert controller.open_setup_menu_item.hidden is True
     assert button.title == "Pt"
+
+
+def test_poll_daemon_status_does_not_query_login_item(monkeypatch) -> None:
+    captured = _capture_app_delegate(monkeypatch, _StoppedDaemonController)
+    controller = captured["delegate"]
+    _install_fake_status_menu(controller, "en")
+    controller.onboarding_flow.start(
+        language_already_selected=True,
+        hotkey_already_confirmed=True,
+    )
+
+    def fail_if_called() -> bool:
+        raise AssertionError("login_item.is_enabled must not be polled")
+
+    monkeypatch.setattr(macos_app.login_item, "is_enabled", fail_if_called)
+    controller._reconcile_daemon_status = lambda: False
+
+    for _ in range(3):
+        controller.pollDaemonStatus_(None)
+
+    assert controller.dictation_status_menu_item.title
+    assert controller.login_menu_item.state is None
+
+
+def test_menu_needs_update_refreshes_login_item_state(monkeypatch) -> None:
+    captured = _capture_app_delegate(monkeypatch, _StoppedDaemonController)
+    controller = captured["delegate"]
+    _install_fake_status_menu(controller, "en")
+    controller.onboarding_flow.start(
+        language_already_selected=True,
+        hotkey_already_confirmed=True,
+    )
+    enabled = {"value": True}
+    queries: list[None] = []
+
+    def is_enabled() -> bool:
+        queries.append(None)
+        return enabled["value"]
+
+    monkeypatch.setattr(macos_app.login_item, "is_enabled", is_enabled)
+
+    controller.menuNeedsUpdate_(None)
+
+    assert len(queries) == 1
+    assert controller.login_menu_item.state == 1
+
+    enabled["value"] = False
+    controller.menuNeedsUpdate_(None)
+
+    assert len(queries) == 2
+    assert controller.login_menu_item.state == 0
 
 
 def test_open_setup_menu_item_routes_to_onboarding() -> None:

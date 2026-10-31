@@ -176,6 +176,37 @@ def test_get_state_returns_web_ui_snapshot_with_localized_strings_and_download_s
     assert state["strings"]["settings_window_title"] == "設定"
 
 
+def test_get_state_reuses_cached_login_status_for_native_pushes(tmp_path: Path) -> None:
+    dispatcher = _dispatcher(tmp_path)
+    queries: list[None] = []
+
+    def login_is_enabled() -> bool:
+        queries.append(None)
+        return True
+
+    dispatcher.deps.login_is_enabled = login_is_enabled
+
+    assert dispatcher.handle_action("getState", {"cached_login": True})["login_enabled"] is True
+    for _ in range(3):
+        state = dispatcher.handle_action("getState", {"cached_login": True})
+        assert state["login_enabled"] is True
+    assert len(queries) == 1
+
+    dispatcher.handle_action("getState", {})
+    assert len(queries) == 2
+
+
+def test_current_language_reads_config_without_building_full_state(tmp_path: Path) -> None:
+    dispatcher = _dispatcher(tmp_path)
+
+    def fail_if_called() -> bool:
+        raise AssertionError("login status must not be queried")
+
+    dispatcher.deps.login_is_enabled = fail_if_called
+
+    assert dispatcher.current_language() == "ja"
+
+
 def test_get_state_setup_required_true_when_onboarding_incomplete(tmp_path: Path) -> None:
     dispatcher = _dispatcher(tmp_path)
     dispatcher.deps.language_was_selected = lambda: True
