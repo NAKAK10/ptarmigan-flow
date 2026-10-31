@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 import sys
 from typing import Any
+
+LOGGER = logging.getLogger(__name__)
 
 
 def _is_macos() -> bool:
@@ -43,6 +46,7 @@ def register() -> bool:
     try:
         return _coerce_objc_bool(_main_app_service().registerAndReturnError_(None))
     except Exception:
+        LOGGER.warning("Failed to register login item", exc_info=True)
         return False
 
 
@@ -53,6 +57,7 @@ def unregister() -> bool:
     try:
         return _coerce_objc_bool(_main_app_service().unregisterAndReturnError_(None))
     except Exception:
+        LOGGER.warning("Failed to unregister login item", exc_info=True)
         return False
 
 
@@ -63,4 +68,5 @@ def is_enabled() -> bool:
     try:
         return _main_app_service().status() == _enabled_status()
     except Exception:
+        LOGGER.warning("Failed to query login item status", exc_info=True)
         return False

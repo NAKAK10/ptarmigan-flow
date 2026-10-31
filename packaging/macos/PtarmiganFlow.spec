@@ -110,6 +110,7 @@ REQUIRED_RUNTIME_MODULES = (
     "Quartz",
     "AVFoundation",
     "ApplicationServices",
+    "ServiceManagement",
 )
 
 

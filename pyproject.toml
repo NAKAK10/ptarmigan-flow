@@ -27,6 +27,7 @@ dependencies = [
   "pyobjc-framework-WebKit>=11.0; platform_system == 'Darwin'",
   "pyobjc-framework-Quartz>=11.0; platform_system == 'Darwin'",
   "pyobjc-framework-AVFoundation>=11.0; platform_system == 'Darwin'",
+  "pyobjc-framework-ServiceManagement>=11.0; platform_system == 'Darwin'",
 ]
 
 [project.optional-dependencies]
