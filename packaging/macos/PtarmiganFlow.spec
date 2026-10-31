@@ -5,6 +5,7 @@ import platform
 import sys
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _dist_version
+from importlib.util import find_spec
 from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_all, collect_submodules
@@ -97,6 +98,20 @@ REQUIRED_APP_MODULES = (
     "ptarmigan_flow.daemon",
 )
 
+# Third-party modules the app imports at runtime. The release venv installs
+# packaging/macos/requirements-release.txt rather than pyproject.toml, so a
+# dependency missing there would silently produce an app that cannot open its
+# WKWebView window; fail the build instead.
+REQUIRED_RUNTIME_MODULES = (
+    "objc",
+    "AppKit",
+    "Foundation",
+    "WebKit",
+    "Quartz",
+    "AVFoundation",
+    "ApplicationServices",
+)
+
 
 def _keep_release_module(name: str) -> bool:
     return not name.startswith(OPTIONAL_BACKEND_MODULE_PREFIXES)
@@ -115,6 +130,16 @@ def _drop_unneeded_moonshine_entries(entries):
         if Path(entry[0]).name not in MOONSHINE_EXCLUDED_BASENAMES
     ]
 
+
+_missing_runtime_modules = [
+    name for name in REQUIRED_RUNTIME_MODULES if find_spec(name) is None
+]
+if _missing_runtime_modules:
+    raise SystemExit(
+        f"Required runtime modules {_missing_runtime_modules} are not importable "
+        f"from the build environment ({sys.executable}); add the corresponding "
+        "packages to packaging/macos/requirements-release.txt."
+    )
 
 _app_submodules = collect_submodules("ptarmigan_flow")
 _missing_app_modules = sorted(set(REQUIRED_APP_MODULES) - set(_app_submodules))
