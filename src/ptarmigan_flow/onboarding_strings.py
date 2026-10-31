@@ -108,6 +108,47 @@ ONBOARDING_STRINGS: dict[str, dict[str, str]] = {
         "output_clipboard_paste": "Clipboard Paste",
         "output_direct_typing": "Direct Typing",
         "quit_menu": "Quit",
+        "check_updates_menu": "Check for Updates…",
+        "update_available_menu": "Update to v{version}…",
+        "update_checking_menu": "Checking for updates…",
+        "update_downloading_menu": "Downloading update… {percent}",
+        "update_verifying_menu": "Verifying update…",
+        "update_installing_menu": "Installing update…",
+        "update_up_to_date_title": "You're up to date",
+        "update_up_to_date_body": "PtarmiganFlow {version} is the latest version.",
+        "update_available_title": "PtarmiganFlow {version} is available",
+        "update_available_body": (
+            "You have {current}. Download and install {version} now? PtarmiganFlow will "
+            "restart."
+        ),
+        "update_dev_build_title": "Development build",
+        "update_dev_build_body": (
+            "This build ({current}) can't be updated automatically. The latest release is "
+            "{version}."
+        ),
+        "update_blocked_dev_build": (
+            "This build can't be updated automatically. Download the new version from the "
+            "release page."
+        ),
+        "update_blocked_translocated": (
+            "Move PtarmiganFlow.app to the Applications folder to enable automatic updates. "
+            "You can also download the new version from the release page."
+        ),
+        "update_blocked_not_writable": (
+            "PtarmiganFlow can't replace itself in its current location ({path}). Download the "
+            "new version from the release page."
+        ),
+        "update_blocked_no_asset": (
+            "The download for this Mac isn't ready yet. Try again later or check the release "
+            "page."
+        ),
+        "update_check_failed_title": "Couldn't check for updates",
+        "update_failed_title": "Update failed",
+        "update_failed_body": "{error}\n\nThe current version was left unchanged.",
+        "update_button": "Update",
+        "update_release_notes_button": "Release Notes",
+        "update_later_button": "Later",
+        "update_ok_button": "OK",
         "restart_app_button": "Restart App",
         "restart_failed_message": "Could not restart app.",
         "restart_required_note": (
@@ -282,6 +323,47 @@ ONBOARDING_STRINGS: dict[str, dict[str, str]] = {
         "output_clipboard_paste": "クリップボード貼り付け",
         "output_direct_typing": "直接入力",
         "quit_menu": "終了",
+        "check_updates_menu": "アップデートを確認…",
+        "update_available_menu": "v{version} に更新…",
+        "update_checking_menu": "アップデートを確認中…",
+        "update_downloading_menu": "アップデートをダウンロード中… {percent}",
+        "update_verifying_menu": "アップデートを検証中…",
+        "update_installing_menu": "アップデートをインストール中…",
+        "update_up_to_date_title": "最新版です",
+        "update_up_to_date_body": "PtarmiganFlow {version} は最新のバージョンです。",
+        "update_available_title": "PtarmiganFlow {version} が利用可能です",
+        "update_available_body": (
+            "現在のバージョンは {current} です。{version} "
+            "をダウンロードしてインストールしますか？PtarmiganFlow は再起動します。"
+        ),
+        "update_dev_build_title": "開発ビルド",
+        "update_dev_build_body": (
+            "このビルド（{current}）は自動更新できません。最新のリリースは {version} です。"
+        ),
+        "update_blocked_dev_build": (
+            "このビルドは自動更新できません。"
+            "リリースページから新しいバージョンをダウンロードしてください。"
+        ),
+        "update_blocked_translocated": (
+            "自動更新するには PtarmiganFlow.app "
+            "を「アプリケーション」フォルダに移動してください。"
+            "リリースページから新しいバージョンをダウンロードすることもできます。"
+        ),
+        "update_blocked_not_writable": (
+            "現在の場所（{path}）では PtarmiganFlow を置き換えられません。"
+            "リリースページから新しいバージョンをダウンロードしてください。"
+        ),
+        "update_blocked_no_asset": (
+            "この Mac 用のダウンロードはまだ準備中です。しばらくしてから再度お試しいただくか、"
+            "リリースページを確認してください。"
+        ),
+        "update_check_failed_title": "アップデートを確認できませんでした",
+        "update_failed_title": "アップデートに失敗しました",
+        "update_failed_body": "{error}\n\n現在のバージョンはそのまま残っています。",
+        "update_button": "アップデート",
+        "update_release_notes_button": "リリースノート",
+        "update_later_button": "あとで",
+        "update_ok_button": "OK",
         "restart_app_button": "アプリを再起動",
         "restart_failed_message": "アプリを再起動できませんでした。",
         "restart_required_note": (
@@ -433,6 +515,36 @@ ONBOARDING_STRINGS: dict[str, dict[str, str]] = {
         "output_clipboard_paste": "剪贴板粘贴",
         "output_direct_typing": "直接输入",
         "quit_menu": "退出",
+        "check_updates_menu": "检查更新…",
+        "update_available_menu": "更新到 v{version}…",
+        "update_checking_menu": "正在检查更新…",
+        "update_downloading_menu": "正在下载更新… {percent}",
+        "update_verifying_menu": "正在验证更新…",
+        "update_installing_menu": "正在安装更新…",
+        "update_up_to_date_title": "已是最新版本",
+        "update_up_to_date_body": "PtarmiganFlow {version} 是最新版本。",
+        "update_available_title": "PtarmiganFlow {version} 可用",
+        "update_available_body": (
+            "当前版本为 {current}。现在下载并安装 {version} 吗？PtarmiganFlow 将会重新启动。"
+        ),
+        "update_dev_build_title": "开发版本",
+        "update_dev_build_body": "此版本（{current}）无法自动更新。最新发布版本为 {version}。",
+        "update_blocked_dev_build": "此版本无法自动更新。请从发布页面下载新版本。",
+        "update_blocked_translocated": (
+            "请将 PtarmiganFlow.app 移动到“应用程序”文件夹以启用自动更新。"
+            "也可以从发布页面下载新版本。"
+        ),
+        "update_blocked_not_writable": (
+            "无法在当前位置（{path}）替换 PtarmiganFlow。请从发布页面下载新版本。"
+        ),
+        "update_blocked_no_asset": "适用于此 Mac 的下载尚未就绪。请稍后重试或查看发布页面。",
+        "update_check_failed_title": "无法检查更新",
+        "update_failed_title": "更新失败",
+        "update_failed_body": "{error}\n\n当前版本保持不变。",
+        "update_button": "更新",
+        "update_release_notes_button": "发布说明",
+        "update_later_button": "稍后",
+        "update_ok_button": "好",
         "restart_app_button": "重新启动应用",
         "restart_failed_message": "无法重新启动应用。",
         "restart_required_note": (

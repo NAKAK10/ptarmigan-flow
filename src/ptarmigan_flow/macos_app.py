@@ -13,7 +13,13 @@ import time
 from pathlib import Path
 from typing import Any
 
-from ptarmigan_flow import app_relaunch, login_item, onboarding_strings, setup_status
+from ptarmigan_flow import (
+    app_relaunch,
+    app_updater,
+    login_item,
+    onboarding_strings,
+    setup_status,
+)
 from ptarmigan_flow import onboarding_flow as onboarding_flow_module
 from ptarmigan_flow.app_daemon_controller import (
     InProcessDaemonController,
@@ -41,6 +47,10 @@ from ptarmigan_flow.transcription_corrections import resolve_dictionary_path
 from ptarmigan_flow.web_bridge import BridgeDependencies, WebBridgeDispatcher
 
 APP_NAME = "PtarmiganFlow"
+# Delay before the one-shot update check after launch, so startup work settles first.
+_STARTUP_UPDATE_CHECK_DELAY_SECONDS = 5.0
+_NS_ALERT_FIRST_BUTTON_RETURN = 1000
+_UPDATE_LOG_PATH = Path.home() / "Library" / "Logs" / "ptarmigan-flow" / "update.log"
 _HOTKEY_KEYCODE_TO_MODIFIER_FLAG = {
     54: 1 << 20,
     55: 1 << 20,
@@ -156,6 +166,7 @@ def _run_appkit_app() -> int:
 
     import objc
     from AppKit import (
+        NSAlert,
         NSApplication,
         NSApplicationActivationPolicyAccessory,
         NSControlStateValueOff,
@@ -221,6 +232,14 @@ def _run_appkit_app() -> int:
             self._model_download_success_message_key = "voice_input_started_message"
             self._model_download_thread: threading.Thread | None = None
             self._daemon_error_message: str | None = None
+            self._update_check_in_progress = False
+            self._update_install_in_progress = False
+            # Newer release found by the last successful check; drives the update menu item.
+            self._update_result: app_updater.UpdateCheckResult | None = None
+            # (strings key, percent text) while an update is downloading/verifying/installing.
+            self._update_progress: tuple[str, str] | None = None
+            self._update_install_bundle: Path | None = None
+            self._update_startup_timer = None
             self.web_ui = None
             self.bridge = WebBridgeDispatcher(
                 deps=BridgeDependencies(
@@ -261,6 +280,7 @@ def _run_appkit_app() -> int:
             self._show_onboarding_window_if_needed()
             self._refresh_onboarding_permissions()
             self._start_permission_check()
+            self._schedule_startup_update_check()
 
         def applicationWillTerminate_(self, _notification):  # noqa: N802
             self._stop_permission_timer()
@@ -330,6 +350,17 @@ def _run_appkit_app() -> int:
             )
             self.status_menu.addItem_(self.login_menu_item)
             self.status_menu.addItem_(NSMenuItem.separatorItem())
+            self.update_available_menu_item = self._menu_item(
+                strings["update_available_menu"].format(version=""),
+                "installUpdate:",
+            )
+            self.update_available_menu_item.setHidden_(True)
+            self.status_menu.addItem_(self.update_available_menu_item)
+            self.check_updates_menu_item = self._menu_item(
+                strings["check_updates_menu"],
+                "checkForUpdates:",
+            )
+            self.status_menu.addItem_(self.check_updates_menu_item)
             self.quit_menu_item = self._menu_item(strings["quit_menu"], "quit:")
             self.status_menu.addItem_(self.quit_menu_item)
             self.status_menu.setDelegate_(self)
@@ -356,7 +387,32 @@ def _run_appkit_app() -> int:
             self.settings_menu_item.setTitle_(strings["settings_menu"])
             self.dictionary_menu_item.setTitle_(strings["edit_dictionary_menu"])
             self.login_menu_item.setTitle_(strings["login_at_startup_menu"])
+            self._update_updater_menu_items(strings)
             self.quit_menu_item.setTitle_(strings["quit_menu"])
+
+        @objc.python_method
+        def _update_updater_menu_items(self, strings: dict[str, str]) -> None:
+            update_item = self.update_available_menu_item
+            result = self._update_result
+            if self._update_progress is not None:
+                key, percent = self._update_progress
+                update_item.setTitle_(strings[key].format(percent=percent).rstrip())
+                # Without an action the auto-enabling menu greys the item out.
+                update_item.setAction_(None)
+                update_item.setHidden_(False)
+            elif result is not None and result.release is not None and not result.is_dev_build:
+                update_item.setTitle_(
+                    strings["update_available_menu"].format(version=result.release.version)
+                )
+                update_item.setAction_("installUpdate:")
+                update_item.setHidden_(False)
+            else:
+                update_item.setHidden_(True)
+            self.check_updates_menu_item.setTitle_(
+                strings["update_checking_menu"]
+                if self._update_check_in_progress
+                else strings["check_updates_menu"]
+            )
 
         @objc.python_method
         def _update_login_menu_state(self) -> None:
@@ -903,6 +959,319 @@ def _run_appkit_app() -> int:
             url = NSURL.URLWithString_(settings_url)
             if url is not None:
                 NSWorkspace.sharedWorkspace().openURL_(url)
+
+        @objc.python_method
+        def _current_app_bundle(self) -> Path | None:
+            if not getattr(sys, "frozen", False):
+                return None
+            return app_relaunch.current_app_bundle_path()
+
+        @objc.python_method
+        def _current_app_version(self) -> str:
+            return app_updater.running_app_version(self._current_app_bundle())
+
+        @objc.python_method
+        def _schedule_startup_update_check(self) -> None:
+            # Only release builds check on their own; one shot, never polled.
+            if not getattr(sys, "frozen", False):
+                return
+            if not app_updater.is_release_version(self._current_app_version()):
+                return
+            schedule_timer = (
+                NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_
+            )
+            self._update_startup_timer = schedule_timer(
+                _STARTUP_UPDATE_CHECK_DELAY_SECONDS,
+                self,
+                "startupUpdateCheck:",
+                None,
+                False,
+            )
+
+        @objc.python_method
+        def _start_update_check(self, *, manual: bool) -> None:
+            if self._update_check_in_progress or self._update_install_in_progress:
+                return
+            self._update_check_in_progress = True
+            self._update_status_menu()
+            thread = threading.Thread(
+                target=self._check_updates_in_background,
+                args=(manual,),
+                daemon=True,
+            )
+            try:
+                thread.start()
+            except RuntimeError:
+                self._update_check_in_progress = False
+                self._update_status_menu()
+
+        @objc.python_method
+        def _check_updates_in_background(self, manual: bool) -> None:
+            bundle = self._current_app_bundle()
+            current_version = app_updater.running_app_version(bundle)
+            try:
+                result = app_updater.check_for_update(
+                    current_version,
+                    frozen=bool(getattr(sys, "frozen", False)),
+                    bundle_path=bundle,
+                )
+            except Exception as exc:  # never let the worker thread die silently
+                result = app_updater.UpdateCheckResult(
+                    current_version=current_version,
+                    error=str(exc),
+                )
+            try:
+                self.performSelectorOnMainThread_withObject_waitUntilDone_(
+                    "applyUpdateCheckResult:",
+                    {"manual": manual, "result": result},
+                    False,
+                )
+            except Exception:
+                self._update_check_in_progress = False
+
+        def applyUpdateCheckResult_(self, payload):  # noqa: N802
+            self._update_check_in_progress = False
+            try:
+                manual = bool(payload["manual"])
+                result = payload["result"]
+            except Exception:
+                return
+            if not isinstance(result, app_updater.UpdateCheckResult):
+                return
+            if result.error is None:
+                self._update_result = result if result.update_available else None
+            else:
+                logging.getLogger(__name__).warning("Update check failed: %s", result.error)
+            self._update_status_menu()
+            if manual:
+                self._show_update_check_result(result)
+
+        @objc.python_method
+        def _run_alert(self, title: str, body: str, buttons: list[str]) -> int:
+            NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+            alert = NSAlert.alloc().init()
+            alert.setMessageText_(title)
+            alert.setInformativeText_(body)
+            for button in buttons:
+                alert.addButtonWithTitle_(button)
+            return int(alert.runModal()) - _NS_ALERT_FIRST_BUTTON_RETURN
+
+        @objc.python_method
+        def _open_release_page(self, result: app_updater.UpdateCheckResult | None) -> None:
+            page = result.release_page_url if result is not None else app_updater.RELEASES_PAGE_URL
+            url = NSURL.URLWithString_(page)
+            if url is not None:
+                NSWorkspace.sharedWorkspace().openURL_(url)
+
+        @objc.python_method
+        def _show_update_check_result(self, result: app_updater.UpdateCheckResult) -> None:
+            strings = self._strings()
+            if result.error is not None:
+                self._run_alert(
+                    strings["update_check_failed_title"],
+                    result.error,
+                    [strings["update_ok_button"]],
+                )
+                return
+            if not result.update_available:
+                self._run_alert(
+                    strings["update_up_to_date_title"],
+                    strings["update_up_to_date_body"].format(version=result.current_version),
+                    [strings["update_ok_button"]],
+                )
+                return
+            self._confirm_update(result)
+
+        @objc.python_method
+        def _update_blocker_message(
+            self,
+            result: app_updater.UpdateCheckResult,
+            strings: dict[str, str],
+        ) -> str:
+            blocker = result.install_blocker
+            if blocker == app_updater.INSTALL_BLOCK_TRANSLOCATED:
+                return strings["update_blocked_translocated"]
+            if blocker == app_updater.INSTALL_BLOCK_NOT_WRITABLE:
+                bundle = self._current_app_bundle()
+                location = str(bundle.parent) if bundle is not None else ""
+                return strings["update_blocked_not_writable"].format(path=location)
+            if blocker == app_updater.INSTALL_BLOCK_NO_ASSET:
+                return strings["update_blocked_no_asset"]
+            return strings["update_blocked_dev_build"]
+
+        @objc.python_method
+        def _confirm_update(self, result: app_updater.UpdateCheckResult) -> None:
+            if result.release is None:
+                return
+            strings = self._strings()
+            version = result.release.version
+            if result.is_dev_build:
+                choice = self._run_alert(
+                    strings["update_dev_build_title"],
+                    strings["update_dev_build_body"].format(
+                        current=result.current_version,
+                        version=version,
+                    ),
+                    [strings["update_release_notes_button"], strings["update_ok_button"]],
+                )
+                if choice == 0:
+                    self._open_release_page(result)
+                return
+            title = strings["update_available_title"].format(version=version)
+            if not result.can_install:
+                choice = self._run_alert(
+                    title,
+                    self._update_blocker_message(result, strings),
+                    [strings["update_release_notes_button"], strings["update_later_button"]],
+                )
+                if choice == 0:
+                    self._open_release_page(result)
+                return
+            choice = self._run_alert(
+                title,
+                strings["update_available_body"].format(
+                    current=result.current_version,
+                    version=version,
+                ),
+                [
+                    strings["update_button"],
+                    strings["update_release_notes_button"],
+                    strings["update_later_button"],
+                ],
+            )
+            if choice == 0:
+                self._start_update_install(result)
+            elif choice == 1:
+                self._open_release_page(result)
+
+        @objc.python_method
+        def _start_update_install(self, result: app_updater.UpdateCheckResult) -> None:
+            if self._update_install_in_progress:
+                return
+            bundle = self._current_app_bundle()
+            if (
+                bundle is None
+                or not result.can_install
+                or not app_updater.bundle_location_is_writable(bundle)
+            ):
+                self._open_release_page(result)
+                return
+            self._update_install_in_progress = True
+            self._update_install_bundle = bundle
+            self._update_progress = ("update_downloading_menu", "")
+            self._update_status_menu()
+            thread = threading.Thread(
+                target=self._prepare_update_in_background,
+                args=(result, bundle),
+                daemon=True,
+            )
+            try:
+                thread.start()
+            except RuntimeError as exc:
+                self._fail_update(str(exc))
+
+        @objc.python_method
+        def _post_update_event(self, payload: dict[str, object]) -> None:
+            try:
+                self.performSelectorOnMainThread_withObject_waitUntilDone_(
+                    "applyUpdateEvent:",
+                    payload,
+                    False,
+                )
+            except Exception:
+                logging.getLogger(__name__).exception("Could not post update event")
+
+        @objc.python_method
+        def _prepare_update_in_background(
+            self,
+            result: app_updater.UpdateCheckResult,
+            bundle: Path,
+        ) -> None:
+            last_percent = {"value": -1}
+
+            def on_progress(downloaded: int, total: int | None) -> None:
+                if not total:
+                    return
+                percent = min(100, int(downloaded * 100 / total))
+                if percent == last_percent["value"]:
+                    return
+                last_percent["value"] = percent
+                self._post_update_event(
+                    {"kind": "progress", "key": "update_downloading_menu", "percent": f"{percent}%"}
+                )
+
+            def on_verify() -> None:
+                self._post_update_event(
+                    {"kind": "progress", "key": "update_verifying_menu", "percent": ""}
+                )
+
+            try:
+                prepared = app_updater.prepare_update(
+                    result,
+                    bundle,
+                    progress=on_progress,
+                    on_verify=on_verify,
+                )
+            except Exception as exc:
+                logging.getLogger(__name__).warning("Update preparation failed: %s", exc)
+                self._post_update_event({"kind": "failed", "error": str(exc)})
+                return
+            self._post_update_event({"kind": "prepared", "prepared": prepared})
+
+        def applyUpdateEvent_(self, payload):  # noqa: N802
+            try:
+                kind = payload["kind"]
+            except Exception:
+                return
+            if kind == "progress":
+                self._update_progress = (str(payload["key"]), str(payload["percent"]))
+                self._update_status_menu()
+                return
+            if kind == "prepared":
+                self._install_prepared_update(payload["prepared"])
+                return
+            if kind == "failed":
+                self._fail_update(str(payload.get("error") or ""))
+
+        @objc.python_method
+        def _install_prepared_update(self, prepared: app_updater.PreparedUpdate) -> None:
+            bundle = self._update_install_bundle
+            self._update_progress = ("update_installing_menu", "")
+            self._update_status_menu()
+            try:
+                if bundle is None:
+                    raise app_updater.UpdateError("app bundle location is unknown")
+                app_updater.launch_install_helper(prepared, bundle, log_path=_UPDATE_LOG_PATH)
+            except Exception as exc:
+                app_updater.discard_prepared_update(prepared)
+                self._fail_update(str(exc))
+                return
+            # The helper waits for this process to exit before swapping the bundle.
+            NSApplication.sharedApplication().terminate_(self)
+
+        @objc.python_method
+        def _fail_update(self, error: str) -> None:
+            self._update_install_in_progress = False
+            self._update_progress = None
+            self._update_install_bundle = None
+            self._update_status_menu()
+            strings = self._strings()
+            self._run_alert(
+                strings["update_failed_title"],
+                strings["update_failed_body"].format(error=error),
+                [strings["update_ok_button"]],
+            )
+
+        def startupUpdateCheck_(self, _timer):  # noqa: N802
+            self._update_startup_timer = None
+            self._start_update_check(manual=False)
+
+        def checkForUpdates_(self, _sender):  # noqa: N802
+            self._start_update_check(manual=True)
+
+        def installUpdate_(self, _sender):  # noqa: N802
+            if self._update_result is not None and not self._update_install_in_progress:
+                self._confirm_update(self._update_result)
 
         @objc.python_method
         def _toggle_login(self) -> None:
