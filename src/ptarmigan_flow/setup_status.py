@@ -21,6 +21,11 @@ STATUS_BUTTON_TITLE = "Pt"
 STATUS_BUTTON_SETUP_REQUIRED_TITLE = "Pt ⚠︎"
 
 
+def missing_permission_items(report: PermissionReport) -> list[str]:
+    """Return the permission item keys not granted in ``report``, in onboarding order."""
+    return [item for item in _PERMISSION_ITEMS if not bool(getattr(report, item))]
+
+
 def missing_setup_items(
     current_step: str,
     report: PermissionReport | None,
@@ -34,10 +39,11 @@ def missing_setup_items(
     """
     steps = OnboardingFlow.steps
     step_index = steps.index(current_step) if current_step in steps else 0
+    missing_permissions = missing_permission_items(report) if report is not None else []
     missing: list[str] = []
     for item in SETUP_ITEMS:
         if item in _PERMISSION_ITEMS and report is not None:
-            if not bool(getattr(report, item)):
+            if item in missing_permissions:
                 missing.append(item)
         elif step_index <= steps.index(item):
             missing.append(item)
@@ -90,6 +96,7 @@ __all__ = [
     "STATUS_BUTTON_SETUP_REQUIRED_TITLE",
     "STATUS_BUTTON_TITLE",
     "StatusMenuState",
+    "missing_permission_items",
     "missing_setup_items",
     "setup_required_label",
     "status_menu_state",
