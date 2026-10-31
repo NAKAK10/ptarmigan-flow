@@ -13,7 +13,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from ptarmigan_flow import app_relaunch, login_item, onboarding_strings
+from ptarmigan_flow import app_relaunch, login_item, onboarding_strings, setup_status
 from ptarmigan_flow import onboarding_flow as onboarding_flow_module
 from ptarmigan_flow.app_daemon_controller import (
     InProcessDaemonController,
@@ -215,6 +215,8 @@ def _run_appkit_app() -> int:
             self._permission_check_in_progress = False
             self._permission_check_thread: threading.Thread | None = None
             self._last_permission_report: PermissionReport | None = None
+            # Latest report known to the main thread; drives the "setup required" menu.
+            self._setup_permission_report: PermissionReport | None = None
             self._model_download_process: subprocess.Popen[str] | None = None
             self._model_download_success_message_key = "voice_input_started_message"
             self._model_download_thread: threading.Thread | None = None
@@ -311,6 +313,9 @@ def _run_appkit_app() -> int:
             )
             self.dictation_status_menu_item.setEnabled_(False)
             self.status_menu.addItem_(self.dictation_status_menu_item)
+            self.open_setup_menu_item = self._menu_item(strings["open_setup_menu"], "showSetup:")
+            self.open_setup_menu_item.setHidden_(True)
+            self.status_menu.addItem_(self.open_setup_menu_item)
             self.status_menu.addItem_(NSMenuItem.separatorItem())
             self.settings_menu_item = self._menu_item(strings["settings_menu"], "showSettings:")
             self.status_menu.addItem_(self.settings_menu_item)
@@ -327,6 +332,7 @@ def _run_appkit_app() -> int:
             self.status_menu.addItem_(NSMenuItem.separatorItem())
             self.quit_menu_item = self._menu_item(strings["quit_menu"], "quit:")
             self.status_menu.addItem_(self.quit_menu_item)
+            self.status_menu.setDelegate_(self)
             self.status_item.setMenu_(self.status_menu)
             self._update_status_menu()
 
@@ -335,12 +341,17 @@ def _run_appkit_app() -> int:
             if not hasattr(self, "status_menu"):
                 return
             strings = self._strings()
-            is_running = self.daemon_controller.is_running
-            self.dictation_status_menu_item.setTitle_(
-                strings["dictation_running_menu"]
-                if is_running
-                else strings["dictation_stopped_menu"]
+            menu_state = setup_status.status_menu_state(
+                self._missing_setup_items(),
+                daemon_running=self.daemon_controller.is_running,
+                strings=strings,
             )
+            self.dictation_status_menu_item.setTitle_(menu_state.status_title)
+            self.open_setup_menu_item.setTitle_(strings["open_setup_menu"])
+            self.open_setup_menu_item.setHidden_(not menu_state.show_open_setup)
+            status_button = self.status_item.button()
+            if status_button is not None:
+                status_button.setTitle_(menu_state.button_title)
             self.settings_menu_item.setTitle_(strings["settings_menu"])
             self.dictionary_menu_item.setTitle_(strings["edit_dictionary_menu"])
             self.login_menu_item.setTitle_(strings["login_at_startup_menu"])
@@ -349,6 +360,13 @@ def _run_appkit_app() -> int:
                 NSControlStateValueOn if login_item.is_enabled() else NSControlStateValueOff
             )
             self.login_menu_item.setState_(login_state)
+
+        @objc.python_method
+        def _missing_setup_items(self) -> list[str]:
+            return setup_status.missing_setup_items(
+                self.onboarding_flow.current_step,
+                self._setup_permission_report,
+            )
 
         @objc.python_method
         def _show_onboarding_window_if_needed(self) -> None:
@@ -620,6 +638,7 @@ def _run_appkit_app() -> int:
         ) -> PermissionReport:
             if report is None:
                 report = check_all_permissions()
+            self._setup_permission_report = report
             before_step = self.onboarding_flow.current_step
             self.onboarding_flow.refresh(report)
             after_step = self.onboarding_flow.current_step
@@ -627,6 +646,7 @@ def _run_appkit_app() -> int:
                 self._show_onboarding_window_if_needed()
             self._push_event("permissionsChanged", self._state_payload())
             self._restart_permission_timer()
+            self._update_status_menu()
             if report.all_granted:
                 if self.onboarding_flow.is_complete:
                     self._start_daemon_if_ready(
@@ -811,6 +831,7 @@ def _run_appkit_app() -> int:
         ) -> str | None:
             if report is None:
                 report = self._last_permission_report or self._combined_permission_report()
+            self._setup_permission_report = report
             if not report.all_granted:
                 message = self._missing_permissions_message(report)
                 self._push_daemon_error(message)
@@ -896,6 +917,13 @@ def _run_appkit_app() -> int:
                 self._push_daemon_state()
                 return
             self._update_status_menu()
+
+        def menuNeedsUpdate_(self, _menu):  # noqa: N802
+            # Language/hotkey steps advance inside the web bridge; refresh lazily here.
+            self._update_status_menu()
+
+        def showSetup_(self, _sender):  # noqa: N802
+            self._set_route("onboarding")
 
         def showSettings_(self, _sender):  # noqa: N802
             self._set_route("settings")
