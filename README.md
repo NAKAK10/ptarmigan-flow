@@ -48,6 +48,8 @@ the native libraries.
 
 Unzip `PtarmiganFlow-macos-arm64.zip` or `PtarmiganFlow-macos-x86_64.zip`, move `PtarmiganFlow.app` to Applications, open it, and use the setup window to check Microphone, Accessibility, and Input Monitoring permissions.
 
+To update the app, choose **Check for Updates…** in the `Pt` menu bar menu. The app also checks once shortly after launch and shows **Update to vX.Y.Z…** in the menu when a new release is available. Updating downloads the release for your Mac, verifies its code signature, Gatekeeper approval, Team ID, bundle ID, and version, then replaces the app in place and relaunches it. Permissions carry over because the signature stays the same. If the app cannot replace itself (for example, it is not in a writable folder such as Applications, or it is a local development build), it opens the release page instead.
+
 Maintainer release setup, including Pages and Apple signing secrets, is documented in [docs/release-prep.md](docs/release-prep.md).
 
 ### Permission shows "ON" in System Settings but the app still says it is not granted
