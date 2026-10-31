@@ -131,6 +131,7 @@ class WebBridgeDispatcher:
 
     deps: BridgeDependencies = field(default_factory=BridgeDependencies)
     onboarding_flow: OnboardingFlow = field(default_factory=OnboardingFlow)
+    _login_enabled_cache: bool | None = field(default=None, init=False, repr=False)
 
     def set_onboarding_flow(self, onboarding_flow: OnboardingFlow) -> None:
         self.onboarding_flow = onboarding_flow
@@ -178,7 +179,17 @@ class WebBridgeDispatcher:
         except Exception:
             return "en"
 
-    def _get_state(self, _payload: dict[str, Any]) -> dict[str, Any]:
+    def current_language(self) -> str:
+        return self._language()
+
+    def _login_enabled(self, *, use_cache: bool = False) -> bool:
+        # Native pushes (e.g. the onboarding permission poll) reuse the cached
+        # value; querying SMAppService repeatedly is expensive (#29).
+        if not use_cache or self._login_enabled_cache is None:
+            self._login_enabled_cache = bool(self.deps.login_is_enabled())
+        return self._login_enabled_cache
+
+    def _get_state(self, payload: dict[str, Any]) -> dict[str, Any]:
         config = self._load_config()
         language = str(config.language)
         report = self.deps.check_permissions()
@@ -191,7 +202,7 @@ class WebBridgeDispatcher:
             "settings": _settings_payload(config),
             "models": self._model_entries_payload(),
             "dictionary": self._load_dictionary({}),
-            "login_enabled": bool(self.deps.login_is_enabled()),
+            "login_enabled": self._login_enabled(use_cache=bool(payload.get("cached_login"))),
             "daemon_running": bool(self.deps.daemon_is_running()),
             "strings": onboarding_strings.strings_for(language),
             "setup_required": self._setup_required(report),
@@ -345,14 +356,14 @@ class WebBridgeDispatcher:
         return {"saved": True}
 
     def _toggle_login(self, payload: dict[str, Any]) -> dict[str, bool]:
-        current = bool(self.deps.login_is_enabled())
+        current = self._login_enabled()
         requested = payload.get("enabled")
         target = not current if requested is None else bool(requested)
         if target and not current:
             self.deps.login_register()
         elif not target and current:
             self.deps.login_unregister()
-        return {"login_enabled": bool(self.deps.login_is_enabled())}
+        return {"login_enabled": self._login_enabled()}
 
     def _restart_app(self, _payload: dict[str, Any]) -> dict[str, bool]:
         return {"restarted": bool(self.deps.restart_app())}
