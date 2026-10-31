@@ -334,6 +334,43 @@ def test_save_settings_updates_core_fields_and_llm_correction(tmp_path: Path) ->
     assert config.text.llm_correction.base_url == "http://localhost:1234"
 
 
+def test_save_settings_preserves_llm_glossary_and_think(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.toml"
+    _write_config(config_path, model="moonshine:tiny")
+    config = load_config(config_path)
+    config.text.llm_correction.glossary = ["issue", "PR"]
+    config.text.llm_correction.think = "low"
+    write_config(config_path, config)
+    dispatcher = WebBridgeDispatcher(
+        deps=BridgeDependencies(
+            config_path=lambda: config_path,
+            available_model_entries=lambda: [_entry("moonshine:tiny")],
+        ),
+    )
+
+    result = dispatcher.handle_action(
+        "saveSettings",
+        {
+            "model": "moonshine:tiny",
+            "language": "ja",
+            "hotkey": "left_cmd",
+            "output_mode": "clipboard_paste",
+            "llm_correction": {
+                "mode": "always",
+                "provider": "ollama",
+                "model": "gpt-oss:20b",
+                "base_url": "http://localhost:11434",
+            },
+        },
+    )
+
+    loaded = load_config(config_path)
+    assert result["saved"] is True
+    assert loaded.text.llm_correction.model == "gpt-oss:20b"
+    assert loaded.text.llm_correction.glossary == ["issue", "PR"]
+    assert loaded.text.llm_correction.think == "low"
+
+
 def test_save_settings_returns_validation_errors_without_writing(tmp_path: Path) -> None:
     config_path = tmp_path / "config.toml"
     _write_config(config_path, language="ja", model="moonshine:tiny")
