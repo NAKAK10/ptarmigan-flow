@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import shutil
 import tomllib
@@ -9,7 +10,7 @@ from enum import Enum, StrEnum
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 LOGGER = logging.getLogger(__name__)
 
@@ -123,6 +124,19 @@ class LLMCorrectionConfig(BaseModel):
     max_input_chars: int = 500
     api_key: str | None = None
     enabled_tools: bool = False
+    # Preferred spellings of terms that may appear in dictation.
+    glossary: list[str] = Field(default_factory=list)
+    # Ollama "think" parameter (e.g. "low"); omitted from requests when unset.
+    think: str | None = None
+
+    @field_validator("think", mode="before")
+    @classmethod
+    def _coerce_think(cls, value: Any) -> Any:
+        if isinstance(value, bool):
+            return str(value).lower()
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
 
 
 class TextConfig(BaseModel):
@@ -254,6 +268,14 @@ def _dump_toml(data: dict[str, Any]) -> str:
             llm_api_key_line = ""
         else:
             llm_api_key_line = f"api_key = \"{llm_api_key}\"\n"
+        llm_glossary = llm_correction.get("glossary") or []
+        llm_glossary_items = ", ".join(_toml_string(str(term)) for term in llm_glossary)
+        llm_glossary_line = f"glossary = [{llm_glossary_items}]\n"
+        llm_think = llm_correction.get("think")
+        if llm_think is None:
+            llm_think_line = ""
+        else:
+            llm_think_line = f"think = {_toml_string(str(llm_think))}\n"
         audio_cfg = data["audio"]
         stt_cfg = data["stt"]
         stt_vllm_cfg = stt_cfg.get("vllm", {})
@@ -311,7 +333,14 @@ def _dump_toml(data: dict[str, Any]) -> str:
             f"max_input_chars = {llm_correction.get('max_input_chars', 500)}\n"
             f"enabled_tools = {str(llm_correction.get('enabled_tools', False)).lower()}\n"
             f"{llm_api_key_line}"
+            f"{llm_glossary_line}"
+            f"{llm_think_line}"
         )
+
+
+def _toml_string(value: str) -> str:
+    """Return a TOML basic string literal (JSON escaping is TOML-compatible here)."""
+    return json.dumps(value, ensure_ascii=False).replace("\x7f", "\\u007f")
 
 
 def _migrate_legacy_llm_correction(raw: dict[str, Any]) -> None:

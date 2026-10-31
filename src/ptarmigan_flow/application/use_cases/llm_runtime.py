@@ -90,6 +90,12 @@ def build_llm_settings_from_config(
         api_key=normalize_optional_secret(getattr(llm_cfg, "api_key", None)),
         enabled_tools=bool(getattr(llm_cfg, "enabled_tools", False)),
         language=runtime_language_from_config(config),
+        glossary=[
+            str(term).strip()
+            for term in (getattr(llm_cfg, "glossary", None) or [])
+            if str(term).strip()
+        ],
+        think=normalize_optional_secret(getattr(llm_cfg, "think", None)),
     )
 
 
