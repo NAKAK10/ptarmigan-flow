@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+import logging
+import sys
+from pathlib import Path
+
+import pytest
+
 from ptarmigan_flow import login_item
 
 
@@ -112,3 +118,39 @@ def test_unregister_unwraps_pyobjc_failure_tuple(monkeypatch) -> None:
     _patch_macos_service(monkeypatch, service)
 
     assert login_item.unregister() is False
+
+
+@pytest.mark.parametrize(
+    ("func_name", "message"),
+    [
+        ("register", "Failed to register login item"),
+        ("unregister", "Failed to unregister login item"),
+        ("is_enabled", "Failed to query login item status"),
+    ],
+)
+def test_login_item_logs_warning_when_service_management_is_unavailable(
+    monkeypatch, caplog, func_name: str, message: str
+) -> None:
+    monkeypatch.setattr(login_item, "_is_macos", lambda: True)
+    # A None entry in sys.modules makes `import ServiceManagement` raise ImportError.
+    monkeypatch.setitem(sys.modules, "ServiceManagement", None)
+
+    with caplog.at_level(logging.WARNING, logger=login_item.__name__):
+        assert getattr(login_item, func_name)() is False
+
+    records = [r for r in caplog.records if r.name == login_item.__name__]
+    assert [r.getMessage() for r in records] == [message]
+    assert records[0].levelno == logging.WARNING
+    assert records[0].exc_info is not None
+    assert isinstance(records[0].exc_info[1], ImportError)
+
+
+def test_service_management_is_a_declared_runtime_dependency() -> None:
+    root = Path(__file__).resolve().parents[1]
+    pyproject = (root / "pyproject.toml").read_text(encoding="utf-8")
+    requirements = (root / "packaging/macos/requirements-release.txt").read_text(encoding="utf-8")
+    spec = (root / "packaging/macos/PtarmiganFlow.spec").read_text(encoding="utf-8")
+
+    assert "pyobjc-framework-ServiceManagement" in pyproject
+    assert "pyobjc-framework-ServiceManagement" in requirements
+    assert '"ServiceManagement"' in spec
