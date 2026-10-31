@@ -2,6 +2,7 @@
 
 import os
 import platform
+import sys
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _dist_version
 from pathlib import Path
@@ -31,13 +32,19 @@ def _target_arch() -> str:
 
 block_cipher = None
 ROOT = Path(SPECPATH).parents[1]
+SRC = ROOT / "src"
+# The release venv does not install ptarmigan_flow itself, so expose the source
+# tree for collect_submodules (its isolated subprocess inherits sys.path).
+sys.path.insert(0, str(SRC))
 APP_ICON = ROOT / "assets/icon/PtarmiganFlow.icns"
 WEBUI_SOURCE = ROOT / "src/ptarmigan_flow/webui"
+RESOURCES_SOURCE = ROOT / "src/ptarmigan_flow/resources"
 APP_VERSION = _app_version()
 TARGET_ARCH = _target_arch()
 datas = [
     (str(ROOT / "config.example.toml"), "."),
     (str(WEBUI_SOURCE), "ptarmigan_flow/webui"),
+    (str(RESOURCES_SOURCE / "PtarmiganFlow.icns"), "ptarmigan_flow/resources"),
 ]
 binaries = []
 
@@ -82,6 +89,14 @@ MOONSHINE_EXCLUDED_HIDDENIMPORTS = {
     "moonshine_voice.libmoonshine",
 }
 
+# Modules that are only reachable via string references (e.g. importlib.resources)
+# or are core to the app; the build must fail if submodule collection misses them.
+REQUIRED_APP_MODULES = (
+    "ptarmigan_flow.resources",
+    "ptarmigan_flow.web_bridge",
+    "ptarmigan_flow.daemon",
+)
+
 
 def _keep_release_module(name: str) -> bool:
     return not name.startswith(OPTIONAL_BACKEND_MODULE_PREFIXES)
@@ -101,9 +116,18 @@ def _drop_unneeded_moonshine_entries(entries):
     ]
 
 
+_app_submodules = collect_submodules("ptarmigan_flow")
+_missing_app_modules = sorted(set(REQUIRED_APP_MODULES) - set(_app_submodules))
+if _missing_app_modules:
+    raise SystemExit(
+        "collect_submodules('ptarmigan_flow') did not find required modules "
+        f"{_missing_app_modules} (found {len(_app_submodules)} submodules); "
+        f"check that {SRC} is importable from the build environment."
+    )
+
 hiddenimports = [
     name
-    for name in collect_submodules("ptarmigan_flow")
+    for name in _app_submodules
     if _keep_release_module(name)
 ]
 
@@ -129,7 +153,7 @@ for package in _backend_packages:
 
 a = Analysis(
     [str(ROOT / "src/ptarmigan_flow/macos_app.py")],
-    pathex=[str(ROOT)],
+    pathex=[str(ROOT), str(SRC)],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
