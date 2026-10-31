@@ -1207,3 +1207,166 @@ def test_macos_app_removes_launchd_buttons_from_app_ui() -> None:
     assert "def restartLaunchAgent_(self, _sender):" not in source
     assert "install_launch_agent" not in source
     assert "restart_launch_agent" not in source
+
+
+class _FakeStatusMenuItem:
+    def __init__(self) -> None:
+        self.title = ""
+        self.hidden = False
+        self.state = None
+
+    def setTitle_(self, title) -> None:  # noqa: N802
+        self.title = title
+
+    def setHidden_(self, hidden) -> None:  # noqa: N802
+        self.hidden = bool(hidden)
+
+    def setState_(self, state) -> None:  # noqa: N802
+        self.state = state
+
+
+def _install_fake_status_menu(controller, language: str = "ja") -> types.SimpleNamespace:
+    button = _FakeStatusMenuItem()
+    controller.status_menu = object()
+    controller.status_item = types.SimpleNamespace(button=lambda: button)
+    for name in (
+        "dictation_status_menu_item",
+        "open_setup_menu_item",
+        "settings_menu_item",
+        "dictionary_menu_item",
+        "login_menu_item",
+        "quit_menu_item",
+    ):
+        setattr(controller, name, _FakeStatusMenuItem())
+    controller.bridge = types.SimpleNamespace(
+        handle_action=lambda _action, _payload: {"language": language},
+    )
+    return button
+
+
+class _StoppedDaemonController:
+    def __init__(self, _config_path) -> None:
+        self.is_running = False
+
+    def start(self) -> None:
+        self.is_running = True
+
+    def stop(self) -> None:
+        self.is_running = False
+
+
+def test_status_menu_shows_missing_setup_items_while_onboarding_incomplete(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(macos_app.login_item, "is_enabled", lambda: False)
+    captured = _capture_app_delegate(monkeypatch, _StoppedDaemonController)
+    controller = captured["delegate"]
+    button = _install_fake_status_menu(controller, "ja")
+    controller.onboarding_flow.start(
+        language_already_selected=True,
+        hotkey_already_confirmed=True,
+        report=macos_app.PermissionReport(
+            microphone=True, accessibility=True, input_monitoring=False
+        ),
+    )
+    controller._setup_permission_report = macos_app.PermissionReport(
+        microphone=True, accessibility=True, input_monitoring=False
+    )
+
+    controller._update_status_menu()
+
+    assert controller.onboarding_flow.current_step == "input_monitoring"
+    assert controller.dictation_status_menu_item.title == "セットアップが必要です（入力監視）"
+    assert controller.open_setup_menu_item.title == "セットアップを開く…"
+    assert controller.open_setup_menu_item.hidden is False
+    assert button.title == "Pt ⚠︎"
+
+
+def test_status_menu_returns_to_running_after_permissions_granted(monkeypatch) -> None:
+    monkeypatch.setattr(macos_app.login_item, "is_enabled", lambda: False)
+    captured = _capture_app_delegate(monkeypatch, _StoppedDaemonController)
+    controller = captured["delegate"]
+    button = _install_fake_status_menu(controller, "en")
+    controller.web_ui = None
+    controller.onboarding_flow.start(
+        language_already_selected=True,
+        hotkey_already_confirmed=True,
+    )
+    shown_routes: list[str] = []
+    controller._show_onboarding_window_if_needed = lambda: shown_routes.append("onboarding")
+    controller._restart_permission_timer = lambda: None
+    controller._state_payload = lambda: {}
+
+    def fake_start(report=None, *, success_message_key="voice_input_started_message"):
+        controller.daemon_controller.start()
+        controller._update_status_menu()
+
+    controller._start_daemon_if_ready = fake_start
+
+    controller._refresh_onboarding_permissions(
+        macos_app.PermissionReport(microphone=False, accessibility=False, input_monitoring=False)
+    )
+
+    assert controller.dictation_status_menu_item.title == (
+        "Setup required (Microphone, Accessibility, Input Monitoring)"
+    )
+    assert button.title == "Pt ⚠︎"
+
+    controller._refresh_onboarding_permissions(
+        macos_app.PermissionReport(microphone=True, accessibility=True, input_monitoring=True)
+    )
+
+    assert controller.onboarding_flow.is_complete
+    assert shown_routes == ["onboarding"]
+    assert controller.dictation_status_menu_item.title == "Voice input running"
+    assert controller.open_setup_menu_item.hidden is True
+    assert button.title == "Pt"
+
+
+def test_status_menu_plain_stopped_after_setup_complete(monkeypatch) -> None:
+    monkeypatch.setattr(macos_app.login_item, "is_enabled", lambda: False)
+    captured = _capture_app_delegate(monkeypatch, _StoppedDaemonController)
+    controller = captured["delegate"]
+    button = _install_fake_status_menu(controller, "ja")
+    controller.onboarding_flow.start(
+        language_already_selected=True,
+        hotkey_already_confirmed=True,
+        report=macos_app.PermissionReport(
+            microphone=True, accessibility=True, input_monitoring=True
+        ),
+    )
+    controller._setup_permission_report = macos_app.PermissionReport(
+        microphone=True, accessibility=True, input_monitoring=True
+    )
+
+    controller._update_status_menu()
+
+    assert controller.dictation_status_menu_item.title == "音声入力 停止中"
+    assert controller.open_setup_menu_item.hidden is True
+    assert button.title == "Pt"
+
+
+def test_open_setup_menu_item_routes_to_onboarding() -> None:
+    source = _macos_app_source()
+    build_status_item = source.split("def _build_status_item", maxsplit=1)[1].split(
+        "@objc.python_method",
+        maxsplit=1,
+    )[0]
+
+    assert 'strings["open_setup_menu"], "showSetup:"' in build_status_item
+    assert "self.status_menu.setDelegate_(self)" in build_status_item
+    assert "def showSetup_(self, _sender):" in source
+    assert 'self._set_route("onboarding")' in source
+    assert "def menuNeedsUpdate_(self, _menu):" in source
+
+
+def test_web_ui_show_places_window_on_active_screen_and_activates() -> None:
+    source = _web_ui_source()
+    show_body = source.split("def show(self", maxsplit=1)[1]
+
+    assert "self._move_to_active_screen()" in show_body
+    assert "activateIgnoringOtherApps_(True)" in show_body
+    assert "NSEvent.mouseLocation()" in source
+    assert "NSScreen.screens()" in source
+    assert "NSScreen.mainScreen()" in source
+    assert "self.window.setFrameOrigin_(origin)" in source

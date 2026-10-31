@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.resources
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -40,6 +41,72 @@ def _ns_to_py(obj: Any) -> Any:
     if isinstance(obj, _NS_ARRAY_TYPES):
         return [_ns_to_py(item) for item in obj]
     return obj
+
+
+Rect = tuple[float, float, float, float]
+"""``(x, y, width, height)`` in AppKit global screen coordinates."""
+
+
+def _rect_contains_point(rect: Rect, point: tuple[float, float]) -> bool:
+    x, y, width, height = rect
+    px, py = point
+    return x <= px <= x + width and y <= py <= y + height
+
+
+def _rect_contains_rect(outer: Rect, inner: Rect) -> bool:
+    ox, oy, ow, oh = outer
+    ix, iy, iw, ih = inner
+    return ox <= ix and oy <= iy and ix + iw <= ox + ow and iy + ih <= oy + oh
+
+
+def choose_visible_frame(
+    mouse_point: tuple[float, float],
+    screens: list[tuple[Rect, Rect]],
+    main_screen: tuple[Rect, Rect] | None,
+) -> Rect | None:
+    """Return the visible frame of the screen under the mouse, else the main screen's.
+
+    ``screens`` and ``main_screen`` are ``(frame, visible_frame)`` pairs.
+    """
+    for frame, visible_frame in screens:
+        if _rect_contains_point(frame, mouse_point):
+            return visible_frame
+    if main_screen is not None:
+        return main_screen[1]
+    if screens:
+        return screens[0][1]
+    return None
+
+
+def window_origin_for_display(
+    window_frame: Rect,
+    mouse_point: tuple[float, float],
+    screens: list[tuple[Rect, Rect]],
+    main_screen: tuple[Rect, Rect] | None,
+) -> tuple[float, float] | None:
+    """Return a new window origin centered on the screen with the mouse.
+
+    Returns ``None`` when the window already sits fully inside that screen's
+    visible frame, so a window the user is working with does not jump.
+    """
+    visible_frame = choose_visible_frame(mouse_point, screens, main_screen)
+    if visible_frame is None or _rect_contains_rect(visible_frame, window_frame):
+        return None
+    vx, vy, vw, vh = visible_frame
+    _wx, _wy, ww, wh = window_frame
+    x = vx + max(0.0, (vw - ww) / 2)
+    # Keep the title bar on screen when the window is taller than the screen.
+    y = vy + (vh - wh) / 2 if wh <= vh else vy + vh - wh
+    return (x, y)
+
+
+def _ns_rect(rect: Any) -> Rect:
+    return (
+        float(rect.origin.x),
+        float(rect.origin.y),
+        float(rect.size.width),
+        float(rect.size.height),
+    )
 
 
 def webui_resource_dir() -> Path:
@@ -136,8 +203,37 @@ class WebUIController(NSObject):
         self.dispatch_to_javascript({"event": event, "payload": payload})
 
     @objc.python_method
+    def _move_to_active_screen(self) -> None:
+        from AppKit import NSEvent, NSScreen  # noqa: PLC0415
+
+        main_screen = NSScreen.mainScreen()
+        mouse = NSEvent.mouseLocation()
+        origin = window_origin_for_display(
+            _ns_rect(self.window.frame()),
+            (float(mouse.x), float(mouse.y)),
+            [
+                (_ns_rect(screen.frame()), _ns_rect(screen.visibleFrame()))
+                for screen in NSScreen.screens()
+            ],
+            (
+                (_ns_rect(main_screen.frame()), _ns_rect(main_screen.visibleFrame()))
+                if main_screen is not None
+                else None
+            ),
+        )
+        if origin is not None:
+            self.window.setFrameOrigin_(origin)
+
+    @objc.python_method
     def show(self, *, route: str = "onboarding") -> None:
+        from AppKit import NSApplication  # noqa: PLC0415
+
         self.route = route
+        try:
+            self._move_to_active_screen()
+        except Exception:
+            logging.getLogger(__name__).exception("Could not place window on active screen")
+        NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
         self.window.makeKeyAndOrderFront_(None)
         self.window.orderFrontRegardless()
         self.push_event("routeChanged", {"route": route})
