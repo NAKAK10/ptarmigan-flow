@@ -285,7 +285,7 @@ def _run_appkit_app() -> int:
         @objc.python_method
         def _strings(self) -> dict[str, str]:
             try:
-                language = self.bridge.handle_action("getState", {})["language"]
+                language = self.bridge.current_language()
             except Exception:
                 language = "en"
             return onboarding_strings.strings_for(str(language))
@@ -335,6 +335,7 @@ def _run_appkit_app() -> int:
             self.status_menu.setDelegate_(self)
             self.status_item.setMenu_(self.status_menu)
             self._update_status_menu()
+            self._update_login_menu_state()
 
         @objc.python_method
         def _update_status_menu(self) -> None:
@@ -356,6 +357,13 @@ def _run_appkit_app() -> int:
             self.dictionary_menu_item.setTitle_(strings["edit_dictionary_menu"])
             self.login_menu_item.setTitle_(strings["login_at_startup_menu"])
             self.quit_menu_item.setTitle_(strings["quit_menu"])
+
+        @objc.python_method
+        def _update_login_menu_state(self) -> None:
+            # SMAppService.status() makes backgroundtaskmanagementd re-verify the
+            # app signature, so only query it on demand, never from timers (#29).
+            if not hasattr(self, "status_menu"):
+                return
             login_state = (
                 NSControlStateValueOn if login_item.is_enabled() else NSControlStateValueOff
             )
@@ -387,8 +395,11 @@ def _run_appkit_app() -> int:
             NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
 
         @objc.python_method
-        def _state_payload(self) -> dict[str, Any]:
-            payload = self.bridge.handle_action("getState", {})
+        def _state_payload(self, *, refresh_login: bool = False) -> dict[str, Any]:
+            payload = self.bridge.handle_action(
+                "getState",
+                {"cached_login": not refresh_login},
+            )
             if self._daemon_error_message:
                 payload["daemon_error_message"] = self._daemon_error_message
             return payload
@@ -900,7 +911,8 @@ def _run_appkit_app() -> int:
             else:
                 login_item.register()
             self._update_status_menu()
-            self._push_event("daemonState", self._state_payload())
+            self._update_login_menu_state()
+            self._push_event("daemonState", self._state_payload(refresh_login=True))
 
         @objc.python_method
         def _restart_app(self) -> bool:
@@ -921,6 +933,7 @@ def _run_appkit_app() -> int:
         def menuNeedsUpdate_(self, _menu):  # noqa: N802
             # Language/hotkey steps advance inside the web bridge; refresh lazily here.
             self._update_status_menu()
+            self._update_login_menu_state()
 
         def showSetup_(self, _sender):  # noqa: N802
             self._set_route("onboarding")
