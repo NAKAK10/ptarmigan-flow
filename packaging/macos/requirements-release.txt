@@ -16,3 +16,9 @@ pyobjc-framework-WebKit>=11.0
 pyobjc-framework-Quartz>=11.0
 pyobjc-framework-AVFoundation>=11.0
 pyobjc-framework-ServiceManagement>=11.0
+# MLX speech backends (Apple Silicon only); keep in sync with pyproject.toml.
+mlx-audio>=0.4.1; platform_system == 'Darwin' and platform_machine == 'arm64'
+mlx-whisper>=0.4.2; platform_system == 'Darwin' and platform_machine == 'arm64'
+voxmlx>=0.0.2; platform_system == 'Darwin' and platform_machine == 'arm64'
+mistral-common[audio]>=1.5.0; platform_system == 'Darwin' and platform_machine == 'arm64'
+huggingface-hub>=1.0; platform_system == 'Darwin' and platform_machine == 'arm64'

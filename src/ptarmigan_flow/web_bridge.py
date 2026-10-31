@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from ptarmigan_flow import app_relaunch, login_item, onboarding_strings
+from ptarmigan_flow import app_relaunch, login_item, onboarding_strings, setup_status
 from ptarmigan_flow import onboarding_flow as onboarding_flow_module
 from ptarmigan_flow.app_settings_model import (
     SUPPORTED_HOTKEYS,
@@ -181,10 +181,12 @@ class WebBridgeDispatcher:
     def _get_state(self, _payload: dict[str, Any]) -> dict[str, Any]:
         config = self._load_config()
         language = str(config.language)
+        report = self.deps.check_permissions()
+        self.onboarding_flow.rewind_to_missing_permission(report)
         return {
             "language": language,
             "onboarding_step": self.onboarding_flow.current_step,
-            "permissions": _permission_payload(self.deps.check_permissions()),
+            "permissions": _permission_payload(report),
             "model": str(config.stt.model),
             "settings": _settings_payload(config),
             "models": self._model_entries_payload(),
@@ -192,13 +194,15 @@ class WebBridgeDispatcher:
             "login_enabled": bool(self.deps.login_is_enabled()),
             "daemon_running": bool(self.deps.daemon_is_running()),
             "strings": onboarding_strings.strings_for(language),
-            "setup_required": self._setup_required(),
+            "setup_required": self._setup_required(report),
         }
 
-    def _setup_required(self) -> bool:
+    def _setup_required(self, report: PermissionReport) -> bool:
         language_selected = bool(self.deps.language_was_selected())
         hotkey_confirmed = bool(self.deps.hotkey_was_confirmed())
-        return not (language_selected and hotkey_confirmed)
+        if not (language_selected and hotkey_confirmed):
+            return True
+        return bool(setup_status.missing_permission_items(report))
 
     def _choose_language(self, payload: dict[str, Any]) -> dict[str, Any]:
         code = str(payload.get("code", "")).strip().lower()

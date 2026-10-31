@@ -187,13 +187,56 @@ def test_get_state_setup_required_true_when_onboarding_incomplete(tmp_path: Path
 
 
 def test_get_state_setup_required_false_when_onboarding_complete(tmp_path: Path) -> None:
-    dispatcher = _dispatcher(tmp_path)
+    dispatcher = _dispatcher(
+        tmp_path,
+        permissions=PermissionReport(microphone=True, accessibility=True, input_monitoring=True),
+    )
     dispatcher.deps.language_was_selected = lambda: True
     dispatcher.deps.hotkey_was_confirmed = lambda: True
 
     state = dispatcher.handle_action("getState", {})
 
     assert state["setup_required"] is False
+
+
+def test_get_state_setup_required_true_when_permission_missing(tmp_path: Path) -> None:
+    report = PermissionReport(microphone=True, accessibility=True, input_monitoring=False)
+    dispatcher = _dispatcher(tmp_path, permissions=report)
+    dispatcher.deps.language_was_selected = lambda: True
+    dispatcher.deps.hotkey_was_confirmed = lambda: True
+    flow = OnboardingFlow()
+    flow.start(report, language_already_selected=True, hotkey_already_confirmed=True)
+    dispatcher.set_onboarding_flow(flow)
+
+    state = dispatcher.handle_action("getState", {})
+
+    assert state["setup_required"] is True
+    assert state["onboarding_step"] == "input_monitoring"
+
+
+def test_get_state_rewinds_done_flow_to_revoked_permission(tmp_path: Path) -> None:
+    # Onboarding finished earlier, then a permission was revoked: the flow must
+    # not stay at "done", or the onboarding page would render the done card.
+    granted = PermissionReport(microphone=True, accessibility=True, input_monitoring=True)
+    flow = OnboardingFlow()
+    flow.start(granted, language_already_selected=True, hotkey_already_confirmed=True)
+    assert flow.current_step == "done"
+    dispatcher = _dispatcher(
+        tmp_path,
+        permissions=PermissionReport(
+            microphone=True,
+            accessibility=False,
+            input_monitoring=False,
+        ),
+    )
+    dispatcher.deps.language_was_selected = lambda: True
+    dispatcher.deps.hotkey_was_confirmed = lambda: True
+    dispatcher.set_onboarding_flow(flow)
+
+    state = dispatcher.handle_action("getState", {})
+
+    assert state["setup_required"] is True
+    assert state["onboarding_step"] == "accessibility"
 
 
 def test_get_state_setup_required_true_when_state_file_missing(tmp_path: Path) -> None:

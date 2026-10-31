@@ -6,6 +6,7 @@ from ptarmigan_flow import onboarding_strings
 from ptarmigan_flow.permissions import PermissionReport
 from ptarmigan_flow.setup_status import (
     SETUP_ITEMS,
+    missing_permission_items,
     missing_setup_items,
     setup_required_label,
     status_menu_state,
@@ -49,6 +50,14 @@ def test_missing_items_uses_permission_report_when_known() -> None:
 def test_missing_items_after_onboarding_reports_revoked_permissions() -> None:
     assert missing_setup_items("done", _report()) == []
     assert missing_setup_items("done", _report(microphone=False)) == ["microphone"]
+
+
+def test_missing_permission_items_lists_ungranted_permissions_in_order() -> None:
+    assert missing_permission_items(_report()) == []
+    assert missing_permission_items(_report(microphone=False, input_monitoring=False)) == [
+        "microphone",
+        "input_monitoring",
+    ]
 
 
 def test_missing_items_treats_unknown_step_as_start() -> None:

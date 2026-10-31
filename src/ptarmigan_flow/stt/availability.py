@@ -11,10 +11,12 @@ _BackendVariant = tuple[str, tuple[str, ...]]
 _BACKEND_VARIANTS: dict[str, tuple[_BackendVariant, ...]] = {
     "moonshine": (("ptarmigan_flow.stt.moonshine", ("moonshine_voice",)),),
     "granite": (
-        ("ptarmigan_flow.stt.granite_mlx", ("mlx_audio",)),
+        # mlx-audio's Granite model loads its tokenizer via transformers (no torch).
+        ("ptarmigan_flow.stt.granite_mlx", ("mlx_audio", "transformers")),
         ("ptarmigan_flow.stt.granite_transformers", ("transformers", "torch")),
     ),
-    "mlx": (("ptarmigan_flow.stt.mlx_whisper", ("mlx_whisper",)),),
+    # mlx_whisper imports numba and scipy at package import time (timing.py).
+    "mlx": (("ptarmigan_flow.stt.mlx_whisper", ("mlx_whisper", "numba", "scipy")),),
     "voxtral": (
         ("ptarmigan_flow.stt.voxtral_mlx", ("voxmlx", "mistral_common")),
         ("ptarmigan_flow.stt.voxtral_transformers", ("transformers", "mistral_common")),

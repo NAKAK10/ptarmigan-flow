@@ -252,3 +252,36 @@ def test_hotkey_was_confirmed_returns_false_for_malformed_state(
     monkeypatch.setattr(onboarding_flow_module, "onboarding_state_path", lambda: state_path)
 
     assert onboarding_flow_module.hotkey_was_confirmed() is False
+
+
+def test_rewind_to_missing_permission_moves_done_flow_back_to_first_missing_step() -> None:
+    flow = OnboardingFlow()
+    flow.start(
+        _report(microphone=True, accessibility=True, input_monitoring=True),
+        language_already_selected=True,
+        hotkey_already_confirmed=True,
+    )
+    assert flow.current_step == "done"
+
+    flow.rewind_to_missing_permission(_report(microphone=True))
+
+    assert flow.current_step == "accessibility"
+
+
+def test_rewind_to_missing_permission_never_moves_before_current_or_forward() -> None:
+    flow = OnboardingFlow()
+    flow.choose_language("en")
+
+    flow.rewind_to_missing_permission(_report())
+    assert flow.current_step == "hotkey"
+
+    done = OnboardingFlow()
+    done.start(
+        _report(microphone=True, accessibility=True, input_monitoring=True),
+        language_already_selected=True,
+        hotkey_already_confirmed=True,
+    )
+    done.rewind_to_missing_permission(
+        _report(microphone=True, accessibility=True, input_monitoring=True)
+    )
+    assert done.current_step == "done"
