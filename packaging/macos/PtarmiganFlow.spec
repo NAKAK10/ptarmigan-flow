@@ -46,6 +46,7 @@ datas = [
     (str(ROOT / "config.example.toml"), "."),
     (str(WEBUI_SOURCE), "ptarmigan_flow/webui"),
     (str(RESOURCES_SOURCE / "PtarmiganFlow.icns"), "ptarmigan_flow/resources"),
+    (str(RESOURCES_SOURCE / "status-bar-icon.png"), "ptarmigan_flow/resources"),
 ]
 binaries = []
 

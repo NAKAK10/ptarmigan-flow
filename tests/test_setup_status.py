@@ -96,7 +96,7 @@ def test_status_menu_state_setup_required_while_stopped() -> None:
     state = status_menu_state(["input_monitoring"], daemon_running=False, strings=strings)
 
     assert state.status_title == "セットアップが必要です（入力監視）"
-    assert state.button_title == "Pt ⚠︎"
+    assert state.button_title == "⚠︎"
     assert state.show_open_setup is True
 
 
@@ -106,7 +106,7 @@ def test_status_menu_state_plain_stopped_when_nothing_missing() -> None:
     state = status_menu_state([], daemon_running=False, strings=strings)
 
     assert state.status_title == "音声入力 停止中"
-    assert state.button_title == "Pt"
+    assert state.button_title == ""
     assert state.show_open_setup is False
 
 
@@ -116,5 +116,5 @@ def test_status_menu_state_running_wins_over_stale_missing_items() -> None:
     state = status_menu_state(["microphone"], daemon_running=True, strings=strings)
 
     assert state.status_title == "Voice input running"
-    assert state.button_title == "Pt"
+    assert state.button_title == ""
     assert state.show_open_setup is False
