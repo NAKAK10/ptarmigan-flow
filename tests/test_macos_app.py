@@ -510,7 +510,7 @@ def test_macos_app_right_shift_nsevent_handler_notifies_daemon_controller(monkey
             self.is_running = True
             self.events: list[str] = []
 
-        def start(self) -> None:
+        def start(self, **_kwargs) -> None:
             self.is_running = True
 
         def stop(self) -> None:
@@ -575,7 +575,7 @@ def test_macos_app_reconciles_async_daemon_failure_after_monitor_install(
         def is_running(self) -> bool:
             return self._is_running
 
-        def start(self) -> None:
+        def start(self, **_kwargs) -> None:
             self.start_calls += 1
             self._is_running = True
 
@@ -651,7 +651,7 @@ def test_macos_app_surfaces_daemon_error_when_start_returns_not_running(
             self.last_error: Exception | None = None
             self.start_calls = 0
 
-        def start(self) -> None:
+        def start(self, **_kwargs) -> None:
             self.start_calls += 1
             self.last_error = RuntimeError("daemon boot failed")
 
@@ -785,7 +785,7 @@ def test_macos_app_guards_daemon_start_by_permissions_backend_and_model_download
     assert "model_token = self._configured_model_token()" in start_method
     assert "model_download.is_model_downloaded(model_token)" in start_method
     assert "self._start_model_download(model_token, success_message_key)" in start_method
-    assert "self.daemon_controller.start()" in start_method
+    assert "self.daemon_controller.start(llm_enabled_override=llm_enabled_override)" in start_method
     assert "self._push_daemon_state()" in start_method
 
 
@@ -796,7 +796,7 @@ def test_macos_app_download_done_event_starts_daemon_only_for_configured_model(
         def __init__(self, _config_path) -> None:
             self.is_running = False
 
-        def start(self) -> None:
+        def start(self, **_kwargs) -> None:
             self.is_running = True
 
         def stop(self) -> None:
@@ -942,7 +942,7 @@ def test_macos_app_daemon_start_reuses_latest_combined_permission_report(monkeyp
             self.is_running = False
             self.start_calls = 0
 
-        def start(self) -> None:
+        def start(self, **_kwargs) -> None:
             self.start_calls += 1
             self.is_running = True
 
@@ -1010,6 +1010,8 @@ def test_macos_app_daemon_start_reuses_latest_combined_permission_report(monkeyp
     controller._push_daemon_state = lambda: pushed_states.append("daemonState")
     controller._configured_backend_is_available = lambda: True
     controller._configured_model_token = lambda: "moonshine/base"
+    # Keep the test independent of the user's real LLM correction mode.
+    controller._llm_enabled_override_for_start = lambda: None
 
     result = controller._start_daemon_if_ready()
 
@@ -1269,7 +1271,7 @@ class _StoppedDaemonController:
     def __init__(self, _config_path) -> None:
         self.is_running = False
 
-    def start(self) -> None:
+    def start(self, **_kwargs) -> None:
         self.is_running = True
 
     def stop(self) -> None:
@@ -1821,3 +1823,165 @@ def test_update_flow_never_queries_login_item(monkeypatch) -> None:
     controller.applyUpdateEvent_(
         {"kind": "progress", "key": "update_downloading_menu", "percent": "1%"}
     )
+
+
+class _LLMRecordingDaemonController:
+    def __init__(self, _config_path) -> None:
+        self.is_running = False
+        self.overrides: list[bool | None] = []
+
+    def start(self, *, llm_enabled_override: bool | None = None) -> None:
+        self.overrides.append(llm_enabled_override)
+        self.is_running = True
+
+    def stop(self) -> None:
+        self.is_running = False
+
+    def notify_hotkey_press(self) -> None:
+        pass
+
+    def notify_hotkey_release(self) -> None:
+        pass
+
+
+def _llm_ask_controller(monkeypatch, mode: str, language: str = "ja"):
+    captured = _capture_app_delegate(monkeypatch, _LLMRecordingDaemonController)
+    controller = captured["delegate"]
+    controller.web_ui = types.SimpleNamespace(push_event=lambda _event, _payload: None)
+    llm_cfg = types.SimpleNamespace(mode=mode, model="qwen3")
+    controller.bridge = types.SimpleNamespace(
+        _load_config=lambda: types.SimpleNamespace(
+            hotkey=types.SimpleNamespace(key="right_shift"),
+            text=types.SimpleNamespace(llm_correction=llm_cfg),
+        ),
+        current_language=lambda: language,
+        handle_action=lambda _action, _payload: {"language": language},
+    )
+    controller._configured_backend_is_available = lambda: True
+    controller._configured_model_token = lambda: "moonshine/base"
+    monkeypatch.setattr(macos_app.model_download, "is_model_downloaded", lambda _token: True)
+    alerts: list[tuple[str, str, list[str]]] = []
+    choices: list[int] = []
+
+    def fake_alert(title, body, buttons):
+        alerts.append((title, body, list(buttons)))
+        return choices.pop(0)
+
+    controller._run_alert = fake_alert
+    return controller, llm_cfg, alerts, choices
+
+
+def _granted_report():
+    return macos_app.PermissionReport(
+        microphone=True,
+        accessibility=True,
+        input_monitoring=True,
+    )
+
+
+def _restart_daemon(controller) -> None:
+    controller._stop_daemon()
+    controller._start_daemon_if_ready(_granted_report())
+
+
+def test_llm_ask_mode_shows_alert_and_use_enables_llm(monkeypatch) -> None:
+    controller, _llm_cfg, alerts, choices = _llm_ask_controller(monkeypatch, "ask")
+    choices.append(0)
+
+    assert controller._start_daemon_if_ready(_granted_report()) is None
+
+    assert controller.daemon_controller.overrides == [True]
+    assert alerts == [
+        (
+            "LLM補正を使いますか？",
+            "設定が「毎回確認」になっています。この起動中に音声入力の結果を "
+            "LLM（qwen3）で補正するか選んでください。",
+            ["使う", "使わない"],
+        )
+    ]
+
+
+def test_llm_ask_mode_dont_use_disables_llm_and_is_not_reprompted(monkeypatch) -> None:
+    controller, _llm_cfg, alerts, choices = _llm_ask_controller(monkeypatch, "ask", "en")
+    choices.append(1)
+
+    controller._start_daemon_if_ready(_granted_report())
+    _restart_daemon(controller)
+
+    assert controller.daemon_controller.overrides == [False, False]
+    assert len(alerts) == 1
+    assert alerts[0][2] == ["Use", "Don't Use"]
+
+
+def test_llm_ask_answer_is_reused_across_daemon_restarts(monkeypatch) -> None:
+    controller, _llm_cfg, alerts, choices = _llm_ask_controller(monkeypatch, "ask")
+    choices.append(0)
+
+    controller._start_daemon_if_ready(_granted_report())
+    _restart_daemon(controller)
+    _restart_daemon(controller)
+
+    assert controller.daemon_controller.overrides == [True, True, True]
+    assert len(alerts) == 1
+
+
+def test_llm_always_and_never_modes_do_not_show_alert(monkeypatch) -> None:
+    for mode in ("always", "never"):
+        controller, _llm_cfg, alerts, _choices = _llm_ask_controller(monkeypatch, mode)
+
+        controller._start_daemon_if_ready(_granted_report())
+
+        assert controller.daemon_controller.overrides == [None]
+        assert alerts == []
+
+
+def test_llm_mode_change_away_from_ask_resets_remembered_answer(monkeypatch) -> None:
+    controller, llm_cfg, alerts, choices = _llm_ask_controller(monkeypatch, "ask")
+    choices.extend([0, 1])
+
+    controller._start_daemon_if_ready(_granted_report())
+    llm_cfg.mode = "always"
+    _restart_daemon(controller)
+    llm_cfg.mode = "ask"
+    _restart_daemon(controller)
+
+    assert controller.daemon_controller.overrides == [True, None, False]
+    assert len(alerts) == 2
+
+
+def test_llm_settings_save_with_other_mode_resets_remembered_answer(monkeypatch) -> None:
+    controller, _llm_cfg, alerts, choices = _llm_ask_controller(monkeypatch, "ask")
+    choices.extend([0, 1])
+
+    controller._start_daemon_if_ready(_granted_report())
+    # Settings saved away from ask and back while the daemon keeps running.
+    controller._llm_ask_memory.observe_mode("never")
+    controller._llm_ask_memory.observe_mode("ask")
+    _restart_daemon(controller)
+
+    assert controller.daemon_controller.overrides == [True, False]
+    assert len(alerts) == 2
+
+
+def test_llm_ask_reentrant_start_during_alert_does_not_prompt_twice(monkeypatch) -> None:
+    controller, _llm_cfg, alerts, _choices = _llm_ask_controller(monkeypatch, "ask")
+    nested_results: list[object] = []
+
+    def reentrant_alert(title, body, buttons):
+        alerts.append((title, body, list(buttons)))
+        nested_results.append(controller._start_daemon_if_ready(_granted_report()))
+        return 0
+
+    controller._run_alert = reentrant_alert
+
+    controller._start_daemon_if_ready(_granted_report())
+
+    assert nested_results == [None]
+    assert len(alerts) == 1
+    assert controller.daemon_controller.overrides == [True]
+
+
+def test_macos_app_wires_llm_mode_saved_to_ask_memory() -> None:
+    source = _macos_app_source()
+
+    assert "llm_mode_saved=self._llm_ask_memory.observe_mode," in source

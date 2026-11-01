@@ -408,6 +408,37 @@ def test_save_settings_updates_core_fields_and_llm_correction(tmp_path: Path) ->
     assert config.text.llm_correction.base_url == "http://localhost:1234"
 
 
+def test_save_settings_reports_saved_llm_mode(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.toml"
+    _write_config(config_path, model="moonshine:tiny")
+    saved_modes: list[str] = []
+    dispatcher = WebBridgeDispatcher(
+        deps=BridgeDependencies(
+            config_path=lambda: config_path,
+            available_model_entries=lambda: [_entry("moonshine:tiny")],
+            llm_mode_saved=saved_modes.append,
+        ),
+    )
+    payload = {
+        "model": "moonshine:tiny",
+        "language": "en",
+        "hotkey": "right_shift",
+        "output_mode": "direct_typing",
+        "llm_correction": {
+            "mode": "always",
+            "provider": "ollama",
+            "model": "qwen3",
+            "base_url": "http://localhost:11434",
+        },
+    }
+
+    assert dispatcher.handle_action("saveSettings", payload)["saved"] is True
+    invalid = {**payload, "llm_correction": {**payload["llm_correction"], "mode": "bogus"}}
+    assert dispatcher.handle_action("saveSettings", invalid)["saved"] is False
+
+    assert saved_modes == ["always"]
+
+
 def test_save_settings_preserves_llm_glossary_and_think(tmp_path: Path) -> None:
     config_path = tmp_path / "config.toml"
     _write_config(config_path, model="moonshine:tiny")
