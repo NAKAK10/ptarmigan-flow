@@ -299,7 +299,17 @@ jobs:
             --password "$APPLE_APP_SPECIFIC_PASSWORD" \
             --team-id "$APPLE_TEAM_ID" \
             --wait
-          xcrun stapler staple dist/PtarmiganFlow.app
+          # The stapler's CloudKit lookup intermittently drops (-1005); retry it.
+          for attempt in 1 2 3 4 5; do
+            if xcrun stapler staple dist/PtarmiganFlow.app; then
+              break
+            fi
+            if [ "$attempt" -eq 5 ]; then
+              exit 1
+            fi
+            echo "stapler failed (attempt $attempt); retrying in 30s"
+            sleep 30
+          done
           xcrun stapler validate dist/PtarmiganFlow.app
 
       - name: Zip app
