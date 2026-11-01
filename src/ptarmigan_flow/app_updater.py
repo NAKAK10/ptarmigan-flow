@@ -42,6 +42,19 @@ INSTALL_BLOCK_NO_BUNDLE = "no_bundle"
 INSTALL_BLOCK_TRANSLOCATED = "translocated"
 INSTALL_BLOCK_NOT_WRITABLE = "not_writable"
 INSTALL_BLOCK_NO_ASSET = "no_asset"
+# Blockers that clear up on their own (the release assets are still uploading).
+TRANSIENT_INSTALL_BLOCKERS = frozenset({INSTALL_BLOCK_NO_ASSET})
+
+# What the app should do after a check; see ``classify_check_result``.
+CHECK_OUTCOME_UP_TO_DATE = "up_to_date"
+CHECK_OUTCOME_PREPARE = "prepare"
+CHECK_OUTCOME_RETRY = "retry"
+CHECK_OUTCOME_BLOCKED = "blocked"
+
+# One GitHub API call after a transient failure; never a repeating poll (#29).
+UPDATE_RECHECK_DELAY_SECONDS = 300.0
+# Each attempt downloads the whole app, so stop after this many bad downloads.
+MAX_VERIFICATION_FAILURES = 3
 
 _RELEASE_VERSION_RE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
 
@@ -54,6 +67,10 @@ ProgressCallback = Callable[[int, int | None], None]
 
 class UpdateError(Exception):
     """Raised when checking, downloading or verifying an update fails."""
+
+
+class VerificationError(UpdateError):
+    """Raised when a downloaded app fails signature or identity verification."""
 
 
 @dataclass(frozen=True)
@@ -121,6 +138,32 @@ class PreparedUpdate:
     new_app: Path
     work_dir: Path
     version: str
+
+
+@dataclass
+class PrepareAttempts:
+    """Count verification failures per release so a bad asset is not re-downloaded forever."""
+
+    max_verification_failures: int = MAX_VERIFICATION_FAILURES
+    version: str | None = None
+    verification_failures: int = 0
+
+    def record_verification_failure(self, version: str) -> int:
+        if version != self.version:
+            self.version = version
+            self.verification_failures = 0
+        self.verification_failures += 1
+        return self.verification_failures
+
+    def exhausted(self, version: str) -> bool:
+        return (
+            version == self.version
+            and self.verification_failures >= self.max_verification_failures
+        )
+
+    def reset(self) -> None:
+        self.version = None
+        self.verification_failures = 0
 
 
 # --- versions -----------------------------------------------------------------
@@ -331,6 +374,19 @@ def check_for_update(
         update_available=True,
         install_blocker=blocker,
     )
+
+
+def classify_check_result(result: UpdateCheckResult) -> str:
+    """Map a check result to the next step: prepare, retry later, blocked or nothing."""
+    if result.error is not None:
+        return CHECK_OUTCOME_RETRY
+    if not result.update_available or result.release is None:
+        return CHECK_OUTCOME_UP_TO_DATE
+    if result.can_install:
+        return CHECK_OUTCOME_PREPARE
+    if result.install_blocker in TRANSIENT_INSTALL_BLOCKERS:
+        return CHECK_OUTCOME_RETRY
+    return CHECK_OUTCOME_BLOCKED
 
 
 # --- running app --------------------------------------------------------------
@@ -553,7 +609,9 @@ def prepare_update(
         zip_path.unlink(missing_ok=True)
         verification = verify_update(new_app, current_app, result.release.version, runner=runner)
         if not verification.ok:
-            raise UpdateError("verification failed: " + "; ".join(verification.failures))
+            raise VerificationError(
+                "verification failed: " + "; ".join(verification.failures)
+            )
     except BaseException:
         shutil.rmtree(work_dir, ignore_errors=True)
         raise
@@ -579,8 +637,13 @@ def build_install_script(
     work_dir: Path,
     log_path: Path,
     wait_seconds: int = 60,
+    relaunch: bool = True,
 ) -> str:
-    """Return a POSIX shell script that swaps the bundle once ``pid`` exits."""
+    """Return a POSIX shell script that swaps the bundle once ``pid`` exits.
+
+    With ``relaunch=False`` (the app is quitting) the helper never opens the app,
+    not even the restored old copy after a failure.
+    """
     target = shlex.quote(str(current_app))
     backup = shlex.quote(str(backup_path_for(current_app)))
     q_new = shlex.quote(str(new_app))
@@ -595,9 +658,15 @@ TARGET={target}
 BACKUP={backup}
 NEW_APP={q_new}
 WORK_DIR={q_work}
+RELAUNCH={1 if relaunch else 0}
+relaunch_app() {{
+  if [ "$RELAUNCH" = 1 ]; then
+    open "$TARGET"
+  fi
+}}
 mkdir -p "$(dirname {q_log})" 2>/dev/null
 exec >>{q_log} 2>&1
-echo "$(date) update helper: waiting for pid $PID"
+echo "$(date) update helper: waiting for pid $PID (relaunch $RELAUNCH)"
 i=0
 while kill -0 "$PID" 2>/dev/null; do
   i=$((i + 1))
@@ -612,21 +681,21 @@ rm -rf "$BACKUP"
 if ! mv "$TARGET" "$BACKUP"; then
   echo "$(date) could not move the old app aside; update aborted"
   rm -rf "$WORK_DIR"
-  open "$TARGET"
+  relaunch_app
   exit 1
 fi
 if /usr/bin/ditto "$NEW_APP" "$TARGET"; then
   echo "$(date) update installed"
   rm -rf "$BACKUP"
   rm -rf "$WORK_DIR"
-  open "$TARGET"
+  relaunch_app
   exit 0
 fi
 echo "$(date) copying the new app failed; restoring the old app"
 rm -rf "$TARGET"
 mv "$BACKUP" "$TARGET"
 rm -rf "$WORK_DIR"
-open "$TARGET"
+relaunch_app
 exit 1
 """
 
@@ -638,6 +707,7 @@ def launch_install_helper(
     pid: int | None = None,
     log_path: Path,
     popen: Callable[..., Any] = subprocess.Popen,
+    relaunch: bool = True,
 ) -> Path:
     """Write the helper script into the work dir and start it detached."""
     script = build_install_script(
@@ -646,6 +716,7 @@ def launch_install_helper(
         new_app=prepared.new_app,
         work_dir=prepared.work_dir,
         log_path=log_path,
+        relaunch=relaunch,
     )
     script_path = prepared.work_dir / "install-update.sh"
     script_path.write_text(script, encoding="utf-8")
@@ -663,10 +734,11 @@ def launch_install_helper(
         LOGGER.warning("Could not start the update helper %s", script_path, exc_info=True)
         raise UpdateError(f"could not start the update helper: {exc}") from exc
     LOGGER.info(
-        "Update helper launched: script %s, target %s, new app %s, log %s",
+        "Update helper launched: script %s, target %s, new app %s, relaunch %s, log %s",
         script_path,
         current_app,
         prepared.new_app,
+        relaunch,
         log_path,
     )
     return script_path

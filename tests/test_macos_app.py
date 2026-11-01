@@ -1141,6 +1141,8 @@ def test_macos_app_restart_and_quit_use_plain_termination_paths() -> None:
     ]
 
     assert restart_lines == [
+        "if self._restart_to_update():",
+        "return True",
         "if app_relaunch.relaunch_app():",
         "NSApplication.sharedApplication().terminate_(self)",
         "return True",
@@ -1167,6 +1169,7 @@ def test_macos_app_shutdown_runs_plain_cleanup_steps() -> None:
         "self._terminate_model_download_process()",
         "self._remove_hotkey_event_monitor()",
         "self.daemon_controller.stop()",
+        "self._install_prepared_update_on_quit()",
     ]
 
 
@@ -1538,12 +1541,13 @@ def test_update_menu_item_hidden_until_update_found(monkeypatch) -> None:
     assert controller.update_available_menu_item.hidden is True
     assert controller.check_updates_menu_item.title == "アップデートを確認…"
 
+    # An installable update that is not prepared yet is shown greyed out.
     controller._update_result = _update_result()
     controller._update_status_menu()
 
     assert controller.update_available_menu_item.hidden is False
-    assert controller.update_available_menu_item.title == "v0.3.22 に更新…"
-    assert controller.update_available_menu_item.action == "installUpdate:"
+    assert controller.update_available_menu_item.title == "v0.3.22 を準備中…"
+    assert controller.update_available_menu_item.action is None
 
 
 def test_update_menu_item_hidden_for_dev_builds(monkeypatch) -> None:
@@ -1558,12 +1562,11 @@ def test_update_menu_item_hidden_for_dev_builds(monkeypatch) -> None:
 def test_update_progress_replaces_update_item_and_disables_it(monkeypatch) -> None:
     _captured, controller, _alerts, _choices, _opened = _updater_controller(monkeypatch, "en")
     controller._update_result = _update_result()
+    controller._update_prepare_in_progress = True
 
-    controller.applyUpdateEvent_(
-        {"kind": "progress", "key": "update_downloading_menu", "percent": "42%"}
-    )
+    controller.applyUpdateEvent_({"kind": "progress", "percent": "42%"})
 
-    assert controller.update_available_menu_item.title == "Downloading update… 42%"
+    assert controller.update_available_menu_item.title == "Preparing v0.3.22… 42%"
     assert controller.update_available_menu_item.action is None
     assert controller.update_available_menu_item.hidden is False
 
@@ -1636,17 +1639,6 @@ def test_update_check_runs_in_background_and_posts_to_main_thread(monkeypatch) -
     assert posted == [("applyUpdateCheckResult:", {"manual": True, "result": result})]
 
 
-def test_startup_check_result_updates_menu_without_dialog(monkeypatch) -> None:
-    _captured, controller, alerts, _choices, _opened = _updater_controller(monkeypatch)
-    controller._update_check_in_progress = True
-
-    controller.applyUpdateCheckResult_({"manual": False, "result": _update_result()})
-
-    assert controller._update_check_in_progress is False
-    assert alerts == []
-    assert controller.update_available_menu_item.title == "v0.3.22 に更新…"
-
-
 def test_manual_check_shows_up_to_date_and_error_dialogs(monkeypatch) -> None:
     _captured, controller, alerts, _choices, _opened = _updater_controller(monkeypatch, "en")
 
@@ -1664,34 +1656,332 @@ def test_manual_check_shows_up_to_date_and_error_dialogs(monkeypatch) -> None:
     assert controller.update_available_menu_item.hidden is True
 
 
-def test_manual_check_offers_update_release_notes_or_later(monkeypatch) -> None:
-    _captured, controller, alerts, choices, opened = _updater_controller(monkeypatch, "en")
-    installs: list[object] = []
-    controller._start_update_install = lambda result: installs.append(result)
-    result = _update_result()
+_BUNDLE = Path("/Applications/PtarmiganFlow.app")
 
-    choices.append(1)
-    controller.applyUpdateCheckResult_({"manual": True, "result": result})
-    choices.append(2)
+
+def _auto_update_controller(monkeypatch, language: str = "ja"):
+    """Controller behaving like a frozen, writable release build."""
+    captured, controller, alerts, choices, opened = _updater_controller(monkeypatch, language)
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    controller._current_app_version = lambda: "0.3.21"
+    controller._current_app_bundle = lambda: _BUNDLE
+    monkeypatch.setattr(
+        macos_app.app_updater, "bundle_location_is_writable", lambda _bundle: True
+    )
+    captured["timers"].clear()
+    launched: list[tuple] = []
+
+    def fake_launch(prepared_update, current_app, *, log_path, relaunch):
+        launched.append((prepared_update, current_app, log_path, relaunch))
+
+    monkeypatch.setattr(macos_app.app_updater, "launch_install_helper", fake_launch)
+    return captured, controller, alerts, choices, opened, launched
+
+
+def _prepared(tmp_path: Path, version: str = "0.3.22"):
+    work_dir = tmp_path / "work"
+    work_dir.mkdir(exist_ok=True)
+    return macos_app.app_updater.PreparedUpdate(
+        new_app=work_dir / "PtarmiganFlow.app", work_dir=work_dir, version=version
+    )
+
+
+def _set_prepared(controller, prepared) -> None:
+    controller._update_result = _update_result()
+    controller._update_bundle = _BUNDLE
+    controller._update_prepared = prepared
+
+
+def _recheck_timers(captured) -> list:
+    return [timer for timer in captured["timers"] if timer.selector == "updateRecheck:"]
+
+
+def test_installable_update_is_prepared_in_background_without_dialog(
+    monkeypatch, tmp_path
+) -> None:
+    captured, controller, alerts, _choices, opened, launched = _auto_update_controller(
+        monkeypatch
+    )
+    threads = _record_threads(monkeypatch)
+    posted: list[dict] = []
+    controller.performSelectorOnMainThread_withObject_waitUntilDone_ = (
+        lambda selector, payload, wait: posted.append(payload)
+    )
+    prepared = _prepared(tmp_path)
+
+    def fake_prepare(result, bundle_path, *, progress, on_verify):
+        assert bundle_path == _BUNDLE
+        progress(50, 100)
+        progress(50, 100)
+        on_verify()
+        return prepared
+
+    monkeypatch.setattr(macos_app.app_updater, "prepare_update", fake_prepare)
+
+    controller.applyUpdateCheckResult_({"manual": False, "result": _update_result()})
+
+    assert alerts == []
+    assert opened == []
+    assert len(threads) == 1
+    assert controller._update_prepare_in_progress is True
+    assert controller.update_available_menu_item.title == "v0.3.22 を準備中…"
+    assert controller.update_available_menu_item.action is None
+
+    threads[0].target(*threads[0].args)
+
+    assert [payload["kind"] for payload in posted] == ["progress", "progress", "prepared"]
+    controller.applyUpdateEvent_(posted[0])
+    assert controller.update_available_menu_item.title == "v0.3.22 を準備中… 50%"
+    controller.applyUpdateEvent_(posted[1])
+    assert controller.update_available_menu_item.title == "v0.3.22 を準備中…"
+    controller.applyUpdateEvent_(posted[2])
+
+    assert controller._update_prepared == prepared
+    assert controller._update_prepare_in_progress is False
+    assert controller.update_available_menu_item.title == "再起動して v0.3.22 に更新"
+    assert controller.update_available_menu_item.action == "installUpdate:"
+    # A startup/recheck preparation never interrupts with a dialog.
+    assert alerts == []
+    assert launched == []
+    assert "terminated" not in captured
+    assert _recheck_timers(captured) == []
+
+
+def test_restart_to_update_launches_helper_with_relaunch_and_terminates_once(
+    monkeypatch, tmp_path
+) -> None:
+    captured, controller, alerts, _choices, _opened, launched = _auto_update_controller(
+        monkeypatch
+    )
+    prepared = _prepared(tmp_path)
+    _set_prepared(controller, prepared)
+
     controller.installUpdate_(None)
+
+    assert alerts == []
+    assert launched == [(prepared, _BUNDLE, macos_app._UPDATE_LOG_PATH, True)]
+    assert captured["terminated"] == [controller]
+
+    # terminate_ triggers applicationWillTerminate_; the helper must not start twice.
+    controller.applicationWillTerminate_(None)
+
+    assert len(launched) == 1
+
+
+def test_quit_with_prepared_update_installs_without_relaunch_exactly_once(
+    monkeypatch, tmp_path
+) -> None:
+    captured, controller, _alerts, _choices, _opened, launched = _auto_update_controller(
+        monkeypatch
+    )
+    prepared = _prepared(tmp_path)
+    _set_prepared(controller, prepared)
+
+    controller.quit_(None)
+    controller.applicationWillTerminate_(None)
+    controller.applicationWillTerminate_(None)
+
+    assert captured["terminated"] == [controller]
+    assert launched == [(prepared, _BUNDLE, macos_app._UPDATE_LOG_PATH, False)]
+
+
+def test_quit_without_prepared_update_launches_nothing(monkeypatch) -> None:
+    _captured, controller, _alerts, _choices, _opened, launched = _auto_update_controller(
+        monkeypatch
+    )
+    controller._update_result = _update_result()
+
+    controller.applicationWillTerminate_(None)
+
+    assert launched == []
+
+
+def test_restart_app_with_prepared_update_restarts_into_the_update(
+    monkeypatch, tmp_path
+) -> None:
+    captured, controller, _alerts, _choices, _opened, launched = _auto_update_controller(
+        monkeypatch
+    )
+    _set_prepared(controller, _prepared(tmp_path))
+    monkeypatch.setattr(
+        macos_app.app_relaunch, "relaunch_app", lambda: _fail("must not relaunch the old app")
+    )
+
+    assert controller._restart_app() is True
+    controller.applicationWillTerminate_(None)
+
+    assert [entry[3] for entry in launched] == [True]
+    assert captured["terminated"] == [controller]
+
+
+def test_restart_helper_launch_failure_discards_download_and_keeps_running(
+    monkeypatch, tmp_path
+) -> None:
+    captured, controller, alerts, _choices, _opened, _launched = _auto_update_controller(
+        monkeypatch, "en"
+    )
+    prepared = _prepared(tmp_path)
+    _set_prepared(controller, prepared)
+
+    def failing_launch(*_args, **_kwargs):
+        raise macos_app.app_updater.UpdateError("could not start the update helper: boom")
+
+    monkeypatch.setattr(macos_app.app_updater, "launch_install_helper", failing_launch)
+
+    controller.installUpdate_(None)
+
+    assert not prepared.work_dir.exists()
+    assert controller._update_prepared is None
+    assert alerts[0][0] == "Update failed"
+    assert "boom" in alerts[0][1]
+    assert "terminated" not in captured
+    assert len(_recheck_timers(captured)) == 1
+
+
+def test_no_asset_schedules_one_recheck_and_never_opens_release_page(monkeypatch) -> None:
+    captured, controller, alerts, _choices, opened, _launched = _auto_update_controller(
+        monkeypatch
+    )
+    threads = _record_threads(monkeypatch)
+    no_asset = _update_result(blocker="no_asset")
+
+    controller.applyUpdateCheckResult_({"manual": False, "result": no_asset})
+    controller.applyUpdateCheckResult_({"manual": False, "result": no_asset})
+
+    timers = _recheck_timers(captured)
+    assert len(timers) == 1
+    assert timers[0].repeats is False
+    assert timers[0].interval == macos_app.app_updater.UPDATE_RECHECK_DELAY_SECONDS
+    assert threads == []
+    assert controller.update_available_menu_item.title == "v0.3.22 を準備中…"
+    assert controller.update_available_menu_item.action is None
+
+    controller.installUpdate_(None)
+
+    assert opened == []
+    assert alerts == []
+
+    # The recheck is a plain update check (GitHub API only).
+    controller.updateRecheck_(timers[0])
+
+    assert controller._update_recheck_timer is None
+    assert len(threads) == 1
+    assert threads[0].target == controller._check_updates_in_background
+    assert threads[0].args == (False,)
+
+
+def test_check_error_keeps_known_version_preparing_and_success_cancels_recheck(
+    monkeypatch,
+) -> None:
+    captured, controller, alerts, _choices, opened, _launched = _auto_update_controller(
+        monkeypatch
+    )
+    threads = _record_threads(monkeypatch)
+    controller.applyUpdateCheckResult_(
+        {"manual": False, "result": _update_result(blocker="no_asset")}
+    )
+
+    controller.applyUpdateCheckResult_({"manual": False, "result": _update_result(error="x")})
+
+    assert controller.update_available_menu_item.title == "v0.3.22 を準備中…"
+    timers = _recheck_timers(captured)
+    assert len(timers) == 1
+
+    controller.applyUpdateCheckResult_({"manual": False, "result": _update_result()})
+
+    assert timers[0].invalidated is True
+    assert controller._update_recheck_timer is None
+    assert len(threads) == 1
+    assert alerts == []
+    assert opened == []
+
+
+def test_download_failure_retries_later_without_counting_toward_cap(monkeypatch) -> None:
+    captured, controller, alerts, _choices, opened, _launched = _auto_update_controller(
+        monkeypatch
+    )
+    _record_threads(monkeypatch)
+    controller.applyUpdateCheckResult_({"manual": False, "result": _update_result()})
+
+    controller.applyUpdateEvent_(
+        {"kind": "failed", "error": "download failed: offline", "verification": False}
+    )
+
+    assert controller._update_prepare_in_progress is False
+    assert controller._update_attempts.verification_failures == 0
+    assert len(_recheck_timers(captured)) == 1
+    assert controller.update_available_menu_item.title == "v0.3.22 を準備中…"
+    assert alerts == []
+    assert opened == []
+
+
+def test_verification_failures_are_capped_then_menu_offers_release_page(monkeypatch) -> None:
+    captured, controller, alerts, _choices, opened, _launched = _auto_update_controller(
+        monkeypatch
+    )
+    threads = _record_threads(monkeypatch)
+    result = _update_result()
+    cap = macos_app.app_updater.MAX_VERIFICATION_FAILURES
+
+    for attempt in range(cap):
+        controller._update_recheck_timer = None
+        controller.applyUpdateCheckResult_({"manual": False, "result": result})
+        assert len(threads) == attempt + 1
+        controller.applyUpdateEvent_(
+            {"kind": "failed", "error": "verification failed: x", "verification": True}
+        )
+
+    assert len(_recheck_timers(captured)) == cap - 1
+    assert controller._update_recheck_timer is None
+    assert controller.update_available_menu_item.title == (
+        "v0.3.22: 自動更新できません（リリースページ）"
+    )
+    assert controller.update_available_menu_item.action == "installUpdate:"
+
+    # Further automatic checks do not download the release again.
+    controller.applyUpdateCheckResult_({"manual": False, "result": result})
+    assert len(threads) == cap
+    assert alerts == []
+
+    controller.installUpdate_(None)
+
+    assert opened == [result.release_page_url]
+
+    # An explicit manual check tries again.
+    controller.applyUpdateCheckResult_({"manual": True, "result": result})
+    assert len(threads) == cap + 1
+
+
+def test_permanent_blocker_menu_item_offers_release_page(monkeypatch) -> None:
+    captured, controller, alerts, choices, opened, _launched = _auto_update_controller(
+        monkeypatch, "en"
+    )
+    threads = _record_threads(monkeypatch)
+    result = _update_result(blocker="not_writable")
+
+    controller.applyUpdateCheckResult_({"manual": False, "result": result})
+
+    assert threads == []
+    assert _recheck_timers(captured) == []
+    assert controller.update_available_menu_item.title == "Update to v0.3.22…"
+    assert controller.update_available_menu_item.action == "installUpdate:"
+
     choices.append(0)
     controller.installUpdate_(None)
 
     assert alerts[0][0] == "PtarmiganFlow 0.3.22 is available"
-    assert alerts[0][2] == ["Update", "Release Notes", "Later"]
-    assert len(alerts) == 3
+    assert alerts[0][2] == ["Release Notes", "Later"]
     assert opened == [result.release_page_url]
-    assert installs == [result]
 
 
-def test_dev_build_and_blocked_installs_only_offer_release_page(monkeypatch) -> None:
+def test_dev_build_and_blocked_dialogs_only_offer_release_page(monkeypatch) -> None:
     _captured, controller, alerts, choices, opened = _updater_controller(monkeypatch, "en")
-    controller._start_update_install = lambda _result: _fail("must not install")
+    controller._start_update_prepare = lambda *_args, **_kwargs: _fail("must not prepare")
 
     choices.append(0)
-    controller._confirm_update(_update_result("0.0.0-dev", blocker="dev_build"))
+    controller._show_update_blocked(_update_result("0.0.0-dev", blocker="dev_build"))
     choices.append(1)
-    controller._confirm_update(_update_result(blocker="no_asset"))
+    controller._show_update_blocked(_update_result(blocker="no_asset"))
 
     assert alerts[0][0] == "Development build"
     assert alerts[0][2] == ["Release Notes", "OK"]
@@ -1700,112 +1990,113 @@ def test_dev_build_and_blocked_installs_only_offer_release_page(monkeypatch) -> 
     assert len(opened) == 1
 
 
-def test_install_opens_release_page_when_location_not_writable(monkeypatch) -> None:
-    _captured, controller, _alerts, _choices, opened = _updater_controller(monkeypatch)
-    controller._current_app_bundle = lambda: Path("/Applications/PtarmiganFlow.app")
+def test_manual_no_asset_check_explains_and_rechecks(monkeypatch) -> None:
+    captured, controller, alerts, _choices, opened, _launched = _auto_update_controller(
+        monkeypatch, "en"
+    )
+
+    controller.applyUpdateCheckResult_(
+        {"manual": True, "result": _update_result(blocker="no_asset")}
+    )
+
+    assert "isn't ready yet" in alerts[0][1]
+    assert opened == []
+    assert len(_recheck_timers(captured)) == 1
+
+
+def test_prepare_falls_back_to_release_page_when_location_not_writable(monkeypatch) -> None:
+    _captured, controller, alerts, _choices, opened, _launched = _auto_update_controller(
+        monkeypatch
+    )
     monkeypatch.setattr(
         macos_app.app_updater, "bundle_location_is_writable", lambda _bundle: False
     )
     threads = _record_threads(monkeypatch)
 
-    controller._start_update_install(_update_result())
+    controller.applyUpdateCheckResult_({"manual": False, "result": _update_result()})
 
-    assert opened == [_update_result().release_page_url]
     assert threads == []
-    assert controller._update_install_in_progress is False
+    assert controller._update_prepare_in_progress is False
+    assert controller._update_result.install_blocker == "not_writable"
+    assert controller.update_available_menu_item.title == "v0.3.22 に更新…"
+    assert controller.update_available_menu_item.action == "installUpdate:"
+    assert alerts == []
+    assert opened == []
 
 
-def test_install_downloads_in_background_then_launches_helper_and_quits(
-    monkeypatch, tmp_path
-) -> None:
-    captured, controller, _alerts, _choices, _opened = _updater_controller(monkeypatch)
-    bundle = Path("/Applications/PtarmiganFlow.app")
-    controller._current_app_bundle = lambda: bundle
-    monkeypatch.setattr(
-        macos_app.app_updater, "bundle_location_is_writable", lambda _bundle: True
+def test_manual_check_prepares_then_offers_restart(monkeypatch, tmp_path) -> None:
+    captured, controller, alerts, choices, _opened, launched = _auto_update_controller(
+        monkeypatch, "en"
     )
     threads = _record_threads(monkeypatch)
-    posted: list[dict] = []
-    controller.performSelectorOnMainThread_withObject_waitUntilDone_ = (
-        lambda selector, payload, wait: posted.append(payload)
-    )
-    prepared = macos_app.app_updater.PreparedUpdate(
-        new_app=tmp_path / "PtarmiganFlow.app", work_dir=tmp_path, version="0.3.22"
-    )
+    prepared = _prepared(tmp_path)
 
-    def fake_prepare(result, bundle_path, *, progress, on_verify):
-        assert bundle_path == bundle
-        progress(50, 100)
-        progress(50, 100)
-        on_verify()
-        return prepared
+    controller.applyUpdateCheckResult_({"manual": True, "result": _update_result()})
 
-    monkeypatch.setattr(macos_app.app_updater, "prepare_update", fake_prepare)
-    launched: list[tuple] = []
-    monkeypatch.setattr(
-        macos_app.app_updater,
-        "launch_install_helper",
-        lambda prepared_update, current_app, *, log_path: launched.append(
-            (prepared_update, current_app, log_path)
-        ),
-    )
-
-    controller._start_update_install(_update_result())
-
-    assert controller._update_install_in_progress is True
-    assert controller.update_available_menu_item.title == "アップデートをダウンロード中…"
+    assert alerts == []
     assert len(threads) == 1
+
+    choices.append(1)
+    controller.applyUpdateEvent_({"kind": "prepared", "prepared": prepared})
+
+    assert alerts[0][0] == "PtarmiganFlow 0.3.22 is ready to install"
+    assert alerts[0][2] == ["Restart to Update", "Later"]
+    assert launched == []
     assert "terminated" not in captured
 
-    threads[0].target(*threads[0].args)
 
-    assert [payload["kind"] for payload in posted] == ["progress", "progress", "prepared"]
-    controller.applyUpdateEvent_(posted[0])
-    assert controller.update_available_menu_item.title == "アップデートをダウンロード中… 50%"
-    controller.applyUpdateEvent_(posted[1])
-    assert controller.update_available_menu_item.title == "アップデートを検証中…"
-    controller.applyUpdateEvent_(posted[2])
+def test_manual_check_with_prepared_update_offers_restart_without_network(
+    monkeypatch, tmp_path
+) -> None:
+    captured, controller, alerts, choices, _opened, launched = _auto_update_controller(
+        monkeypatch
+    )
+    threads = _record_threads(monkeypatch)
+    prepared = _prepared(tmp_path)
+    _set_prepared(controller, prepared)
 
-    assert launched == [(prepared, bundle, macos_app._UPDATE_LOG_PATH)]
+    choices.append(1)
+    controller.checkForUpdates_(None)
+
+    assert alerts[0][2] == ["再起動して更新", "あとで"]
+    assert threads == []
+    assert launched == []
+
+    choices.append(0)
+    controller.checkForUpdates_(None)
+
+    assert launched == [(prepared, _BUNDLE, macos_app._UPDATE_LOG_PATH, True)]
     assert captured["terminated"] == [controller]
 
 
-def test_install_helper_launch_failure_discards_download_and_keeps_running(
-    monkeypatch, tmp_path
-) -> None:
-    captured, controller, alerts, _choices, _opened = _updater_controller(monkeypatch, "en")
-    controller._update_install_in_progress = True
-    controller._update_install_bundle = Path("/Applications/PtarmiganFlow.app")
-    work_dir = tmp_path / "work"
-    work_dir.mkdir()
-    prepared = macos_app.app_updater.PreparedUpdate(
-        new_app=work_dir / "PtarmiganFlow.app", work_dir=work_dir, version="0.3.22"
+def test_newer_release_replaces_stale_prepared_update(monkeypatch, tmp_path) -> None:
+    _captured, controller, _alerts, _choices, _opened, _launched = _auto_update_controller(
+        monkeypatch
+    )
+    threads = _record_threads(monkeypatch)
+    stale = _prepared(tmp_path, version="0.3.20")
+    _set_prepared(controller, stale)
+
+    controller.applyUpdateCheckResult_({"manual": False, "result": _update_result()})
+
+    assert controller._update_prepared is None
+    assert not stale.work_dir.exists()
+    assert len(threads) == 1
+
+
+def test_manual_prepare_failure_shows_reason_and_keeps_app_running(monkeypatch) -> None:
+    captured, controller, alerts, _choices, _opened, _launched = _auto_update_controller(
+        monkeypatch, "en"
+    )
+    _record_threads(monkeypatch)
+    controller.applyUpdateCheckResult_({"manual": True, "result": _update_result()})
+
+    controller.applyUpdateEvent_(
+        {"kind": "failed", "error": "verification failed: x", "verification": True}
     )
 
-    def failing_launch(*_args, **_kwargs):
-        raise macos_app.app_updater.UpdateError("could not start the update helper: boom")
-
-    monkeypatch.setattr(macos_app.app_updater, "launch_install_helper", failing_launch)
-
-    controller.applyUpdateEvent_({"kind": "prepared", "prepared": prepared})
-
-    assert not work_dir.exists()
-    assert alerts[0][0] == "Update failed"
-    assert "boom" in alerts[0][1]
-    assert controller._update_install_in_progress is False
-    assert "terminated" not in captured
-
-
-def test_install_failure_shows_reason_and_keeps_app_running(monkeypatch) -> None:
-    captured, controller, alerts, _choices, _opened = _updater_controller(monkeypatch, "en")
-    controller._update_install_in_progress = True
-    controller._update_progress = ("update_verifying_menu", "")
-
-    controller.applyUpdateEvent_({"kind": "failed", "error": "verification failed: x"})
-
-    assert controller._update_install_in_progress is False
+    assert controller._update_prepare_in_progress is False
     assert controller._update_progress is None
-    assert controller.update_available_menu_item.hidden is True
     assert alerts[0][0] == "Update failed"
     assert alerts[0][1].startswith("verification failed: x")
     assert "terminated" not in captured
@@ -1820,9 +2111,7 @@ def test_update_flow_never_queries_login_item(monkeypatch) -> None:
     monkeypatch.setattr(macos_app.login_item, "is_enabled", fail_if_called)
 
     controller.applyUpdateCheckResult_({"manual": False, "result": _update_result()})
-    controller.applyUpdateEvent_(
-        {"kind": "progress", "key": "update_downloading_menu", "percent": "1%"}
-    )
+    controller.applyUpdateEvent_({"kind": "progress", "percent": "1%"})
 
 
 class _LLMRecordingDaemonController:

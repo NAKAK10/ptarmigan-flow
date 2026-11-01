@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import importlib.resources
 import json
 import logging
@@ -236,13 +237,20 @@ def _run_appkit_app() -> int:
             self._model_download_thread: threading.Thread | None = None
             self._daemon_error_message: str | None = None
             self._update_check_in_progress = False
-            self._update_install_in_progress = False
+            self._update_prepare_in_progress = False
+            self._update_prepare_manual = False
             # Newer release found by the last successful check; drives the update menu item.
             self._update_result: app_updater.UpdateCheckResult | None = None
-            # (strings key, percent text) while an update is downloading/verifying/installing.
-            self._update_progress: tuple[str, str] | None = None
-            self._update_install_bundle: Path | None = None
+            # Download percent text while an update is being prepared in the background.
+            self._update_progress: str | None = None
+            # Bundle the prepared update replaces; set when preparation starts.
+            self._update_bundle: Path | None = None
+            # Downloaded and verified update, applied on "restart to update" or on quit (#41).
+            self._update_prepared: app_updater.PreparedUpdate | None = None
+            self._update_helper_launched = False
+            self._update_attempts = app_updater.PrepareAttempts()
             self._update_startup_timer = None
+            self._update_recheck_timer = None
             # Answer to LLM correction mode=ask, kept for this app session (#38).
             self._llm_ask_memory = LLMAskSessionMemory()
             self._llm_prompt_in_progress = False
@@ -294,6 +302,7 @@ def _run_appkit_app() -> int:
             self._terminate_model_download_process()
             self._remove_hotkey_event_monitor()
             self.daemon_controller.stop()
+            self._install_prepared_update_on_quit()
 
         def applicationDidBecomeActive_(self, _notification):  # noqa: N802
             self._start_permission_check()
@@ -400,26 +409,46 @@ def _run_appkit_app() -> int:
         @objc.python_method
         def _update_updater_menu_items(self, strings: dict[str, str]) -> None:
             update_item = self.update_available_menu_item
-            result = self._update_result
-            if self._update_progress is not None:
-                key, percent = self._update_progress
-                update_item.setTitle_(strings[key].format(percent=percent).rstrip())
-                # Without an action the auto-enabling menu greys the item out.
-                update_item.setAction_(None)
-                update_item.setHidden_(False)
-            elif result is not None and result.release is not None and not result.is_dev_build:
-                update_item.setTitle_(
-                    strings["update_available_menu"].format(version=result.release.version)
-                )
-                update_item.setAction_("installUpdate:")
-                update_item.setHidden_(False)
-            else:
+            title, action = self._update_menu_title_and_action(strings)
+            if title is None:
                 update_item.setHidden_(True)
+            else:
+                update_item.setTitle_(title)
+                # Without an action the auto-enabling menu greys the item out.
+                update_item.setAction_(action)
+                update_item.setHidden_(False)
             self.check_updates_menu_item.setTitle_(
                 strings["update_checking_menu"]
                 if self._update_check_in_progress
                 else strings["check_updates_menu"]
             )
+
+        @objc.python_method
+        def _update_menu_title_and_action(
+            self,
+            strings: dict[str, str],
+        ) -> tuple[str | None, str | None]:
+            if self._has_pending_prepared_update():
+                version = self._update_prepared.version
+                return strings["update_restart_menu"].format(version=version), "installUpdate:"
+            result = self._update_result
+            if result is None or result.release is None or result.is_dev_build:
+                return None, None
+            version = result.release.version
+            if self._update_prepare_in_progress:
+                title = strings["update_preparing_menu"].format(
+                    version=version,
+                    percent=self._update_progress or "",
+                )
+                return title.rstrip(), None
+            if app_updater.classify_check_result(result) == app_updater.CHECK_OUTCOME_BLOCKED:
+                return strings["update_available_menu"].format(version=version), "installUpdate:"
+            if self._update_attempts.exhausted(version):
+                title = strings["update_unavailable_menu"].format(version=version)
+                return title, "installUpdate:"
+            # Transient: assets still uploading, a failed download or a pending recheck.
+            title = strings["update_preparing_menu"].format(version=version, percent="")
+            return title.rstrip(), None
 
         @objc.python_method
         def _update_login_menu_state(self) -> None:
@@ -1010,11 +1039,16 @@ def _run_appkit_app() -> int:
             return app_updater.running_app_version(self._current_app_bundle())
 
         @objc.python_method
-        def _schedule_startup_update_check(self) -> None:
-            # Only release builds check on their own; one shot, never polled.
+        def _auto_update_supported(self) -> bool:
+            # Only frozen release builds check (and recheck) on their own.
             if not getattr(sys, "frozen", False):
-                return
-            if not app_updater.is_release_version(self._current_app_version()):
+                return False
+            return app_updater.is_release_version(self._current_app_version())
+
+        @objc.python_method
+        def _schedule_startup_update_check(self) -> None:
+            # One shot after launch, never polled.
+            if not self._auto_update_supported():
                 return
             schedule_timer = (
                 NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_
@@ -1028,9 +1062,41 @@ def _run_appkit_app() -> int:
             )
 
         @objc.python_method
-        def _start_update_check(self, *, manual: bool) -> None:
-            source = "manual" if manual else "startup"
-            if self._update_check_in_progress or self._update_install_in_progress:
+        def _schedule_update_recheck(self) -> None:
+            # A single non-repeating GitHub API check; at most one is pending (#29).
+            if self._update_recheck_timer is not None:
+                LOGGER.info("Update recheck already scheduled")
+                return
+            if not self._auto_update_supported():
+                return
+            LOGGER.info(
+                "Update recheck scheduled in %.0f seconds",
+                app_updater.UPDATE_RECHECK_DELAY_SECONDS,
+            )
+            schedule_timer = (
+                NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_
+            )
+            self._update_recheck_timer = schedule_timer(
+                app_updater.UPDATE_RECHECK_DELAY_SECONDS,
+                self,
+                "updateRecheck:",
+                None,
+                False,
+            )
+
+        @objc.python_method
+        def _cancel_update_recheck(self) -> None:
+            timer = self._update_recheck_timer
+            if timer is None:
+                return
+            self._update_recheck_timer = None
+            timer.invalidate()
+            LOGGER.info("Update recheck cancelled")
+
+        @objc.python_method
+        def _start_update_check(self, *, source: str) -> None:
+            manual = source == "manual"
+            if self._update_check_in_progress or self._update_prepare_in_progress:
                 LOGGER.info("Update check (%s) skipped: another update task is running", source)
                 return
             LOGGER.info("Update check started (%s)", source)
@@ -1087,9 +1153,47 @@ def _run_appkit_app() -> int:
                 self._update_result = result if result.update_available else None
             else:
                 LOGGER.warning("Update check failed: %s", result.error)
+            outcome = app_updater.classify_check_result(result)
+            LOGGER.info("Update check outcome: %s (manual %s)", outcome, manual)
+            if manual and outcome == app_updater.CHECK_OUTCOME_PREPARE:
+                # An explicit check retries even after automatic attempts gave up.
+                self._update_attempts.reset()
+            self._handle_update_check_outcome(result, outcome, manual=manual)
             self._update_status_menu()
             if manual:
-                self._show_update_check_result(result)
+                self._show_update_check_result(result, outcome)
+
+        @objc.python_method
+        def _handle_update_check_outcome(
+            self,
+            result: app_updater.UpdateCheckResult,
+            outcome: str,
+            *,
+            manual: bool,
+        ) -> None:
+            if outcome == app_updater.CHECK_OUTCOME_RETRY:
+                self._schedule_update_recheck()
+                return
+            self._cancel_update_recheck()
+            if outcome != app_updater.CHECK_OUTCOME_PREPARE or result.release is None:
+                return
+            version = result.release.version
+            prepared = self._update_prepared
+            if prepared is not None:
+                if prepared.version == version:
+                    LOGGER.info("Update v%s is already prepared", version)
+                    return
+                LOGGER.info("Discarding prepared v%s for newer v%s", prepared.version, version)
+                app_updater.discard_prepared_update(prepared)
+                self._update_prepared = None
+            if self._update_attempts.exhausted(version):
+                LOGGER.warning(
+                    "Not preparing v%s: verification already failed %d times",
+                    version,
+                    self._update_attempts.verification_failures,
+                )
+                return
+            self._start_update_prepare(result, manual=manual)
 
         @objc.python_method
         def _run_alert(self, title: str, body: str, buttons: list[str]) -> int:
@@ -1109,7 +1213,11 @@ def _run_appkit_app() -> int:
                 NSWorkspace.sharedWorkspace().openURL_(url)
 
         @objc.python_method
-        def _show_update_check_result(self, result: app_updater.UpdateCheckResult) -> None:
+        def _show_update_check_result(
+            self,
+            result: app_updater.UpdateCheckResult,
+            outcome: str,
+        ) -> None:
             strings = self._strings()
             if result.error is not None:
                 self._run_alert(
@@ -1125,7 +1233,10 @@ def _run_appkit_app() -> int:
                     [strings["update_ok_button"]],
                 )
                 return
-            self._confirm_update(result)
+            if outcome == app_updater.CHECK_OUTCOME_PREPARE:
+                # Preparation runs in the background; the ready dialog follows.
+                return
+            self._show_update_blocked(result)
 
         @objc.python_method
         def _update_blocker_message(
@@ -1145,7 +1256,8 @@ def _run_appkit_app() -> int:
             return strings["update_blocked_dev_build"]
 
         @objc.python_method
-        def _confirm_update(self, result: app_updater.UpdateCheckResult) -> None:
+        def _show_update_blocked(self, result: app_updater.UpdateCheckResult) -> None:
+            """Explain why the update can't be installed in place and offer the release page."""
             if result.release is None:
                 return
             strings = self._strings()
@@ -1159,63 +1271,52 @@ def _run_appkit_app() -> int:
                     ),
                     [strings["update_release_notes_button"], strings["update_ok_button"]],
                 )
-                if choice == 0:
-                    self._open_release_page(result)
-                return
-            title = strings["update_available_title"].format(version=version)
-            if not result.can_install:
+            else:
                 choice = self._run_alert(
-                    title,
+                    strings["update_available_title"].format(version=version),
                     self._update_blocker_message(result, strings),
                     [strings["update_release_notes_button"], strings["update_later_button"]],
                 )
-                if choice == 0:
-                    self._open_release_page(result)
-                return
-            choice = self._run_alert(
-                title,
-                strings["update_available_body"].format(
-                    current=result.current_version,
-                    version=version,
-                ),
-                [
-                    strings["update_button"],
-                    strings["update_release_notes_button"],
-                    strings["update_later_button"],
-                ],
-            )
             if choice == 0:
-                self._start_update_install(result)
-            elif choice == 1:
                 self._open_release_page(result)
 
         @objc.python_method
-        def _start_update_install(self, result: app_updater.UpdateCheckResult) -> None:
-            if self._update_install_in_progress:
+        def _start_update_prepare(
+            self,
+            result: app_updater.UpdateCheckResult,
+            *,
+            manual: bool,
+        ) -> None:
+            if self._update_prepare_in_progress:
                 return
             bundle = self._current_app_bundle()
-            if (
-                bundle is None
-                or not result.can_install
-                or not app_updater.bundle_location_is_writable(bundle)
-            ):
+            if bundle is None or not app_updater.bundle_location_is_writable(bundle):
                 LOGGER.warning(
-                    "Update install not possible (bundle %s, can install %s); "
-                    "opening the release page",
+                    "Update preparation not possible (bundle %s); falling back to the "
+                    "release page",
                     bundle,
-                    result.can_install,
                 )
-                self._open_release_page(result)
+                self._update_result = dataclasses.replace(
+                    result,
+                    install_blocker=(
+                        app_updater.INSTALL_BLOCK_NO_BUNDLE
+                        if bundle is None
+                        else app_updater.INSTALL_BLOCK_NOT_WRITABLE
+                    ),
+                )
+                self._update_status_menu()
                 return
             LOGGER.info(
-                "Update install started: %s -> %s (bundle %s)",
+                "Update preparation started: %s -> %s (bundle %s, manual %s)",
                 result.current_version,
                 result.release.version if result.release is not None else None,
                 bundle,
+                manual,
             )
-            self._update_install_in_progress = True
-            self._update_install_bundle = bundle
-            self._update_progress = ("update_downloading_menu", "")
+            self._update_prepare_in_progress = True
+            self._update_prepare_manual = manual
+            self._update_bundle = bundle
+            self._update_progress = ""
             self._update_status_menu()
             thread = threading.Thread(
                 target=self._prepare_update_in_background,
@@ -1225,8 +1326,8 @@ def _run_appkit_app() -> int:
             try:
                 thread.start()
             except RuntimeError as exc:
-                LOGGER.warning("Could not start the update install thread", exc_info=True)
-                self._fail_update(str(exc))
+                LOGGER.warning("Could not start the update preparation thread", exc_info=True)
+                self._on_update_prepare_failed(str(exc), verification=False)
 
         @objc.python_method
         def _post_update_event(self, payload: dict[str, object]) -> None:
@@ -1254,14 +1355,10 @@ def _run_appkit_app() -> int:
                 if percent == last_percent["value"]:
                     return
                 last_percent["value"] = percent
-                self._post_update_event(
-                    {"kind": "progress", "key": "update_downloading_menu", "percent": f"{percent}%"}
-                )
+                self._post_update_event({"kind": "progress", "percent": f"{percent}%"})
 
             def on_verify() -> None:
-                self._post_update_event(
-                    {"kind": "progress", "key": "update_verifying_menu", "percent": ""}
-                )
+                self._post_update_event({"kind": "progress", "percent": ""})
 
             try:
                 prepared = app_updater.prepare_update(
@@ -1272,7 +1369,13 @@ def _run_appkit_app() -> int:
                 )
             except Exception as exc:
                 LOGGER.warning("Update preparation failed: %s", exc, exc_info=True)
-                self._post_update_event({"kind": "failed", "error": str(exc)})
+                self._post_update_event(
+                    {
+                        "kind": "failed",
+                        "error": str(exc),
+                        "verification": isinstance(exc, app_updater.VerificationError),
+                    }
+                )
                 return
             self._post_update_event({"kind": "prepared", "prepared": prepared})
 
@@ -1282,41 +1385,71 @@ def _run_appkit_app() -> int:
             except Exception:
                 return
             if kind == "progress":
-                self._update_progress = (str(payload["key"]), str(payload["percent"]))
+                self._update_progress = str(payload.get("percent") or "")
                 self._update_status_menu()
                 return
             if kind == "prepared":
-                LOGGER.info("Update prepared and verified; launching the install helper")
-                self._install_prepared_update(payload["prepared"])
+                self._on_update_prepared(payload["prepared"])
                 return
             if kind == "failed":
-                self._fail_update(str(payload.get("error") or ""))
+                self._on_update_prepare_failed(
+                    str(payload.get("error") or ""),
+                    verification=bool(payload.get("verification")),
+                )
 
         @objc.python_method
-        def _install_prepared_update(self, prepared: app_updater.PreparedUpdate) -> None:
-            bundle = self._update_install_bundle
-            self._update_progress = ("update_installing_menu", "")
-            self._update_status_menu()
-            try:
-                if bundle is None:
-                    raise app_updater.UpdateError("app bundle location is unknown")
-                app_updater.launch_install_helper(prepared, bundle, log_path=_UPDATE_LOG_PATH)
-            except Exception as exc:
-                LOGGER.warning("Update helper launch failed", exc_info=True)
-                app_updater.discard_prepared_update(prepared)
-                self._fail_update(str(exc))
-                return
-            LOGGER.info("Terminating so the update helper can replace %s", bundle)
-            # The helper waits for this process to exit before swapping the bundle.
-            NSApplication.sharedApplication().terminate_(self)
-
-        @objc.python_method
-        def _fail_update(self, error: str) -> None:
-            LOGGER.warning("Update failed: %s", error)
-            self._update_install_in_progress = False
+        def _on_update_prepared(self, prepared: app_updater.PreparedUpdate) -> None:
+            manual = self._update_prepare_manual
+            self._update_prepare_in_progress = False
+            self._update_prepare_manual = False
             self._update_progress = None
-            self._update_install_bundle = None
+            self._update_prepared = prepared
+            self._update_helper_launched = False
+            self._update_attempts.reset()
+            self._cancel_update_recheck()
+            LOGGER.info(
+                "Update v%s prepared and verified at %s; it is applied on restart or quit",
+                prepared.version,
+                prepared.new_app,
+            )
             self._update_status_menu()
+            if manual:
+                self._offer_restart_to_update()
+
+        @objc.python_method
+        def _on_update_prepare_failed(self, error: str, *, verification: bool) -> None:
+            manual = self._update_prepare_manual
+            self._update_prepare_in_progress = False
+            self._update_prepare_manual = False
+            self._update_progress = None
+            self._update_bundle = None
+            result = self._update_result
+            version = result.release.version if result and result.release else None
+            if verification and version is not None:
+                failures = self._update_attempts.record_verification_failure(version)
+                LOGGER.warning(
+                    "Update v%s failed verification (%d/%d); download discarded: %s",
+                    version,
+                    failures,
+                    self._update_attempts.max_verification_failures,
+                    error,
+                )
+            else:
+                LOGGER.warning("Update preparation failed: %s", error)
+            if version is not None and self._update_attempts.exhausted(version):
+                LOGGER.warning(
+                    "Giving up automatic update to v%s; the menu offers the release page",
+                    version,
+                )
+                self._cancel_update_recheck()
+            else:
+                self._schedule_update_recheck()
+            self._update_status_menu()
+            if manual:
+                self._show_update_failed(error)
+
+        @objc.python_method
+        def _show_update_failed(self, error: str) -> None:
             strings = self._strings()
             self._run_alert(
                 strings["update_failed_title"],
@@ -1324,17 +1457,107 @@ def _run_appkit_app() -> int:
                 [strings["update_ok_button"]],
             )
 
+        @objc.python_method
+        def _has_pending_prepared_update(self) -> bool:
+            return self._update_prepared is not None and not self._update_helper_launched
+
+        @objc.python_method
+        def _launch_prepared_update(self, *, relaunch: bool) -> str | None:
+            """Start the install helper for the prepared update; return an error or ``None``."""
+            prepared = self._update_prepared
+            bundle = self._update_bundle
+            if prepared is None or self._update_helper_launched:
+                return "no prepared update"
+            try:
+                if bundle is None:
+                    raise app_updater.UpdateError("app bundle location is unknown")
+                app_updater.launch_install_helper(
+                    prepared,
+                    bundle,
+                    log_path=_UPDATE_LOG_PATH,
+                    relaunch=relaunch,
+                )
+            except Exception as exc:
+                LOGGER.warning(
+                    "Update helper launch failed (relaunch %s)", relaunch, exc_info=True
+                )
+                app_updater.discard_prepared_update(prepared)
+                self._update_prepared = None
+                return str(exc)
+            self._update_helper_launched = True
+            return None
+
+        @objc.python_method
+        def _restart_to_update(self) -> bool:
+            if not self._has_pending_prepared_update():
+                return False
+            version = self._update_prepared.version
+            error = self._launch_prepared_update(relaunch=True)
+            if error is not None:
+                self._update_status_menu()
+                self._schedule_update_recheck()
+                self._show_update_failed(error)
+                return False
+            LOGGER.info("Terminating so the update helper can install v%s and relaunch", version)
+            # The helper waits for this process to exit before swapping the bundle.
+            NSApplication.sharedApplication().terminate_(self)
+            return True
+
+        @objc.python_method
+        def _install_prepared_update_on_quit(self) -> None:
+            if not self._has_pending_prepared_update():
+                return
+            version = self._update_prepared.version
+            LOGGER.info("Quitting with prepared update v%s; installing without relaunch", version)
+            error = self._launch_prepared_update(relaunch=False)
+            if error is not None:
+                LOGGER.warning("Could not install v%s on quit: %s", version, error)
+
+        @objc.python_method
+        def _offer_restart_to_update(self) -> None:
+            prepared = self._update_prepared
+            if prepared is None:
+                return
+            strings = self._strings()
+            choice = self._run_alert(
+                strings["update_ready_title"].format(version=prepared.version),
+                strings["update_ready_body"].format(version=prepared.version),
+                [strings["update_restart_button"], strings["update_later_button"]],
+            )
+            if choice == 0:
+                self._restart_to_update()
+
         def startupUpdateCheck_(self, _timer):  # noqa: N802
             self._update_startup_timer = None
-            self._start_update_check(manual=False)
+            self._start_update_check(source="startup")
+
+        def updateRecheck_(self, _timer):  # noqa: N802
+            self._update_recheck_timer = None
+            self._start_update_check(source="recheck")
 
         def checkForUpdates_(self, _sender):  # noqa: N802
-            self._start_update_check(manual=True)
+            if self._has_pending_prepared_update():
+                LOGGER.info(
+                    "Manual update check: v%s is already prepared", self._update_prepared.version
+                )
+                self._offer_restart_to_update()
+                return
+            self._start_update_check(source="manual")
 
         def installUpdate_(self, _sender):  # noqa: N802
-            LOGGER.info("Install update requested from the menu")
-            if self._update_result is not None and not self._update_install_in_progress:
-                self._confirm_update(self._update_result)
+            if self._has_pending_prepared_update():
+                LOGGER.info("Restart to update requested from the menu")
+                self._restart_to_update()
+                return
+            result = self._update_result
+            if result is None or result.release is None or self._update_prepare_in_progress:
+                return
+            LOGGER.info("Update menu item selected (blocker %s)", result.install_blocker)
+            if self._update_attempts.exhausted(result.release.version):
+                self._open_release_page(result)
+                return
+            if app_updater.classify_check_result(result) == app_updater.CHECK_OUTCOME_BLOCKED:
+                self._show_update_blocked(result)
 
         @objc.python_method
         def _toggle_login(self) -> None:
@@ -1348,6 +1571,9 @@ def _run_appkit_app() -> int:
 
         @objc.python_method
         def _restart_app(self) -> bool:
+            # A plain relaunch would race the quit-time install; restart into the update.
+            if self._restart_to_update():
+                return True
             if app_relaunch.relaunch_app():
                 NSApplication.sharedApplication().terminate_(self)
                 return True
