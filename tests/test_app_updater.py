@@ -560,7 +560,7 @@ def test_prepare_update_removes_work_dir_on_verification_failure(tmp_path: Path)
             return subprocess.CompletedProcess(argv, 0, "", "")
         return subprocess.CompletedProcess(argv, 1, "", "invalid signature")
 
-    with pytest.raises(UpdateError, match="verification failed"):
+    with pytest.raises(app_updater.VerificationError, match="verification failed"):
         app_updater.prepare_update(
             _check("0.3.21"),
             current_app,
@@ -627,7 +627,7 @@ def test_build_install_script_is_valid_shell(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
 
 
-def _run_helper(tmp_path: Path, *, ditto_fails: bool) -> Path:
+def _run_helper(tmp_path: Path, *, ditto_fails: bool, relaunch: bool = True) -> Path:
     """Run the generated helper against a sandbox bundle with stubbed ditto/open."""
     target = _write_app(tmp_path / "Apps" / "PtarmiganFlow.app", version="0.3.21")
     work_dir = tmp_path / "work"
@@ -643,6 +643,7 @@ def _run_helper(tmp_path: Path, *, ditto_fails: bool) -> Path:
         new_app=new_app,
         work_dir=work_dir,
         log_path=tmp_path / "logs" / "update.log",
+        relaunch=relaunch,
     )
     fake_ditto = "false" if ditto_fails else "cp -R"
     script = script.replace("/usr/bin/ditto", fake_ditto)
@@ -650,7 +651,10 @@ def _run_helper(tmp_path: Path, *, ditto_fails: bool) -> Path:
     helper.write_text(script)
     env = {"PATH": f"{bin_dir}:/usr/bin:/bin"}
     subprocess.run(["/bin/sh", str(helper)], env=env, check=False, timeout=30)
-    assert opened.read_text().strip() == str(target)
+    if relaunch:
+        assert opened.read_text().strip() == str(target)
+    else:
+        assert not opened.exists()
     assert not app_updater.backup_path_for(target).exists()
     assert not work_dir.exists()
     return target
@@ -666,6 +670,33 @@ def test_install_helper_restores_old_bundle_when_copy_fails(tmp_path: Path) -> N
     target = _run_helper(tmp_path, ditto_fails=True)
 
     assert app_updater.read_bundle_info(target)["CFBundleShortVersionString"] == "0.3.21"
+
+
+def test_install_helper_without_relaunch_replaces_bundle_and_does_not_open(
+    tmp_path: Path,
+) -> None:
+    target = _run_helper(tmp_path, ditto_fails=False, relaunch=False)
+
+    assert app_updater.read_bundle_info(target)["CFBundleShortVersionString"] == "0.3.22"
+
+
+def test_install_helper_without_relaunch_restores_without_opening(tmp_path: Path) -> None:
+    target = _run_helper(tmp_path, ditto_fails=True, relaunch=False)
+
+    assert app_updater.read_bundle_info(target)["CFBundleShortVersionString"] == "0.3.21"
+
+
+def test_build_install_script_relaunch_flag(tmp_path: Path) -> None:
+    kwargs = {
+        "pid": 1,
+        "current_app": Path("/Applications/PtarmiganFlow.app"),
+        "new_app": tmp_path / "PtarmiganFlow.app",
+        "work_dir": tmp_path,
+        "log_path": tmp_path / "update.log",
+    }
+
+    assert "RELAUNCH=1\n" in app_updater.build_install_script(**kwargs)
+    assert "RELAUNCH=0\n" in app_updater.build_install_script(**kwargs, relaunch=False)
 
 
 def test_launch_install_helper_writes_script_and_detaches(tmp_path: Path) -> None:
@@ -686,8 +717,23 @@ def test_launch_install_helper_writes_script_and_detaches(tmp_path: Path) -> Non
 
     assert script_path == tmp_path / "install-update.sh"
     assert "PID=123" in script_path.read_text()
+    assert "RELAUNCH=1" in script_path.read_text()
     assert calls[0][0] == ["/bin/sh", str(script_path)]
     assert calls[0][1]["start_new_session"] is True
+
+
+def test_launch_install_helper_without_relaunch(tmp_path: Path) -> None:
+    prepared = app_updater.PreparedUpdate(tmp_path / "x.app", tmp_path, "0.3.22")
+
+    script_path = app_updater.launch_install_helper(
+        prepared,
+        Path("/Applications/PtarmiganFlow.app"),
+        log_path=tmp_path / "update.log",
+        popen=lambda argv, **kwargs: None,
+        relaunch=False,
+    )
+
+    assert "RELAUNCH=0" in script_path.read_text()
 
 
 def test_launch_install_helper_wraps_spawn_errors(tmp_path: Path) -> None:
@@ -709,3 +755,39 @@ def test_running_app_version_reads_bundle_plist(tmp_path: Path) -> None:
     bundle = _write_app(tmp_path / "PtarmiganFlow.app", version="0.3.21")
 
     assert app_updater.running_app_version(bundle) == "0.3.21"
+
+
+# --- background update state --------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("result", "outcome"),
+    [
+        (UpdateCheckResult(current_version="0.3.21", error="offline"), "retry"),
+        (_check("0.3.22"), "up_to_date"),
+        (_check("0.3.21"), "prepare"),
+        (_check("0.3.21", arch="x86_64"), "retry"),
+        (_check("0.3.21", is_writable=lambda _path: False), "blocked"),
+        (_check("0.0.0-dev"), "blocked"),
+    ],
+)
+def test_classify_check_result(result: UpdateCheckResult, outcome: str) -> None:
+    assert app_updater.classify_check_result(result) == outcome
+
+
+def test_prepare_attempts_cap_verification_failures_per_version() -> None:
+    attempts = app_updater.PrepareAttempts(max_verification_failures=2)
+
+    assert attempts.record_verification_failure("0.3.22") == 1
+    assert not attempts.exhausted("0.3.22")
+    assert attempts.record_verification_failure("0.3.22") == 2
+    assert attempts.exhausted("0.3.22")
+    # A newer release starts over.
+    assert not attempts.exhausted("0.3.23")
+    assert attempts.record_verification_failure("0.3.23") == 1
+    assert not attempts.exhausted("0.3.22")
+
+    attempts.reset()
+
+    assert attempts.verification_failures == 0
+    assert not attempts.exhausted("0.3.23")
