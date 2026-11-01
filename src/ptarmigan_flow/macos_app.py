@@ -25,6 +25,7 @@ from ptarmigan_flow.app_daemon_controller import (
     InProcessDaemonController,
 )
 from ptarmigan_flow.app_icon import APP_ICON_FILE, APP_ICON_RESOURCE_PACKAGE
+from ptarmigan_flow.application.use_cases.llm_runtime import LLMAskSessionMemory
 from ptarmigan_flow.config import (
     default_config_path,
     ensure_config_exists,
@@ -242,6 +243,9 @@ def _run_appkit_app() -> int:
             self._update_progress: tuple[str, str] | None = None
             self._update_install_bundle: Path | None = None
             self._update_startup_timer = None
+            # Answer to LLM correction mode=ask, kept for this app session (#38).
+            self._llm_ask_memory = LLMAskSessionMemory()
+            self._llm_prompt_in_progress = False
             self.web_ui = None
             self.bridge = WebBridgeDispatcher(
                 deps=BridgeDependencies(
@@ -266,6 +270,7 @@ def _run_appkit_app() -> int:
                     mark_language_selected=onboarding_flow_module.mark_language_selected,
                     mark_hotkey_confirmed=onboarding_flow_module.mark_hotkey_confirmed,
                     set_hotkey_capture_active=self._set_hotkey_capture_active,
+                    llm_mode_saved=self._llm_ask_memory.observe_mode,
                 )
             )
             return self
@@ -918,8 +923,13 @@ def _run_appkit_app() -> int:
                 self._push_daemon_state()
                 return None
             if not self.daemon_controller.is_running:
+                if self._llm_prompt_in_progress:
+                    # Re-entered from the run loop while the LLM modal is open
+                    # (e.g. a permission result); the outer call starts the daemon.
+                    return None
+                llm_enabled_override = self._llm_enabled_override_for_start()
                 try:
-                    self.daemon_controller.start()
+                    self.daemon_controller.start(llm_enabled_override=llm_enabled_override)
                 except Exception as exc:
                     message = self._strings()["daemon_start_failed_message"].format(error=exc)
                     self._push_daemon_error(message)
@@ -936,6 +946,33 @@ def _run_appkit_app() -> int:
             self._start_daemon_status_timer()
             self._push_daemon_state()
             return None
+
+        @objc.python_method
+        def _llm_enabled_override_for_start(self) -> bool | None:
+            try:
+                llm_cfg = self.bridge._load_config().text.llm_correction
+            except Exception:
+                return None
+            self._llm_prompt_in_progress = True
+            try:
+                return self._llm_ask_memory.resolve(
+                    llm_cfg.mode,
+                    lambda: self._prompt_llm_for_this_session(str(llm_cfg.model)),
+                )
+            finally:
+                self._llm_prompt_in_progress = False
+
+        @objc.python_method
+        def _prompt_llm_for_this_session(self, model: str) -> bool:
+            strings = self._strings()
+            choice = self._run_alert(
+                strings["llm_ask_title"],
+                strings["llm_ask_body"].format(model=model),
+                [strings["llm_ask_use_button"], strings["llm_ask_skip_button"]],
+            )
+            enabled = choice == 0
+            LOGGER.info("LLM correction mode=ask answered in app: enabled=%s", enabled)
+            return enabled
 
         @objc.python_method
         def _stop_daemon(self) -> None:

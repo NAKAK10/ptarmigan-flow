@@ -148,6 +148,13 @@ ONBOARDING_STRINGS: dict[str, dict[str, str]] = {
         "update_button": "Update",
         "update_release_notes_button": "Release Notes",
         "update_later_button": "Later",
+        "llm_ask_title": "Use LLM correction?",
+        "llm_ask_body": (
+            "LLM correction is set to \"Ask each time\". Choose whether to correct voice input "
+            "with the LLM ({model}) while the app is running."
+        ),
+        "llm_ask_use_button": "Use",
+        "llm_ask_skip_button": "Don't Use",
         "update_ok_button": "OK",
         "restart_app_button": "Restart App",
         "restart_failed_message": "Could not restart app.",
@@ -363,6 +370,13 @@ ONBOARDING_STRINGS: dict[str, dict[str, str]] = {
         "update_button": "アップデート",
         "update_release_notes_button": "リリースノート",
         "update_later_button": "あとで",
+        "llm_ask_title": "LLM補正を使いますか？",
+        "llm_ask_body": (
+            "設定が「毎回確認」になっています。この起動中に音声入力の結果を "
+            "LLM（{model}）で補正するか選んでください。"
+        ),
+        "llm_ask_use_button": "使う",
+        "llm_ask_skip_button": "使わない",
         "update_ok_button": "OK",
         "restart_app_button": "アプリを再起動",
         "restart_failed_message": "アプリを再起動できませんでした。",
@@ -544,6 +558,13 @@ ONBOARDING_STRINGS: dict[str, dict[str, str]] = {
         "update_button": "更新",
         "update_release_notes_button": "发布说明",
         "update_later_button": "稍后",
+        "llm_ask_title": "要使用 LLM 校正吗？",
+        "llm_ask_body": (
+            "LLM 校正设置为“每次询问”。请选择在本次运行期间是否使用 LLM（{model}）"
+            "校正语音输入结果。"
+        ),
+        "llm_ask_use_button": "使用",
+        "llm_ask_skip_button": "不使用",
         "update_ok_button": "好",
         "restart_app_button": "重新启动应用",
         "restart_failed_message": "无法重新启动应用。",

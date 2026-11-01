@@ -98,6 +98,10 @@ def _noop_set_hotkey_capture_active(_active: bool) -> None:
     return
 
 
+def _noop_llm_mode_saved(_mode: str) -> None:
+    return
+
+
 @dataclass(slots=True)
 class BridgeDependencies:
     """External effects used by the Web UI bridge."""
@@ -123,6 +127,7 @@ class BridgeDependencies:
     language_was_selected: Callable[[], bool] = onboarding_flow_module.language_was_selected
     hotkey_was_confirmed: Callable[[], bool] = onboarding_flow_module.hotkey_was_confirmed
     set_hotkey_capture_active: Callable[[bool], None] = _noop_set_hotkey_capture_active
+    llm_mode_saved: Callable[[str], None] = _noop_llm_mode_saved
 
 
 @dataclass(slots=True)
@@ -295,6 +300,7 @@ class WebBridgeDispatcher:
         config.text.llm_correction.model = str(llm_payload["model"]).strip()
         config.text.llm_correction.base_url = str(llm_payload["base_url"]).strip()
         self._write_config(config)
+        self.deps.llm_mode_saved(str(config.text.llm_correction.mode.value))
         return {"saved": True, "settings": _settings_payload(config)}
 
     def _validate_settings(self, settings: AppSettingsModel) -> list[str]:
