@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 import plistlib
 import shlex
 import subprocess
@@ -267,6 +268,45 @@ def test_check_for_update_install_blockers(kwargs, current, blocker) -> None:
     assert not result.can_install
 
 
+def test_check_for_update_logs_versions_and_blocker(caplog) -> None:
+    with caplog.at_level(logging.INFO, logger="ptarmigan_flow.app_updater"):
+        _check("0.3.21", is_writable=lambda _path: False)
+        _check("0.3.22")
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert any(
+        "current 0.3.21, latest 0.3.22, update available: yes" in m
+        and f"install blocker {app_updater.INSTALL_BLOCK_NOT_WRITABLE}" in m
+        for m in messages
+    ), messages
+    assert any("current 0.3.22, latest 0.3.22, update available: no" in m for m in messages)
+
+
+def test_check_for_update_logs_fetch_error(caplog) -> None:
+    def fail():
+        raise UpdateError("boom")
+
+    with caplog.at_level(logging.INFO, logger="ptarmigan_flow.app_updater"):
+        _check("0.3.21", fetch=fail)
+
+    assert any(
+        record.levelno == logging.WARNING and "boom" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+def test_bundle_location_is_writable_logs_result(caplog) -> None:
+    with caplog.at_level(logging.INFO, logger="ptarmigan_flow.app_updater"):
+        app_updater.bundle_location_is_writable(
+            Path("/Applications/PtarmiganFlow.app"), access=lambda _path, _mode: False
+        )
+
+    assert any(
+        "/Applications/PtarmiganFlow.app writable: False" in record.getMessage()
+        for record in caplog.records
+    )
+
+
 def test_dev_build_result_is_marked_dev() -> None:
     assert _check("0.0.0-dev").is_dev_build
     assert not _check("0.3.21").is_dev_build
@@ -441,6 +481,30 @@ def test_verify_update_refuses_ad_hoc_running_app(tmp_path: Path) -> None:
 
     assert not result.ok
     assert any("ad-hoc" in failure for failure in result.failures)
+
+
+def test_verify_update_logs_each_fact(tmp_path: Path, caplog) -> None:
+    new_app = _write_app(tmp_path / "new" / "PtarmiganFlow.app", version="0.3.22")
+    current_app = _write_app(tmp_path / "cur" / "PtarmiganFlow.app", version="0.3.21")
+    runner, _calls = _fake_codesign_runner(
+        {str(new_app): TEAM_ID, str(current_app): TEAM_ID}, spctl_rc=3
+    )
+
+    with caplog.at_level(logging.INFO, logger="ptarmigan_flow.app_updater"):
+        result = app_updater.verify_update(new_app, current_app, "v0.3.22", runner=runner)
+
+    assert not result.ok
+    messages = [record.getMessage() for record in caplog.records]
+    facts = next(m for m in messages if m.startswith("Update verification facts"))
+    assert "codesign ok True" in facts
+    assert "spctl ok False" in facts
+    assert f"team id new {TEAM_ID} / current {TEAM_ID}" in facts
+    assert f"bundle id new {BUNDLE_ID} / current {BUNDLE_ID}" in facts
+    assert "version new 0.3.22 / expected 0.3.22" in facts
+    assert any(
+        record.levelno == logging.WARNING and "Gatekeeper assessment failed" in record.getMessage()
+        for record in caplog.records
+    )
 
 
 def test_verify_update_fails_when_tools_cannot_run(tmp_path: Path) -> None:

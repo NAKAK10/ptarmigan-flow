@@ -46,6 +46,8 @@ from ptarmigan_flow.stt.factory import parse_stt_model
 from ptarmigan_flow.transcription_corrections import resolve_dictionary_path
 from ptarmigan_flow.web_bridge import BridgeDependencies, WebBridgeDispatcher
 
+LOGGER = logging.getLogger(__name__)
+
 APP_NAME = "PtarmiganFlow"
 # Delay before the one-shot update check after launch, so startup work settles first.
 _STARTUP_UPDATE_CHECK_DELAY_SECONDS = 5.0
@@ -990,8 +992,11 @@ def _run_appkit_app() -> int:
 
         @objc.python_method
         def _start_update_check(self, *, manual: bool) -> None:
+            source = "manual" if manual else "startup"
             if self._update_check_in_progress or self._update_install_in_progress:
+                LOGGER.info("Update check (%s) skipped: another update task is running", source)
                 return
+            LOGGER.info("Update check started (%s)", source)
             self._update_check_in_progress = True
             self._update_status_menu()
             thread = threading.Thread(
@@ -1002,6 +1007,7 @@ def _run_appkit_app() -> int:
             try:
                 thread.start()
             except RuntimeError:
+                LOGGER.warning("Could not start the update check thread", exc_info=True)
                 self._update_check_in_progress = False
                 self._update_status_menu()
 
@@ -1016,6 +1022,7 @@ def _run_appkit_app() -> int:
                     bundle_path=bundle,
                 )
             except Exception as exc:  # never let the worker thread die silently
+                LOGGER.warning("Update check raised unexpectedly", exc_info=True)
                 result = app_updater.UpdateCheckResult(
                     current_version=current_version,
                     error=str(exc),
@@ -1027,6 +1034,7 @@ def _run_appkit_app() -> int:
                     False,
                 )
             except Exception:
+                LOGGER.warning("Could not post the update check result", exc_info=True)
                 self._update_check_in_progress = False
 
         def applyUpdateCheckResult_(self, payload):  # noqa: N802
@@ -1041,7 +1049,7 @@ def _run_appkit_app() -> int:
             if result.error is None:
                 self._update_result = result if result.update_available else None
             else:
-                logging.getLogger(__name__).warning("Update check failed: %s", result.error)
+                LOGGER.warning("Update check failed: %s", result.error)
             self._update_status_menu()
             if manual:
                 self._show_update_check_result(result)
@@ -1154,8 +1162,20 @@ def _run_appkit_app() -> int:
                 or not result.can_install
                 or not app_updater.bundle_location_is_writable(bundle)
             ):
+                LOGGER.warning(
+                    "Update install not possible (bundle %s, can install %s); "
+                    "opening the release page",
+                    bundle,
+                    result.can_install,
+                )
                 self._open_release_page(result)
                 return
+            LOGGER.info(
+                "Update install started: %s -> %s (bundle %s)",
+                result.current_version,
+                result.release.version if result.release is not None else None,
+                bundle,
+            )
             self._update_install_in_progress = True
             self._update_install_bundle = bundle
             self._update_progress = ("update_downloading_menu", "")
@@ -1168,6 +1188,7 @@ def _run_appkit_app() -> int:
             try:
                 thread.start()
             except RuntimeError as exc:
+                LOGGER.warning("Could not start the update install thread", exc_info=True)
                 self._fail_update(str(exc))
 
         @objc.python_method
@@ -1179,7 +1200,7 @@ def _run_appkit_app() -> int:
                     False,
                 )
             except Exception:
-                logging.getLogger(__name__).exception("Could not post update event")
+                LOGGER.exception("Could not post update event")
 
         @objc.python_method
         def _prepare_update_in_background(
@@ -1213,7 +1234,7 @@ def _run_appkit_app() -> int:
                     on_verify=on_verify,
                 )
             except Exception as exc:
-                logging.getLogger(__name__).warning("Update preparation failed: %s", exc)
+                LOGGER.warning("Update preparation failed: %s", exc, exc_info=True)
                 self._post_update_event({"kind": "failed", "error": str(exc)})
                 return
             self._post_update_event({"kind": "prepared", "prepared": prepared})
@@ -1228,6 +1249,7 @@ def _run_appkit_app() -> int:
                 self._update_status_menu()
                 return
             if kind == "prepared":
+                LOGGER.info("Update prepared and verified; launching the install helper")
                 self._install_prepared_update(payload["prepared"])
                 return
             if kind == "failed":
@@ -1243,14 +1265,17 @@ def _run_appkit_app() -> int:
                     raise app_updater.UpdateError("app bundle location is unknown")
                 app_updater.launch_install_helper(prepared, bundle, log_path=_UPDATE_LOG_PATH)
             except Exception as exc:
+                LOGGER.warning("Update helper launch failed", exc_info=True)
                 app_updater.discard_prepared_update(prepared)
                 self._fail_update(str(exc))
                 return
+            LOGGER.info("Terminating so the update helper can replace %s", bundle)
             # The helper waits for this process to exit before swapping the bundle.
             NSApplication.sharedApplication().terminate_(self)
 
         @objc.python_method
         def _fail_update(self, error: str) -> None:
+            LOGGER.warning("Update failed: %s", error)
             self._update_install_in_progress = False
             self._update_progress = None
             self._update_install_bundle = None
@@ -1270,6 +1295,7 @@ def _run_appkit_app() -> int:
             self._start_update_check(manual=True)
 
         def installUpdate_(self, _sender):  # noqa: N802
+            LOGGER.info("Install update requested from the menu")
             if self._update_result is not None and not self._update_install_in_progress:
                 self._confirm_update(self._update_result)
 
