@@ -235,7 +235,8 @@ def test_release_workflow_builds_notarizes_and_uploads_draft_release() -> None:
     assert "Developer ID Application" in workflow
     assert "codesign" in workflow
     assert "notarytool submit" in workflow
-    assert "stapler staple" in workflow
+    assert "for action in staple validate; do" in workflow
+    assert 'xcrun stapler "$action" dist/PtarmiganFlow.app' in workflow
     assert "PtarmiganFlow-macos-arm64.zip" in workflow
     assert "PtarmiganFlow-macos-x86_64.zip" in workflow
     assert "actions/checkout@v7" in workflow
