@@ -7,6 +7,7 @@ through injectable callables so the macOS app only wires the UI around it.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import platform
 import plistlib
@@ -43,6 +44,8 @@ INSTALL_BLOCK_NOT_WRITABLE = "not_writable"
 INSTALL_BLOCK_NO_ASSET = "no_asset"
 
 _RELEASE_VERSION_RE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
+
+LOGGER = logging.getLogger(__name__)
 
 Runner = Callable[[list[str]], subprocess.CompletedProcess]
 UrlOpen = Callable[..., Any]
@@ -296,8 +299,14 @@ def check_for_update(
     try:
         release = fetch()
     except UpdateError as exc:
+        LOGGER.warning("Update check failed (current %s): %s", current_version, exc)
         return UpdateCheckResult(current_version=current_version, error=str(exc))
     if not is_newer_version(release.version, current_version):
+        LOGGER.info(
+            "Update check: current %s, latest %s, update available: no",
+            current_version,
+            release.version,
+        )
         return UpdateCheckResult(current_version=current_version, release=release)
     asset = select_asset(release, arch if arch is not None else normalize_arch())
     blocker = install_blocker(
@@ -308,6 +317,13 @@ def check_for_update(
     )
     if blocker is None and asset is None:
         blocker = INSTALL_BLOCK_NO_ASSET
+    LOGGER.info(
+        "Update check: current %s, latest %s, update available: yes, asset %s, install blocker %s",
+        current_version,
+        release.version,
+        asset.name if asset is not None else None,
+        blocker,
+    )
     return UpdateCheckResult(
         current_version=current_version,
         release=release,
@@ -335,7 +351,9 @@ def bundle_location_is_writable(
     access: Callable[[str, int], bool] = os.access,
 ) -> bool:
     """The helper renames the bundle and deletes the old copy, so both need write access."""
-    return access(str(bundle_path.parent), os.W_OK) and access(str(bundle_path), os.W_OK)
+    writable = access(str(bundle_path.parent), os.W_OK) and access(str(bundle_path), os.W_OK)
+    LOGGER.info("Update bundle location %s writable: %s", bundle_path, writable)
+    return writable
 
 
 # --- download / extract -------------------------------------------------------
@@ -351,6 +369,7 @@ def download_asset(
     chunk_size: int = DOWNLOAD_CHUNK_SIZE,
 ) -> Path:
     opener = urlopen or _default_urlopen
+    LOGGER.info("Update download started: %s -> %s", asset.url, destination)
     try:
         with opener(
             _request(asset.url, accept="application/octet-stream"), timeout=timeout
@@ -371,9 +390,12 @@ def download_asset(
                     if progress is not None:
                         progress(downloaded, total)
     except (urllib.error.URLError, OSError, ValueError) as exc:
+        LOGGER.warning("Update download failed: %s", exc, exc_info=True)
         raise UpdateError(f"download failed: {exc}") from exc
     if total is not None and downloaded != total:
+        LOGGER.warning("Update download incomplete: %d of %d bytes", downloaded, total)
         raise UpdateError(f"download incomplete: {downloaded} of {total} bytes")
+    LOGGER.info("Update download finished: %d bytes (expected %s)", downloaded, total)
     return destination
 
 
@@ -399,6 +421,7 @@ def extract_app(zip_path: Path, destination: Path, *, runner: Runner = run_comma
     result = _run(runner, ["/usr/bin/ditto", "-x", "-k", str(zip_path), str(destination)])
     if result is None or result.returncode != 0:
         detail = (result.stderr or "").strip() if result is not None else "ditto did not run"
+        LOGGER.warning("Update extraction failed: %s", detail)
         raise UpdateError(f"could not extract the update: {detail}")
     app_path = destination / APP_BUNDLE_NAME
     if not app_path.is_dir():
@@ -478,9 +501,25 @@ def verify_update(
     *,
     runner: Runner = run_command,
 ) -> VerificationResult:
-    return evaluate_verification(
-        collect_verification_facts(new_app, current_app, expected_version, runner=runner)
+    facts = collect_verification_facts(new_app, current_app, expected_version, runner=runner)
+    LOGGER.info(
+        "Update verification facts: codesign ok %s, spctl ok %s, team id new %s / current %s, "
+        "bundle id new %s / current %s, version new %s / expected %s",
+        facts.codesign_ok,
+        facts.spctl_ok,
+        facts.new_team_id,
+        facts.current_team_id,
+        facts.new_bundle_id,
+        facts.current_bundle_id,
+        facts.new_version,
+        facts.expected_version,
     )
+    result = evaluate_verification(facts)
+    if result.ok:
+        LOGGER.info("Update verification passed for %s", new_app)
+    else:
+        LOGGER.warning("Update verification failed: %s", "; ".join(result.failures))
+    return result
 
 
 def prepare_update(
@@ -621,7 +660,15 @@ def launch_install_helper(
             start_new_session=True,
         )
     except OSError as exc:
+        LOGGER.warning("Could not start the update helper %s", script_path, exc_info=True)
         raise UpdateError(f"could not start the update helper: {exc}") from exc
+    LOGGER.info(
+        "Update helper launched: script %s, target %s, new app %s, log %s",
+        script_path,
+        current_app,
+        prepared.new_app,
+        log_path,
+    )
     return script_path
 
 
