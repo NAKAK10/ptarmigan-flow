@@ -6,6 +6,7 @@ from importlib import resources
 
 APP_ICON_FILE = "PtarmiganFlow.icns"
 APP_ICON_RESOURCE_PACKAGE = "ptarmigan_flow.resources"
+STATUS_BAR_ICON_FILE = "status-bar-icon.png"
 
 
 def app_icon_resource() -> resources.abc.Traversable:

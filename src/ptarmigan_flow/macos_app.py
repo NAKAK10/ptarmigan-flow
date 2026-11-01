@@ -25,7 +25,11 @@ from ptarmigan_flow import onboarding_flow as onboarding_flow_module
 from ptarmigan_flow.app_daemon_controller import (
     InProcessDaemonController,
 )
-from ptarmigan_flow.app_icon import APP_ICON_FILE, APP_ICON_RESOURCE_PACKAGE
+from ptarmigan_flow.app_icon import (
+    APP_ICON_FILE,
+    APP_ICON_RESOURCE_PACKAGE,
+    STATUS_BAR_ICON_FILE,
+)
 from ptarmigan_flow.application.use_cases.llm_runtime import LLMAskSessionMemory
 from ptarmigan_flow.config import (
     default_config_path,
@@ -78,6 +82,27 @@ def _set_application_icon(app: object, ns_image_cls: object, ns_data_cls: object
     icon_image = ns_image_cls.alloc().initWithData_(icon_data)
     if icon_image is not None:
         app.setApplicationIconImage_(icon_image)
+
+
+_STATUS_BAR_ICON_POINTS = 18.0
+
+
+def _load_status_bar_icon(ns_image_cls: object, ns_data_cls: object) -> object | None:
+    try:
+        icon_resource = importlib.resources.files(APP_ICON_RESOURCE_PACKAGE).joinpath(
+            STATUS_BAR_ICON_FILE
+        )
+        icon_bytes = icon_resource.read_bytes()
+    except OSError:
+        return None
+
+    icon_data = ns_data_cls.dataWithBytes_length_(icon_bytes, len(icon_bytes))
+    icon_image = ns_image_cls.alloc().initWithData_(icon_data)
+    if icon_image is not None:
+        icon_image.setSize_((_STATUS_BAR_ICON_POINTS, _STATUS_BAR_ICON_POINTS))
+        # Template images are tinted by macOS to match light/dark menu bars.
+        icon_image.setTemplate_(True)
+    return icon_image
 
 
 _EDIT_MENU_ITEMS: tuple[tuple[str, str, str], ...] = (
@@ -178,6 +203,7 @@ def _run_appkit_app() -> int:
         NSEvent,
         NSEventMaskFlagsChanged,
         NSImage,
+        NSImageLeft,
         NSMenu,
         NSMenuItem,
         NSStatusBar,
@@ -338,9 +364,15 @@ def _run_appkit_app() -> int:
             self.status_item = (
                 NSStatusBar.systemStatusBar().statusItemWithLength_(NSVariableStatusItemLength)
             )
+            self.status_bar_icon = _load_status_bar_icon(NSImage, NSData)
             status_button = self.status_item.button()
             if status_button is not None:
-                status_button.setTitle_("Pt")
+                if self.status_bar_icon is not None:
+                    status_button.setImage_(self.status_bar_icon)
+                    status_button.setImagePosition_(NSImageLeft)
+                status_button.setTitle_(
+                    self._status_button_title(setup_status.STATUS_BUTTON_TITLE)
+                )
 
             self.status_menu = NSMenu.alloc().init()
             self.dictation_status_menu_item = self._menu_item(
@@ -385,6 +417,13 @@ def _run_appkit_app() -> int:
             self._update_login_menu_state()
 
         @objc.python_method
+        def _status_button_title(self, title: str) -> str:
+            if self.status_bar_icon is not None:
+                return title
+            fallback = setup_status.STATUS_BUTTON_FALLBACK_TITLE
+            return f"{fallback} {title}" if title else fallback
+
+        @objc.python_method
         def _update_status_menu(self) -> None:
             if not hasattr(self, "status_menu"):
                 return
@@ -399,7 +438,7 @@ def _run_appkit_app() -> int:
             self.open_setup_menu_item.setHidden_(not menu_state.show_open_setup)
             status_button = self.status_item.button()
             if status_button is not None:
-                status_button.setTitle_(menu_state.button_title)
+                status_button.setTitle_(self._status_button_title(menu_state.button_title))
             self.settings_menu_item.setTitle_(strings["settings_menu"])
             self.dictionary_menu_item.setTitle_(strings["edit_dictionary_menu"])
             self.login_menu_item.setTitle_(strings["login_at_startup_menu"])

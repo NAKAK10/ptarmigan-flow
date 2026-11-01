@@ -125,6 +125,12 @@ def _capture_app_delegate(monkeypatch, daemon_controller_cls):
         def initWithData_(self, _data):
             return self
 
+        def setSize_(self, _size):  # noqa: N802
+            pass
+
+        def setTemplate_(self, _template):  # noqa: N802
+            pass
+
     class FakeNSData:
         @staticmethod
         def dataWithBytes_length_(data, _length):
@@ -187,6 +193,7 @@ def _capture_app_delegate(monkeypatch, daemon_controller_cls):
         NSEvent=FakeNSEvent,
         NSEventMaskFlagsChanged=1,
         NSImage=FakeNSImage,
+        NSImageLeft=2,
         NSMenu=_FakeNSMenu,
         NSMenuItem=_FakeNSMenuItem,
         NSStatusBar=object,
@@ -904,6 +911,12 @@ def test_macos_app_daemon_start_reuses_latest_combined_permission_report(monkeyp
         def initWithData_(self, _data):
             return self
 
+        def setSize_(self, _size):  # noqa: N802
+            pass
+
+        def setTemplate_(self, _template):  # noqa: N802
+            pass
+
     class FakeNSData:
         @staticmethod
         def dataWithBytes_length_(data, _length):
@@ -962,6 +975,7 @@ def test_macos_app_daemon_start_reuses_latest_combined_permission_report(monkeyp
         NSEvent=FakeNSEvent,
         NSEventMaskFlagsChanged=1,
         NSImage=FakeNSImage,
+        NSImageLeft=2,
         NSMenu=_FakeNSMenu,
         NSMenuItem=_FakeNSMenuItem,
         NSStatusBar=object,
@@ -1252,6 +1266,7 @@ def _install_fake_status_menu(controller, language: str = "ja") -> types.SimpleN
     button = _FakeStatusMenuItem()
     controller.status_menu = object()
     controller.status_item = types.SimpleNamespace(button=lambda: button)
+    controller.status_bar_icon = object()
     for name in (
         "dictation_status_menu_item",
         "open_setup_menu_item",
@@ -1305,7 +1320,7 @@ def test_status_menu_shows_missing_setup_items_while_onboarding_incomplete(
     assert controller.dictation_status_menu_item.title == "セットアップが必要です（入力監視）"
     assert controller.open_setup_menu_item.title == "セットアップを開く…"
     assert controller.open_setup_menu_item.hidden is False
-    assert button.title == "Pt ⚠︎"
+    assert button.title == "⚠︎"
 
 
 def test_status_menu_returns_to_running_after_permissions_granted(monkeypatch) -> None:
@@ -1336,7 +1351,7 @@ def test_status_menu_returns_to_running_after_permissions_granted(monkeypatch) -
     assert controller.dictation_status_menu_item.title == (
         "Setup required (Microphone, Accessibility, Input Monitoring)"
     )
-    assert button.title == "Pt ⚠︎"
+    assert button.title == "⚠︎"
 
     controller._refresh_onboarding_permissions(
         macos_app.PermissionReport(microphone=True, accessibility=True, input_monitoring=True)
@@ -1346,7 +1361,7 @@ def test_status_menu_returns_to_running_after_permissions_granted(monkeypatch) -
     assert shown_routes == ["onboarding"]
     assert controller.dictation_status_menu_item.title == "Voice input running"
     assert controller.open_setup_menu_item.hidden is True
-    assert button.title == "Pt"
+    assert button.title == ""
 
 
 def test_status_menu_plain_stopped_after_setup_complete(monkeypatch) -> None:
@@ -1369,7 +1384,71 @@ def test_status_menu_plain_stopped_after_setup_complete(monkeypatch) -> None:
 
     assert controller.dictation_status_menu_item.title == "音声入力 停止中"
     assert controller.open_setup_menu_item.hidden is True
-    assert button.title == "Pt"
+    assert button.title == ""
+
+
+def test_status_button_falls_back_to_text_without_logo(monkeypatch) -> None:
+    monkeypatch.setattr(macos_app.login_item, "is_enabled", lambda: False)
+    captured = _capture_app_delegate(monkeypatch, _StoppedDaemonController)
+    controller = captured["delegate"]
+    button = _install_fake_status_menu(controller, "ja")
+    controller.status_bar_icon = None
+    controller.onboarding_flow.start(
+        language_already_selected=True,
+        hotkey_already_confirmed=True,
+        report=macos_app.PermissionReport(
+            microphone=True, accessibility=True, input_monitoring=False
+        ),
+    )
+    controller._setup_permission_report = macos_app.PermissionReport(
+        microphone=True, accessibility=True, input_monitoring=False
+    )
+
+    controller._update_status_menu()
+
+    assert button.title == "Pt ⚠︎"
+
+
+def test_status_bar_icon_is_packaged() -> None:
+    from importlib import resources
+
+    from ptarmigan_flow.app_icon import APP_ICON_RESOURCE_PACKAGE, STATUS_BAR_ICON_FILE
+
+    icon = resources.files(APP_ICON_RESOURCE_PACKAGE).joinpath(STATUS_BAR_ICON_FILE)
+    assert icon.read_bytes().startswith(b"\x89PNG")
+    spec = (
+        Path(__file__).resolve().parents[1] / "packaging/macos/PtarmiganFlow.spec"
+    ).read_text(encoding="utf-8")
+    assert '(str(RESOURCES_SOURCE / "status-bar-icon.png"), "ptarmigan_flow/resources")' in spec
+
+
+def test_status_bar_icon_is_a_template_image() -> None:
+    class FakeImage:
+        template = None
+        size = None
+
+        @classmethod
+        def alloc(cls):
+            return cls()
+
+        def initWithData_(self, _data):  # noqa: N802
+            return self
+
+        def setSize_(self, size):  # noqa: N802
+            self.size = size
+
+        def setTemplate_(self, template):  # noqa: N802
+            self.template = template
+
+    class FakeData:
+        @staticmethod
+        def dataWithBytes_length_(data, _length):  # noqa: N802
+            return data
+
+    icon = macos_app._load_status_bar_icon(FakeImage, FakeData)
+
+    assert icon.template is True
+    assert icon.size == (18.0, 18.0)
 
 
 def test_poll_daemon_status_does_not_query_login_item(monkeypatch) -> None:
