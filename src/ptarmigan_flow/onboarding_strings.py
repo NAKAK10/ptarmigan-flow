@@ -111,15 +111,16 @@ ONBOARDING_STRINGS: dict[str, dict[str, str]] = {
         "check_updates_menu": "Check for Updates…",
         "update_available_menu": "Update to v{version}…",
         "update_checking_menu": "Checking for updates…",
-        "update_downloading_menu": "Downloading update… {percent}",
-        "update_verifying_menu": "Verifying update…",
-        "update_installing_menu": "Installing update…",
+        "update_preparing_menu": "Preparing v{version}… {percent}",
+        "update_restart_menu": "Restart to Update to v{version}",
+        "update_unavailable_menu": "v{version}: Can't Update Automatically (Release Page)",
         "update_up_to_date_title": "You're up to date",
         "update_up_to_date_body": "PtarmiganFlow {version} is the latest version.",
         "update_available_title": "PtarmiganFlow {version} is available",
-        "update_available_body": (
-            "You have {current}. Download and install {version} now? PtarmiganFlow will "
-            "restart."
+        "update_ready_title": "PtarmiganFlow {version} is ready to install",
+        "update_ready_body": (
+            "Restart now to update to v{version}. If you choose Later, the update is "
+            "installed the next time you quit PtarmiganFlow."
         ),
         "update_dev_build_title": "Development build",
         "update_dev_build_body": (
@@ -145,7 +146,7 @@ ONBOARDING_STRINGS: dict[str, dict[str, str]] = {
         "update_check_failed_title": "Couldn't check for updates",
         "update_failed_title": "Update failed",
         "update_failed_body": "{error}\n\nThe current version was left unchanged.",
-        "update_button": "Update",
+        "update_restart_button": "Restart to Update",
         "update_release_notes_button": "Release Notes",
         "update_later_button": "Later",
         "llm_ask_title": "Use LLM correction?",
@@ -333,15 +334,16 @@ ONBOARDING_STRINGS: dict[str, dict[str, str]] = {
         "check_updates_menu": "アップデートを確認…",
         "update_available_menu": "v{version} に更新…",
         "update_checking_menu": "アップデートを確認中…",
-        "update_downloading_menu": "アップデートをダウンロード中… {percent}",
-        "update_verifying_menu": "アップデートを検証中…",
-        "update_installing_menu": "アップデートをインストール中…",
+        "update_preparing_menu": "v{version} を準備中… {percent}",
+        "update_restart_menu": "再起動して v{version} に更新",
+        "update_unavailable_menu": "v{version}: 自動更新できません（リリースページ）",
         "update_up_to_date_title": "最新版です",
         "update_up_to_date_body": "PtarmiganFlow {version} は最新のバージョンです。",
         "update_available_title": "PtarmiganFlow {version} が利用可能です",
-        "update_available_body": (
-            "現在のバージョンは {current} です。{version} "
-            "をダウンロードしてインストールしますか？PtarmiganFlow は再起動します。"
+        "update_ready_title": "PtarmiganFlow {version} の準備ができました",
+        "update_ready_body": (
+            "再起動すると v{version} に更新されます。"
+            "「あとで」を選んだ場合は、次に PtarmiganFlow を終了したときに更新されます。"
         ),
         "update_dev_build_title": "開発ビルド",
         "update_dev_build_body": (
@@ -367,7 +369,7 @@ ONBOARDING_STRINGS: dict[str, dict[str, str]] = {
         "update_check_failed_title": "アップデートを確認できませんでした",
         "update_failed_title": "アップデートに失敗しました",
         "update_failed_body": "{error}\n\n現在のバージョンはそのまま残っています。",
-        "update_button": "アップデート",
+        "update_restart_button": "再起動して更新",
         "update_release_notes_button": "リリースノート",
         "update_later_button": "あとで",
         "llm_ask_title": "LLM補正を使いますか？",
@@ -532,14 +534,16 @@ ONBOARDING_STRINGS: dict[str, dict[str, str]] = {
         "check_updates_menu": "检查更新…",
         "update_available_menu": "更新到 v{version}…",
         "update_checking_menu": "正在检查更新…",
-        "update_downloading_menu": "正在下载更新… {percent}",
-        "update_verifying_menu": "正在验证更新…",
-        "update_installing_menu": "正在安装更新…",
+        "update_preparing_menu": "正在准备 v{version}… {percent}",
+        "update_restart_menu": "重新启动以更新到 v{version}",
+        "update_unavailable_menu": "v{version}：无法自动更新（发布页面）",
         "update_up_to_date_title": "已是最新版本",
         "update_up_to_date_body": "PtarmiganFlow {version} 是最新版本。",
         "update_available_title": "PtarmiganFlow {version} 可用",
-        "update_available_body": (
-            "当前版本为 {current}。现在下载并安装 {version} 吗？PtarmiganFlow 将会重新启动。"
+        "update_ready_title": "PtarmiganFlow {version} 已准备就绪",
+        "update_ready_body": (
+            "立即重新启动即可更新到 v{version}。如果选择“稍后”，"
+            "将在下次退出 PtarmiganFlow 时安装更新。"
         ),
         "update_dev_build_title": "开发版本",
         "update_dev_build_body": "此版本（{current}）无法自动更新。最新发布版本为 {version}。",
@@ -555,7 +559,7 @@ ONBOARDING_STRINGS: dict[str, dict[str, str]] = {
         "update_check_failed_title": "无法检查更新",
         "update_failed_title": "更新失败",
         "update_failed_body": "{error}\n\n当前版本保持不变。",
-        "update_button": "更新",
+        "update_restart_button": "重新启动并更新",
         "update_release_notes_button": "发布说明",
         "update_later_button": "稍后",
         "llm_ask_title": "要使用 LLM 校正吗？",
