@@ -17,8 +17,11 @@ SETUP_ITEMS: tuple[str, ...] = (
 )
 _PERMISSION_ITEMS: tuple[str, ...] = ("microphone", "accessibility", "input_monitoring")
 
-STATUS_BUTTON_TITLE = "Pt"
-STATUS_BUTTON_SETUP_REQUIRED_TITLE = "Pt ⚠︎"
+# Titles shown next to the status-bar logo; the logo itself carries the brand.
+STATUS_BUTTON_TITLE = ""
+STATUS_BUTTON_SETUP_REQUIRED_TITLE = "⚠︎"
+# Text-only title used when the logo image cannot be loaded.
+STATUS_BUTTON_FALLBACK_TITLE = "Pt"
 
 
 def missing_permission_items(report: PermissionReport) -> list[str]:
@@ -93,6 +96,7 @@ def status_menu_state(
 
 __all__ = [
     "SETUP_ITEMS",
+    "STATUS_BUTTON_FALLBACK_TITLE",
     "STATUS_BUTTON_SETUP_REQUIRED_TITLE",
     "STATUS_BUTTON_TITLE",
     "StatusMenuState",
