@@ -338,6 +338,73 @@ def test_build_daemon_from_config_ask_mode_disables_llm(monkeypatch, tmp_path) -
     assert captured["enable_streaming"] is True
 
 
+def test_build_daemon_from_config_ask_mode_uses_app_override(monkeypatch, tmp_path) -> None:
+    config_path = tmp_path / "config.toml"
+    config = AppConfig()
+    config.text.llm_correction.mode = "ask"
+    config.text.llm_correction.provider = "ollama"
+    config.text.llm_correction.base_url = "http://localhost:11434"
+    config.text.llm_correction.model = "test-model"
+    captured: dict[str, object] = {}
+
+    class _FakeLLMProcessor:
+        def __init__(self, settings) -> None:
+            captured["settings"] = settings
+
+        def preflight(self) -> None:
+            return None
+
+        def apply(self, text: str) -> str:
+            return text
+
+    def fake_build(_loaded_config: AppConfig, **kwargs) -> _FakeDaemon:
+        captured.update(kwargs)
+        return _FakeDaemon()
+
+    monkeypatch.setattr(controller_module, "ensure_config_exists", lambda _path: None)
+    monkeypatch.setattr(controller_module, "load_config", lambda _path: config)
+    monkeypatch.setattr(controller_module, "build_daemon", fake_build)
+    monkeypatch.setattr(
+        "ptarmigan_flow.application.use_cases.llm_runtime.LLMPostProcessor",
+        _FakeLLMProcessor,
+    )
+
+    build_daemon_from_config(config_path, llm_enabled_override=True)
+
+    assert captured["enable_streaming"] is False
+    assert getattr(captured["settings"], "model", None) == "test-model"
+    # The override is a per-run decision; the configured mode stays "ask".
+    assert config.text.llm_correction.mode == "ask"
+
+    captured.clear()
+    build_daemon_from_config(config_path, llm_enabled_override=False)
+
+    assert captured["enable_streaming"] is True
+    assert "settings" not in captured
+
+
+def test_in_process_daemon_controller_forwards_llm_override(monkeypatch, tmp_path) -> None:
+    daemon = _FakeDaemon()
+    build_calls: list[dict[str, object]] = []
+
+    def fake_build_daemon_from_config(config_path, **kwargs) -> _FakeDaemon:
+        build_calls.append(kwargs)
+        return daemon
+
+    monkeypatch.setattr(
+        controller_module, "build_daemon_from_config", fake_build_daemon_from_config
+    )
+
+    controller = InProcessDaemonController(tmp_path / "config.toml")
+    controller.start(llm_enabled_override=True)
+    try:
+        assert daemon.started.wait(timeout=1.0)
+    finally:
+        controller.stop()
+
+    assert build_calls == [{"use_pynput_listener": False, "llm_enabled_override": True}]
+
+
 def test_cli_run_uses_shared_daemon_builder(monkeypatch, tmp_path) -> None:
     config_path = tmp_path / "config.toml"
     config = AppConfig()

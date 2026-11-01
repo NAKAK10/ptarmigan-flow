@@ -180,8 +180,12 @@ class InProcessDaemonController:
         with self._lock:
             return self._last_error
 
-    def start(self) -> None:
-        """Start the daemon on a background thread unless one is already active."""
+    def start(self, *, llm_enabled_override: bool | None = None) -> None:
+        """Start the daemon on a background thread unless one is already active.
+
+        ``llm_enabled_override`` carries the app's answer for ``mode = "ask"``;
+        ``None`` leaves the decision to the config mode.
+        """
         with self._lock:
             if self._thread is not None and self._thread.is_alive():
                 return
@@ -192,6 +196,7 @@ class InProcessDaemonController:
                 daemon = build_daemon_from_config(
                     self._config_path,
                     use_pynput_listener=False,
+                    llm_enabled_override=llm_enabled_override,
                 )
             except Exception as exc:
                 LOGGER.exception("Failed to build in-process daemon")
@@ -279,13 +284,16 @@ def build_daemon_from_config(
     config_path: Path | str,
     *,
     use_pynput_listener: bool = True,
+    llm_enabled_override: bool | None = None,
 ) -> DaemonLike:
     """Ensure, load, and build a daemon from a config path.
 
     Mirrors the CLI ``run`` wiring: correction rules and optional LLM
     post-processing are applied here too, so the in-process app daemon
     behaves the same as ``pflow run``. The app has no terminal, so
-    ``mode = "ask"`` cannot prompt and resolves to disabled.
+    ``mode = "ask"`` cannot prompt here; the app asks with a modal and passes
+    the answer as ``llm_enabled_override``. Without an override, ask resolves
+    to disabled.
     """
     resolved_path = Path(config_path).expanduser()
     ensure_config_exists(resolved_path)
@@ -295,11 +303,13 @@ def build_daemon_from_config(
         config=config,
         config_path=resolved_path,
     )
-    llm_enabled = llm_enabled_for_this_run(
-        config,
-        is_interactive_session=lambda: False,
-        prompt_llm_for_this_run=lambda: False,
-    )
+    llm_enabled = llm_enabled_override
+    if llm_enabled is None:
+        llm_enabled = llm_enabled_for_this_run(
+            config,
+            is_interactive_session=lambda: False,
+            prompt_llm_for_this_run=lambda: False,
+        )
     post_processor = build_runtime_post_processor(
         config,
         base_processor=correction_result.rules,

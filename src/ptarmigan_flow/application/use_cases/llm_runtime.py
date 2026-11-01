@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Callable
+from collections.abc import Callable
 
-from ptarmigan_flow.launchd import LAUNCHD_LLM_ENABLED_ENV, LAUNCH_AGENT_LABEL
+from ptarmigan_flow.launchd import LAUNCH_AGENT_LABEL, LAUNCHD_LLM_ENABLED_ENV
 from ptarmigan_flow.text_processing.interfaces import ChainedTextPostProcessor, TextPostProcessor
-from ptarmigan_flow.text_processing.llm import LLMClientError, LLMCorrectionSettings, LLMPostProcessor
+from ptarmigan_flow.text_processing.llm import (
+    LLMClientError,
+    LLMCorrectionSettings,
+    LLMPostProcessor,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -195,3 +199,41 @@ def build_runtime_post_processor(
         settings.max_input_chars,
     )
     return ChainedTextPostProcessor([base_processor, llm_processor])
+
+
+def normalize_llm_mode(mode: object) -> str:
+    return str(getattr(mode, "value", mode)).strip().lower()
+
+
+class LLMAskSessionMemory:
+    """Remember the GUI app's answer to ``mode = "ask"`` for one app session.
+
+    The app asks once (with a modal) and reuses the answer for later daemon
+    restarts. Seeing any mode other than ``ask`` forgets the answer, so
+    switching away from ``ask`` and back asks again.
+    """
+
+    def __init__(self) -> None:
+        self._answer: bool | None = None
+
+    @property
+    def answer(self) -> bool | None:
+        return self._answer
+
+    def observe_mode(self, mode: object) -> None:
+        if normalize_llm_mode(mode) != "ask":
+            self._answer = None
+
+    def resolve(self, mode: object, prompt: Callable[[], bool]) -> bool | None:
+        """Return the LLM override for this daemon start.
+
+        ``None`` means "no override" (``always``/``never`` decide as usual).
+        In ``ask`` mode the remembered answer is reused, otherwise ``prompt``
+        is called once and its answer remembered.
+        """
+        self.observe_mode(mode)
+        if normalize_llm_mode(mode) != "ask":
+            return None
+        if self._answer is None:
+            self._answer = bool(prompt())
+        return self._answer
