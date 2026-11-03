@@ -13,9 +13,9 @@ from ptarmigan_flow import app_relaunch, login_item, onboarding_strings, setup_s
 from ptarmigan_flow import onboarding_flow as onboarding_flow_module
 from ptarmigan_flow.app_settings_model import (
     SUPPORTED_HOTKEYS,
-    SUPPORTED_LANGUAGES,
     SUPPORTED_OUTPUT_MODES,
     AppSettingsModel,
+    settings_language_error,
 )
 from ptarmigan_flow.config import (
     LLMCorrectionMode,
@@ -109,6 +109,7 @@ class BridgeDependencies:
     config_path: Callable[[], Path] = default_config_path
     check_permissions: Callable[[], PermissionReport] = check_all_permissions
     available_model_entries: Callable[[], list[CatalogEntry]] = availability.available_model_entries
+    backend_runtime_guidance: Callable[[str], str | None] = availability.backend_runtime_guidance
     is_model_downloaded: Callable[[str], bool] = model_download.is_model_downloaded
     resolve_dictionary_path: Callable[[], Path] = _default_dictionary_path
     login_is_enabled: Callable[[], bool] = login_item.is_enabled
@@ -223,6 +224,13 @@ class WebBridgeDispatcher:
     def _choose_language(self, payload: dict[str, Any]) -> dict[str, Any]:
         code = str(payload.get("code", "")).strip().lower()
         config = self._load_config()
+        error = settings_language_error(config.stt.model, code)
+        if error or code not in onboarding_flow_module.SUPPORTED_LANGUAGES:
+            return {
+                "saved": False,
+                "errors": ["language"],
+                "message": error or "Choose English, Japanese or Chinese for onboarding.",
+            }
         config.language = code
         self._write_config(config)
         self.onboarding_flow.choose_language(code)
@@ -288,7 +296,10 @@ class WebBridgeDispatcher:
         errors = self._validate_settings(settings)
         errors.extend(_validate_llm_payload(llm_payload))
         if errors:
-            return {"saved": False, "errors": errors}
+            result = {"saved": False, "errors": errors}
+            if model.startswith("haas:") and "language" in errors:
+                result["message"] = settings_language_error(model, language)
+            return result
 
         config = self._load_config()
         config.stt.model = settings.model
@@ -308,7 +319,7 @@ class WebBridgeDispatcher:
         errors: list[str] = []
         if settings.model not in available_models:
             errors.append("model")
-        if settings.language not in SUPPORTED_LANGUAGES:
+        if settings_language_error(settings.model, settings.language):
             errors.append("language")
         if settings.hotkey not in SUPPORTED_HOTKEYS:
             errors.append("hotkey")
@@ -325,7 +336,11 @@ class WebBridgeDispatcher:
                 "token": entry.token,
                 "backend": entry.backend,
                 "label": entry.label,
-                "description": entry.description,
+                "description": " ".join(
+                    filter(
+                        None, [entry.description, self.deps.backend_runtime_guidance(entry.backend)]
+                    )
+                ),
                 "downloaded": bool(self.deps.is_model_downloaded(entry.token)),
             }
             for entry in self.deps.available_model_entries()
@@ -336,7 +351,9 @@ class WebBridgeDispatcher:
         available_tokens = {entry.token for entry in self.deps.available_model_entries()}
         if token not in available_tokens:
             return {"started": False, "errors": ["model"]}
-        if self.deps.is_model_downloaded(token):
+        # An explicit Haas download/retry must verify the digest, even when the
+        # cheap status check finds a file of the expected size.
+        if not token.startswith("haas:") and self.deps.is_model_downloaded(token):
             return {"started": False, "already_downloaded": True}
         started = bool(self.deps.start_model_download(token))
         if not started:

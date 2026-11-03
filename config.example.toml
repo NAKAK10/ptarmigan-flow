@@ -2,6 +2,7 @@
 #   en: English transcription/correction
 #   ja: Japanese transcription/correction
 #   zh: Chinese transcription/correction
+# Haas accepts ja or auto (Japanese only); other backends still require an explicit language.
 # Use `pflow config language` or `pflow init` for a described picker.
 language = "en"
 
@@ -14,6 +15,10 @@ language = "en"
 #   mlx:openai/whisper-large-v3-turbo
 #   voxtral:mistralai/Voxtral-Mini-4B-Realtime-2602
 #   vllm:mistralai/Voxtral-Mini-4B-Realtime-2602
+#   haas:sakasegawa/Haas-ja-v1.0-GGUF
+# Haas is opt-in: first choose language="ja", then select its Q4_K preset.
+# Requires external speech.cpp >=0.9.4; PTARMIGAN_FLOW_SPEECH_CPP_PATH overrides discovery.
+# Weights reload each utterance; long multi-sentence audio may lose sentences. See docs/haas.md.
 model = "moonshine:tiny"
 # Auto-stop backend resources after this many idle seconds.
 # 0 disables idle shutdown.

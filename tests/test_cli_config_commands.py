@@ -72,7 +72,7 @@ def test_cmd_config_stt_prompts_vllm_preset_when_needed(tmp_path, monkeypatch) -
     monkeypatch.setattr(commands, "_is_interactive_session", lambda: True)
     _install_input_sequence(
         monkeypatch,
-        ["6", "vllm:mistralai/Voxtral-Mini-4B-Realtime-2602", "45", "2"],
+        ["7", "vllm:mistralai/Voxtral-Mini-4B-Realtime-2602", "45", "2"],
     )
 
     result = commands.cmd_config(argparse.Namespace(config=str(cfg_path), config_target="stt"))
@@ -90,7 +90,17 @@ def test_cmd_config_text_updates_text_settings(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(commands, "_is_interactive_session", lambda: True)
     _install_input_sequence(
         monkeypatch,
-        ["/tmp/dict.toml", "1", "", "http://localhost:8080", "qwen-test", "4.5", "700", "sk-test", "y"],
+        [
+            "/tmp/dict.toml",
+            "1",
+            "",
+            "http://localhost:8080",
+            "qwen-test",
+            "4.5",
+            "700",
+            "sk-test",
+            "y",
+        ],
     )
 
     result = commands.cmd_config(argparse.Namespace(config=str(cfg_path), config_target="text"))
@@ -138,7 +148,9 @@ def test_cmd_config_cancel_does_not_write_changes(tmp_path, monkeypatch) -> None
     write_config(cfg_path, config)
 
     monkeypatch.setattr(commands, "_is_interactive_session", lambda: True)
-    monkeypatch.setattr("builtins.input", lambda _prompt="": (_ for _ in ()).throw(KeyboardInterrupt()))
+    monkeypatch.setattr(
+        "builtins.input", lambda _prompt="": (_ for _ in ()).throw(KeyboardInterrupt())
+    )
 
     result = commands.cmd_config(argparse.Namespace(config=str(cfg_path), config_target="language"))
 

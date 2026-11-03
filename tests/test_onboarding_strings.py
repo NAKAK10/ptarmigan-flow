@@ -3,6 +3,7 @@ from __future__ import annotations
 from ptarmigan_flow import onboarding_strings
 
 REQUIRED_KEYS = {
+    "language_auto",
     "accessibility_body",
     "accessibility_title",
     "allow_button",
@@ -175,8 +176,7 @@ REQUIRED_KEYS = {
 
 def test_supported_languages_have_identical_required_key_sets() -> None:
     key_sets = {
-        language: set(onboarding_strings.strings_for(language))
-        for language in ("en", "ja", "zh")
+        language: set(onboarding_strings.strings_for(language)) for language in ("en", "ja", "zh")
     }
 
     assert key_sets["en"] == REQUIRED_KEYS
@@ -209,9 +209,7 @@ def test_settings_open_config_button_translations_are_exact() -> None:
     assert onboarding_strings.strings_for("ja")["settings_open_config_button"] == (
         "設定ファイルを開く"
     )
-    assert onboarding_strings.strings_for("zh")["settings_open_config_button"] == (
-        "打开配置文件"
-    )
+    assert onboarding_strings.strings_for("zh")["settings_open_config_button"] == ("打开配置文件")
 
 
 def test_required_japanese_translations_are_exact() -> None:
@@ -238,9 +236,7 @@ def test_required_japanese_translations_are_exact() -> None:
     assert strings["download_preparing_message"] == "モデルを準備中..."
     assert strings["download_in_progress_message"] == "モデルをダウンロード中... {percent}"
     assert strings["download_complete_message"] == "ダウンロードが完了しました。"
-    assert strings["download_failed_message"] == (
-        "モデルのダウンロードに失敗しました: {error}"
-    )
+    assert strings["download_failed_message"] == ("モデルのダウンロードに失敗しました: {error}")
     assert strings["voice_input_started_message"] == "音声入力を開始しました。"
     assert strings["all_permissions_granted_started_message"] == (
         "すべての権限が許可されました。音声入力を開始しました。"

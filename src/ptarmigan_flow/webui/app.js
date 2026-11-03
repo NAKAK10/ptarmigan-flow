@@ -310,6 +310,7 @@ function renderOnboarding() {
             <button class="button ${language === "ja" ? "primary" : ""}" data-language="ja">${escapeHtml(t("language_japanese"))}</button>
             <button class="button ${language === "zh" ? "primary" : ""}" data-language="zh">${escapeHtml(t("language_chinese"))}</button>
           </div>
+          <p class="error" role="alert"></p>
         </div>
       </section>
     `;
@@ -381,7 +382,20 @@ function renderPermissionStep(kind, dots) {
 function bindOnboarding() {
   app.querySelectorAll("[data-language]").forEach((button) => {
     button.addEventListener("click", async () => {
-      await bridge("chooseLanguage", { code: button.dataset.language });
+      const result = await bridge("chooseLanguage", { code: button.dataset.language }).catch((error) => {
+        showError(error);
+        return null;
+      });
+      if (!result) {
+        return;
+      }
+      if (result.saved === false) {
+        const target = app.querySelector(".error");
+        if (target) {
+          target.textContent = result.message || settingsValidationText(result.errors);
+        }
+        return;
+      }
       state = await bridge("getState");
       render();
     });
@@ -477,6 +491,7 @@ function renderSettings() {
             ["en", t("language_english")],
             ["ja", t("language_japanese")],
             ["zh", t("language_chinese")],
+            ...(settings.model?.startsWith("haas:") || settings.language === "auto" ? [["auto", t("language_auto")]] : []),
           ],
           "settings_language_help",
         )}
@@ -891,7 +906,7 @@ async function saveSettings(modelOverride = null) {
   try {
     const result = await bridge("saveSettings", payload);
     if (result.saved === false) {
-      settingsMessage = { kind: "error", text: settingsValidationText(result.errors) };
+      settingsMessage = { kind: "error", text: [settingsValidationText(result.errors), result.message].filter(Boolean).join(" ") };
       return;
     }
     for (const [key, value] of Object.entries(submittedDraft)) {

@@ -156,5 +156,18 @@ function checkError(scope, text) {
     assert.equal(elements[`${scope}-error`].textContent, strings[`${scope}_saved_message`]);
   }
   assert.equal(requests.length, 0);
+  run('Object.keys(settingsDraft).forEach((key) => delete settingsDraft[key]); state.settings.model = "haas:sakasegawa/Haas-ja-v1.0-GGUF"; state.settings.language = "en"');
+  assert.ok(run('renderSettings()').includes('value="auto"'));
+  assert.ok(run('renderSettings()').includes('value="en" selected'));
+  run('state.settings.language = "auto"; state.settings.model = "moonshine:tiny"');
+  // Preserve an explicit auto value so switching models requires a visible
+  // language choice, instead of a browser select silently defaulting to en.
+  assert.ok(run('renderSettings()').includes('value="auto" selected'));
+  run('state.settings.model = "haas:sakasegawa/Haas-ja-v1.0-GGUF"');
+  app.innerHTML = run('renderSettings()');
+  const rejected = run('saveSettings()');
+  await reply('saveSettings', { saved: false, errors: ['language'], message: 'Haas is Japanese-only; select Japanese.' });
+  await rejected;
+  checkError('settings', 'Haas is Japanese-only; select Japanese.');
   console.log("save feedback regression checks passed");
 })().catch((error) => { console.error(error); process.exitCode = 1; });

@@ -80,6 +80,10 @@ this after each rebuild unless you sign the app with a stable signing identity.
 https://github.com/user-attachments/assets/f763be1b-54af-4342-886d-016837be7884
 
 ## Command Reference
+For optional Japanese Haas Q4_K recognition with external speech.cpp >=0.9.4,
+see [Haas setup and limitations](docs/haas.md). Your current model stays selected
+until you explicitly choose Haas in Settings or `pflow list model`.
+
 ### Core Commands
 | Command | Description |
 | --- | --- |

@@ -10,7 +10,9 @@ from enum import Enum, StrEnum
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+from ptarmigan_flow.stt.model_families import validate_stt_language
 
 LOGGER = logging.getLogger(__name__)
 
@@ -158,6 +160,11 @@ class AppConfig(BaseModel):
     runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
     text: TextConfig = Field(default_factory=TextConfig)
 
+    @model_validator(mode="after")
+    def _validate_model_language(self) -> AppConfig:
+        validate_stt_language(self.stt.model, self.language)
+        return self
+
 
 def default_config_path() -> Path:
     """Return default user config path."""
@@ -221,14 +228,13 @@ def _clamp_llm_max_input_chars(value: int) -> int:
     return value
 
 
-def _normalize_top_level_language(value: str) -> str:
+def _normalize_top_level_language(value: str, *, model: str = "") -> str:
     normalized = value.strip()
     if not normalized:
         raise ValueError("language must not be empty")
-    if normalized.lower() == "auto":
-        raise ValueError(
-            "language='auto' is no longer supported; use an explicit value like 'ja' or 'en'"
-        )
+    validate_stt_language(model, normalized)
+    if model.partition(":")[0].strip().lower() == "haas":
+        return normalized.lower()
     return normalized
 
 
@@ -238,7 +244,9 @@ def _normalize_stt_model(value: str) -> str:
         raise ValueError("stt.model must not be empty")
     from ptarmigan_flow.stt.factory import parse_stt_model
 
-    parse_stt_model(normalized)
+    prefix, model_id = parse_stt_model(normalized)
+    if prefix == "haas":
+        return f"{prefix}:{model_id}"
     return normalized
 
 
@@ -253,7 +261,7 @@ def _dump_toml(data: dict[str, Any]) -> str:
         if input_device is None:
             input_device_line = ""
         elif isinstance(input_device, str):
-            input_device_line = f"input_device = \"{input_device}\"\n"
+            input_device_line = f'input_device = "{input_device}"\n'
         else:
             input_device_line = f"input_device = {input_device}\n"
 
@@ -261,13 +269,13 @@ def _dump_toml(data: dict[str, Any]) -> str:
         if dictionary_path is None:
             dictionary_path_line = ""
         else:
-            dictionary_path_line = f"dictionary_path = \"{dictionary_path}\"\n"
+            dictionary_path_line = f'dictionary_path = "{dictionary_path}"\n'
         llm_correction = data["text"].get("llm_correction", {})
         llm_api_key = llm_correction.get("api_key")
         if llm_api_key is None:
             llm_api_key_line = ""
         else:
-            llm_api_key_line = f"api_key = \"{llm_api_key}\"\n"
+            llm_api_key_line = f'api_key = "{llm_api_key}"\n'
         llm_glossary = llm_correction.get("glossary") or []
         llm_glossary_items = ", ".join(_toml_string(str(term)) for term in llm_glossary)
         llm_glossary_line = f"glossary = [{llm_glossary_items}]\n"
@@ -281,41 +289,39 @@ def _dump_toml(data: dict[str, Any]) -> str:
         stt_vllm_cfg = stt_cfg.get("vllm", {})
         runtime_cfg = data["runtime"]
         runtime_ui_enabled = str(runtime_cfg.get("ui_enabled", True)).lower()
-        runtime_indicator_enabled = str(
-            runtime_cfg.get("activity_indicator_enabled", True)
-        ).lower()
+        runtime_indicator_enabled = str(runtime_cfg.get("activity_indicator_enabled", True)).lower()
         runtime_margin_right = runtime_cfg.get("activity_indicator_margin_right", 24)
         runtime_margin_bottom = runtime_cfg.get("activity_indicator_margin_bottom", 24)
         runtime_indicator_size = runtime_cfg.get("activity_indicator_size", 42)
 
         return (
-            f"language = \"{data.get('language', 'en')}\"\n\n"
+            f'language = "{data.get("language", "en")}"\n\n'
             "[hotkey]\n"
-            f"key = \"{data['hotkey']['key']}\"\n\n"
+            f'key = "{data["hotkey"]["key"]}"\n\n'
             "[audio]\n"
             f"sample_rate = {audio_cfg['sample_rate']}\n"
             f"channels = {audio_cfg['channels']}\n"
-            f"dtype = \"{audio_cfg['dtype']}\"\n"
+            f'dtype = "{audio_cfg["dtype"]}"\n'
             f"max_record_seconds = {audio_cfg['max_record_seconds']}\n"
             f"release_tail_seconds = {audio_cfg['release_tail_seconds']}\n"
             f"hotkey_release_reconcile_seconds = {audio_cfg['hotkey_release_reconcile_seconds']}\n"
             f"hotkey_idle_reconcile_seconds = {audio_cfg['hotkey_idle_reconcile_seconds']}\n"
             f"trailing_silence_seconds = {audio_cfg['trailing_silence_seconds']}\n"
             f"{input_device_line}\n"
-            f"input_device_policy = \"{audio_cfg['input_device_policy']}\"\n"
+            f'input_device_policy = "{audio_cfg["input_device_policy"]}"\n'
             "\n"
             "[stt]\n"
-            f"model = \"{stt_cfg['model']}\"\n"
+            f'model = "{stt_cfg["model"]}"\n'
             f"idle_shutdown_seconds = {stt_cfg.get('idle_shutdown_seconds', 30.0)}\n\n"
             "[stt.vllm]\n"
-            f"startup_preset = \"{stt_vllm_cfg.get('startup_preset', 'off')}\"\n\n"
+            f'startup_preset = "{stt_vllm_cfg.get("startup_preset", "off")}"\n\n'
             "[model]\n"
-            f"device = \"{data['model']['device']}\"\n\n"
+            f'device = "{data["model"]["device"]}"\n\n'
             "[output]\n"
-            f"mode = \"{data['output']['mode']}\"\n"
-            f"paste_shortcut = \"{data['output']['paste_shortcut']}\"\n\n"
+            f'mode = "{data["output"]["mode"]}"\n'
+            f'paste_shortcut = "{data["output"]["paste_shortcut"]}"\n\n'
             "[runtime]\n"
-            f"log_level = \"{runtime_cfg['log_level']}\"\n"
+            f'log_level = "{runtime_cfg["log_level"]}"\n'
             f"notify_on_error = {str(runtime_cfg['notify_on_error']).lower()}\n"
             f"ui_enabled = {runtime_ui_enabled}\n"
             f"activity_indicator_enabled = {runtime_indicator_enabled}\n"
@@ -325,10 +331,10 @@ def _dump_toml(data: dict[str, Any]) -> str:
             "[text]\n"
             f"{dictionary_path_line}\n"
             "[text.llm_correction]\n"
-            f"mode = \"{llm_correction.get('mode', 'never')}\"\n"
-            f"provider = \"{llm_correction.get('provider', 'ollama')}\"\n"
-            f"base_url = \"{llm_correction.get('base_url', 'http://localhost:11434')}\"\n"
-            f"model = \"{llm_correction.get('model', 'qwen2.5:7b-instruct')}\"\n"
+            f'mode = "{llm_correction.get("mode", "never")}"\n'
+            f'provider = "{llm_correction.get("provider", "ollama")}"\n'
+            f'base_url = "{llm_correction.get("base_url", "http://localhost:11434")}"\n'
+            f'model = "{llm_correction.get("model", "qwen2.5:7b-instruct")}"\n'
             f"timeout_seconds = {llm_correction.get('timeout_seconds', 5.0)}\n"
             f"max_input_chars = {llm_correction.get('max_input_chars', 500)}\n"
             f"enabled_tools = {str(llm_correction.get('enabled_tools', False)).lower()}\n"
@@ -356,7 +362,7 @@ def _migrate_legacy_llm_correction(raw: dict[str, Any]) -> None:
             llm_cfg["mode"] = "always" if enabled else "never"
             LOGGER.warning(
                 "text.llm_correction.enabled is deprecated; "
-                "use text.llm_correction.mode = \"always|never|ask\" instead"
+                'use text.llm_correction.mode = "always|never|ask" instead'
             )
     if "enabled_tools" in llm_cfg:
         return
@@ -403,9 +409,7 @@ def _migrate_legacy_model_size(raw: dict[str, Any]) -> None:
             raw["stt"] = stt_cfg
         if not str(stt_cfg.get("model", "")).strip():
             stt_cfg["model"] = f"moonshine:{legacy_size_token}"
-    LOGGER.warning(
-        "model.size is deprecated and was migrated to stt.model (moonshine backend)"
-    )
+    LOGGER.warning("model.size is deprecated and was migrated to stt.model (moonshine backend)")
 
 
 def _to_primitive(value: Any) -> Any:
@@ -504,6 +508,6 @@ def load_config(path: Path | None = None, *, allow_legacy_model_size: bool = Fal
         field_name="activity_indicator_size",
         minimum=16,
     )
-    config.language = _normalize_top_level_language(str(config.language))
     config.stt.model = _normalize_stt_model(str(config.stt.model))
+    config.language = _normalize_top_level_language(str(config.language), model=config.stt.model)
     return config

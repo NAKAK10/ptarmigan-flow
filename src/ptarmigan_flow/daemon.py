@@ -882,6 +882,13 @@ class PtarmiganFlowDaemon:
             return
 
         self._stop_event.set()
+        if callable(getattr(self.transcriber, "cancel_pending_transcription", None)):
+            # Closing the owned subprocess before the transcription lock also
+            # prevents a queued Haas request from starting after cancellation.
+            try:
+                self.transcriber.close()
+            except Exception:
+                LOGGER.debug("Failed to cancel STT subprocess during stop", exc_info=True)
         self._hide_activity_indicator()
         if not self._transcriber_uses_external_server():
             LOGGER.info(

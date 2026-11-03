@@ -1,5 +1,5 @@
-# -*- mode: python ; coding: utf-8 -*-
-
+# PyInstaller injects the build API and SPECPATH when evaluating this file.
+# ruff: noqa: F821
 import os
 import platform
 import sys
@@ -99,6 +99,9 @@ REQUIRED_APP_MODULES = (
     "ptarmigan_flow.resources",
     "ptarmigan_flow.web_bridge",
     "ptarmigan_flow.daemon",
+    "ptarmigan_flow.stt.haas",
+    "ptarmigan_flow.stt.haas_artifact",
+    "ptarmigan_flow.stt.haas_runtime",
 )
 
 # Third-party modules the app imports at runtime. The release venv installs
@@ -114,6 +117,8 @@ REQUIRED_RUNTIME_MODULES = (
     "AVFoundation",
     "ApplicationServices",
     "ServiceManagement",
+    "huggingface_hub",
+    "tqdm",
 )
 
 # arm64 builds must ship the MLX backends (issue #20). They are installed via
@@ -125,7 +130,6 @@ REQUIRED_ARM64_RUNTIME_MODULES = (
     "mlx_whisper",
     "voxmlx",
     "mistral_common",
-    "huggingface_hub",
     "transformers",
     "numba",
     "scipy",
@@ -149,11 +153,7 @@ def _release_backend_packages(arch: str) -> tuple[str, ...]:
 
 
 def _drop_unneeded_moonshine_entries(entries):
-    return [
-        entry
-        for entry in entries
-        if Path(entry[0]).name not in MOONSHINE_EXCLUDED_BASENAMES
-    ]
+    return [entry for entry in entries if Path(entry[0]).name not in MOONSHINE_EXCLUDED_BASENAMES]
 
 
 _missing_runtime_modules = [
@@ -175,11 +175,7 @@ if _missing_app_modules:
         f"check that {SRC} is importable from the build environment."
     )
 
-hiddenimports = [
-    name
-    for name in _app_submodules
-    if _keep_release_module(name)
-]
+hiddenimports = [name for name in _app_submodules if _keep_release_module(name)]
 
 # The app bundles the MLX inference engines so any supported MLX model works
 # locally; model weights themselves are downloaded on demand at runtime. Torch /
@@ -223,7 +219,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='PtarmiganFlow',
+    name="PtarmiganFlow",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -240,13 +236,13 @@ coll = COLLECT(
     strip=False,
     upx=False,
     upx_exclude=[],
-    name='PtarmiganFlow',
+    name="PtarmiganFlow",
 )
 app = BUNDLE(
     coll,
-    name='PtarmiganFlow.app',
+    name="PtarmiganFlow.app",
     icon=str(APP_ICON),
-    bundle_identifier='com.ptarmiganflow.app',
+    bundle_identifier="com.ptarmiganflow.app",
     info_plist={
         "CFBundleDisplayName": "PtarmiganFlow",
         "CFBundleIconFile": "PtarmiganFlow.icns",
@@ -255,7 +251,11 @@ app = BUNDLE(
         "CFBundleVersion": APP_VERSION,
         "LSMinimumSystemVersion": "14.0",
         "LSUIElement": True,
-        "NSMicrophoneUsageDescription": "PtarmiganFlow records audio only while the hotkey is held.",
-        "NSAppleEventsUsageDescription": "PtarmiganFlow sends text to the active app when you release the hotkey.",
+        "NSMicrophoneUsageDescription": (
+            "PtarmiganFlow records audio only while the hotkey is held."
+        ),
+        "NSAppleEventsUsageDescription": (
+            "PtarmiganFlow sends text to the active app when you release the hotkey."
+        ),
     },
 )

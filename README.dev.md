@@ -98,6 +98,7 @@ Implemented in `src/ptarmigan_flow/logging_setup.py` → `configure_logging(leve
 | `HF_TOKEN` / `HUGGING_FACE_HUB_TOKEN` | Raises Hugging Face Hub rate limits for `list model --hub-search` |
 | `NO_COLOR` | Disables ANSI color in log output |
 | `APP_VERSION` | Overrides version string when building with PyInstaller |
+| `PTARMIGAN_FLOW_SPEECH_CPP_PATH` | Absolute external `speech` executable path for the optional [Haas backend](docs/haas.md) |
 
 ### Daemon timing
 
