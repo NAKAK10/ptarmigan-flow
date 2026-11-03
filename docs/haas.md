@@ -6,14 +6,37 @@ only `haas:sakasegawa/Haas-ja-v1.0-GGUF`, using its pinned Q4_K file. It does no
 make arbitrary Hugging Face GGUF models compatible with speech.cpp, llama.cpp,
 Ollama or LM Studio.
 
-## Install the external runtime
+## Install speech.cpp from the Mac app
+
+On Apple Silicon, open Settings and use **Install speech.cpp** on the Haas card
+(or **Retry** after a failure). This also works when the app runs under Rosetta
+on Apple Silicon. The app downloads only the official pinned speech.cpp **0.10.1
+macOS arm64 Metal ZIP**, verifies its hardcoded SHA256, and installs the standalone
+`speech` executable at:
+
+```text
+~/Library/Application Support/ptarmigan-flow/runtimes/speech.cpp/0.10.1/macos-arm64-metal/speech
+```
+
+No sudo, Homebrew or shell changes are needed. Existing external executables and
+configuration are left untouched. Explicitly installing through the app activates
+this managed runtime unless `PTARMIGAN_FLOW_SPEECH_CPP_PATH` overrides it. Failed
+installs preserve the previous managed copy. Installing speech.cpp does not
+download the GGUF model; use the separate model Download action below.
+
+Intel Macs have no official upstream macOS binary and cannot use this app-managed
+installer. Use the manual/source installation instructions below. The installer
+is a Settings action; there is no corresponding `pflow` installation command.
+
+## Manual runtime installation (CLI or source build)
 
 Install **nyosegawa/speech.cpp 0.9.4 or later** using its
 [installation documentation](https://github.com/nyosegawa/speech.cpp/blob/v0.9.4/docs/install.md)
 and [release archives](https://github.com/nyosegawa/speech.cpp/releases). Choose the
 archive for your platform and verify its release SHA256SUMS before installing.
 The macOS release is for Apple Silicon; Intel Macs need a compatible source build.
-Ptarmigan Flow neither bundles this executable nor runs an installer for you.
+The executable is not bundled with Ptarmigan Flow; manual installation remains
+available for CLI users and compatible source builds.
 
 Confirm the installation yourself with `speech --version`; it must identify itself
 as `speech.cpp` and report at least `0.9.4`.
@@ -22,15 +45,16 @@ Executable discovery searches, in order:
 
 1. `PTARMIGAN_FLOW_SPEECH_CPP_PATH`: one executable path, including paths with spaces;
    arguments or shell commands are not accepted. An invalid override is an error.
-2. `PATH`.
-3. `~/.local/bin/speech` (the official installer's command location).
-4. `/opt/homebrew/bin/speech`, then `/usr/local/bin/speech`.
+2. The managed runtime at the Application Support path above.
+3. `PATH`.
+4. `~/.local/bin/speech` (the official installer's command location).
+5. `/opt/homebrew/bin/speech`, then `/usr/local/bin/speech`.
 
 For example, a CLI session can use
 `export PTARMIGAN_FLOW_SPEECH_CPP_PATH="/absolute/path/to/speech"`.
 A Finder-launched app may not inherit shell exports or Homebrew's PATH. Installing
-at a searched location avoids depending on those exports. Restart the app after
-changing its runtime environment. Availability discovery checks paths only;
+through the Haas card or at a searched location avoids depending on those exports.
+Restart the app after changing its runtime environment. Availability discovery checks paths only;
 background preflight checks the version, checksum and an actual short recognition.
 
 ## Choose the model and language
@@ -65,7 +89,7 @@ language = "ja" # "auto" is also accepted for Haas
 model = "haas:sakasegawa/Haas-ja-v1.0-GGUF"
 ```
 
-The GUI Download action and CLI download command fetch only
+The separate GUI model Download action and CLI download command fetch only
 `Haas-616M-ja-v1.0-Q4_K.gguf` (351,901,216 bytes), from revision
 `25c400baaa9c002df8feffc140804e84228f069b`. Its SHA-256 is
 `d24d53f29b75214a933ff482b0de1217e0a800f4118cca39ad6cf03609a89d6f`.

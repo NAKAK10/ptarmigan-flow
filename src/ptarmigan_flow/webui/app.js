@@ -10,6 +10,10 @@ let activeDownloadToken = null;
 // Only edited fields override snapshots, so native state updates still reach
 // untouched settings. Keep these outside `state`, like the dictionary draft.
 const settingsDraft = {};
+// Runtime installation has its own lifecycle; GGUF download flags stay independent.
+let speechCppStatus = null;
+let speechCppRequestPending = false;
+let speechCppRequestOperationId = 0;
 
 // Dictionary editor draft state, kept OUTSIDE `state` on purpose: `state` is
 // wholesale replaced by daemonState/permissionsChanged push events (see
@@ -59,7 +63,13 @@ window.app = {
     if (!message || !message.event) {
       return;
     }
+    if (message.event === "speechCppStatus") {
+      acceptSpeechCppStatus(message.payload);
+      updateSpeechCppInPlace();
+      return;
+    }
     if (message.event === "permissionsChanged" || message.event === "daemonState") {
+      acceptSpeechCppStatus(message.payload?.speech_cpp, true);
       // Native download completion also pushes daemonState. While settings is
       // open, update the cards/status without replacing any live form inputs.
       if (message.event === "daemonState" && state && route === "settings") {
@@ -170,10 +180,13 @@ function render() {
   if (!state) {
     return;
   }
+  acceptSpeechCppStatus(state.speech_cpp, true);
   // Any in-progress hotkey capture is about to lose its DOM (rebuilt below);
   // tear it down so the native side stops suppressing the dictation hotkey.
   endActiveHotkeyCapture();
-  if (route === "onboarding" && !state.setup_required) {
+  const haasNeedsRuntime = (state.settings?.model || state.model || "").startsWith("haas:") &&
+    currentSpeechCppStatus().status !== "available";
+  if (route === "onboarding" && !state.setup_required && !haasNeedsRuntime) {
     route = "settings";
   }
   if (route === "settings") {
@@ -342,6 +355,7 @@ function renderOnboarding() {
           <div class="steps">${dots}</div>
           <h1>${escapeHtml(t("done_title"))}</h1>
           <p>${escapeHtml(t("done_body"))}</p>
+          ${(state.settings?.model || state.model || "").startsWith("haas:") ? renderSpeechCpp() : ""}
           <div class="actions">
             <button class="button primary" data-route="settings">${escapeHtml(t("settings_button"))}</button>
             <button class="button" data-action="toggle-login">${escapeHtml(t("login_at_startup_button"))}</button>
@@ -380,6 +394,7 @@ function renderPermissionStep(kind, dots) {
 }
 
 function bindOnboarding() {
+  bindSpeechCppButtons();
   app.querySelectorAll("[data-language]").forEach((button) => {
     button.addEventListener("click", async () => {
       const result = await bridge("chooseLanguage", { code: button.dataset.language }).catch((error) => {
@@ -558,8 +573,128 @@ function renderModelCard(model, selected) {
         ${renderModelAction(model, status)}
       </div>
       ${renderModelProgress(status, download)}
+      ${model.backend === "haas" || model.token?.startsWith("haas:") ? renderSpeechCpp() : ""}
     </div>
   `;
+}
+
+function acceptSpeechCppStatus(incoming, snapshot = false) {
+  if (!incoming || !Number.isInteger(incoming.operation_id)) return;
+  const previous = speechCppStatus;
+  if (previous && incoming.operation_id < previous.operation_id) return;
+  // A start response/getState snapshot can lag already delivered native progress.
+  if (snapshot && previous && incoming.operation_id === previous.operation_id &&
+      ["checking", "installing"].includes(incoming.status)) return;
+  // A delayed snapshot/progress event cannot roll a finished operation back.
+  if (previous && incoming.operation_id === previous.operation_id &&
+      !["checking", "installing"].includes(previous.status)) return;
+  speechCppStatus = { ...incoming };
+}
+
+function currentSpeechCppStatus() {
+  const current = speechCppStatus || state?.speech_cpp || { status: "checking" };
+  return speechCppRequestPending && (current.operation_id || 0) <= speechCppRequestOperationId &&
+    !["installing", "checking"].includes(current.status)
+    ? { ...current, status: "installing", phase: "downloading", downloaded_bytes: 0, total_bytes: null }
+    : current;
+}
+
+function speechCppStatusText(runtime) {
+  const key = runtime.status === "installing" ? runtime.phase || "installing" : runtime.status;
+  let text = t(`speech_cpp_${key}`);
+  if (runtime.status === "available") {
+    text += runtime.version ? ` (${runtime.version})` : "";
+  }
+  if (runtime.source === "override" || runtime.status === "override_invalid") {
+    text += ` ${t("speech_cpp_override_guidance")}`;
+  }
+  if (runtime.status === "failed") text += ` ${t("speech_cpp_failure_guidance")}`;
+  if (runtime.install_supported === false && ["old", "failed"].includes(runtime.status)) {
+    text += ` ${t("speech_cpp_unsupported")}`;
+  }
+  if (runtime.message && ["failed", "old", "override_invalid"].includes(runtime.status)) {
+    text += ` ${runtime.message}`;
+  }
+  return text;
+}
+
+function renderSpeechCppProgress(runtime) {
+  if (runtime.status !== "installing" && runtime.status !== "checking") return "";
+  const total = Number(runtime.total_bytes);
+  const known = runtime.status === "installing" && runtime.phase === "downloading" &&
+    Number.isFinite(total) && total > 0 && Number.isFinite(Number(runtime.downloaded_bytes));
+  const percent = known ? fractionToPercent(Number(runtime.downloaded_bytes) / total) : null;
+  const label = escapeHtml(speechCppStatusText(runtime));
+  return `<div class="progress${known ? "" : " indeterminate"}" role="progressbar" aria-label="${label}"${known ? ` aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percent}"` : ""}><span${known ? ` style="--value: ${percent}%"` : ""}></span></div>`;
+}
+
+function renderSpeechCppAction(runtime) {
+  if (speechCppRequestPending || !runtime.install_allowed ||
+      !["missing", "old", "failed"].includes(runtime.status)) return "";
+  const key = runtime.status === "failed" ? "speech_cpp_retry" : "speech_cpp_install";
+  return `<button type="button" class="button" data-install-speech-cpp>${escapeHtml(t(key))}</button>`;
+}
+
+function renderSpeechCpp() {
+  const runtime = currentSpeechCppStatus();
+  return `<div class="model-info" style="grid-column: 1 / -1" tabindex="-1" data-speech-cpp>
+    <div class="model-meta">${escapeHtml(t("speech_cpp_title"))}</div>
+    <div role="status" aria-live="polite" aria-atomic="true" data-speech-cpp-status>${escapeHtml(speechCppStatusText(runtime))}</div>
+    <div data-speech-cpp-progress>${renderSpeechCppProgress(runtime)}</div>
+    <div data-speech-cpp-action>${renderSpeechCppAction(runtime)}</div>
+  </div>`;
+}
+
+function bindSpeechCppButtons() {
+  app.querySelectorAll("[data-install-speech-cpp]").forEach(button => {
+    button.addEventListener("click", handleInstallSpeechCppClick);
+  });
+}
+
+function updateSpeechCppInPlace() {
+  const runtime = currentSpeechCppStatus();
+  app.querySelectorAll("[data-speech-cpp]").forEach(container => {
+    // Keep the live region and the rest of the form mounted during progress.
+    container.querySelector("[data-speech-cpp-status]").textContent = speechCppStatusText(runtime);
+    const progress = container.querySelector("[data-speech-cpp-progress]");
+    const nextProgress = renderSpeechCppProgress(runtime);
+    if (progress.innerHTML !== nextProgress) progress.innerHTML = nextProgress;
+    const action = container.querySelector("[data-speech-cpp-action]");
+    const nextAction = renderSpeechCppAction(runtime);
+    if (action.innerHTML !== nextAction) {
+      const hadFocus = action.contains(document.activeElement);
+      action.innerHTML = nextAction;
+      action.querySelector("[data-install-speech-cpp]")?.addEventListener("click", handleInstallSpeechCppClick);
+      if (hadFocus) (container.closest("[data-select-model]") || container).focus();
+    }
+  });
+}
+
+async function handleInstallSpeechCppClick(event) {
+  event.stopPropagation();
+  const runtime = currentSpeechCppStatus();
+  if (speechCppRequestPending || !runtime.install_allowed ||
+      !["missing", "old", "failed"].includes(runtime.status)) return;
+  const operationId = runtime.operation_id || 0;
+  speechCppRequestPending = true;
+  speechCppRequestOperationId = operationId;
+  updateSpeechCppInPlace();
+  try {
+    const result = await bridge("installSpeechCpp");
+    if (result?.speech_cpp) acceptSpeechCppStatus(result.speech_cpp, true);
+    if (!result?.started && !result?.speech_cpp &&
+        (speechCppStatus?.operation_id || 0) <= operationId) {
+      speechCppStatus = { ...runtime, status: "failed", message: t("speech_cpp_start_failed") };
+    }
+  } catch (error) {
+    // A late bridge rejection cannot overwrite native progress/completion.
+    if ((speechCppStatus?.operation_id || 0) <= operationId) {
+      speechCppStatus = { ...runtime, status: "failed", message: error.message };
+    }
+  } finally {
+    speechCppRequestPending = false;
+    updateSpeechCppInPlace();
+  }
 }
 
 function renderModelStatus(status, download) {
@@ -638,6 +773,7 @@ function findModelCardElement(token) {
 
 function updateModelCardsInPlace() {
   for (const model of state?.models || []) updateModelCardInPlace(model.token);
+  updateSpeechCppInPlace();
 }
 
 async function refreshDownloadedModels(token) {
@@ -815,6 +951,7 @@ function settingsPayload(modelOverride = null) {
 }
 
 function bindSettings() {
+  bindSpeechCppButtons();
   app.querySelectorAll("select[id], input[id]").forEach((input) => {
     const remember = () => { settingsDraft[input.id] = input.value; };
     input.addEventListener("input", remember);

@@ -25,6 +25,7 @@ def no_real_runtime(monkeypatch):
     monkeypatch.setattr(runtime.subprocess, "Popen", forbidden)
     monkeypatch.delenv(runtime.SPEECH_CPP_PATH_ENV, raising=False)
     monkeypatch.setattr(runtime.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(runtime, "_managed_speech_cpp_executable", lambda: None)
 
 
 def test_discovery_override_is_one_path_and_has_priority(tmp_path, monkeypatch) -> None:

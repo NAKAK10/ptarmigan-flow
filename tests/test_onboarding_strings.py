@@ -3,6 +3,22 @@ from __future__ import annotations
 from ptarmigan_flow import onboarding_strings
 
 REQUIRED_KEYS = {
+    "speech_cpp_title",
+    "speech_cpp_checking",
+    "speech_cpp_missing",
+    "speech_cpp_old",
+    "speech_cpp_available",
+    "speech_cpp_downloading",
+    "speech_cpp_verifying",
+    "speech_cpp_installing",
+    "speech_cpp_failed",
+    "speech_cpp_unsupported",
+    "speech_cpp_override_invalid",
+    "speech_cpp_override_guidance",
+    "speech_cpp_failure_guidance",
+    "speech_cpp_start_failed",
+    "speech_cpp_install",
+    "speech_cpp_retry",
     "language_auto",
     "accessibility_body",
     "accessibility_title",

@@ -10,7 +10,11 @@ macOS向けの Push-to-talk 文字起こしデーモンです。
 
 [English](./README.md)
 
-日本語向け Haas Q4_K は外部の speech.cpp >=0.9.4 を使う追加バックエンドです。
+日本語向け Haas Q4_K は speech.cpp を使う追加バックエンドです。Apple Silicon
+（Rosetta で動作するアプリも含む）では、設定画面の Haas カードの
+**Install speech.cpp** / **Retry** から固定バージョン 0.10.1 を導入できます。
+手動での speech.cpp >=0.9.4 の導入も引き続き利用でき、Intel Mac では互換性のある
+ソースビルドが必要です。GGUF モデルのダウンロードは別途行います。
 [設定手順と制限](docs/haas.md)を確認し、設定画面または `pflow list model` から
 明示的に選択してください。現在のモデルや言語は自動では変更されません。
 

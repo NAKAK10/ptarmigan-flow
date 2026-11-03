@@ -4,6 +4,32 @@ from __future__ import annotations
 
 ONBOARDING_STRINGS: dict[str, dict[str, str]] = {
     "en": {
+        "speech_cpp_title": "speech.cpp runtime · separate from the model file",
+        "speech_cpp_checking": "Checking speech.cpp runtime…",
+        "speech_cpp_missing": "speech.cpp is missing. Install the runtime to use Haas.",
+        "speech_cpp_old": "speech.cpp is too old. A newer runtime is required for Haas.",
+        "speech_cpp_available": "speech.cpp runtime available",
+        "speech_cpp_downloading": "Downloading speech.cpp 0.10.1…",
+        "speech_cpp_verifying": "Verifying speech.cpp…",
+        "speech_cpp_installing": "Installing speech.cpp…",
+        "speech_cpp_failed": "speech.cpp installation or check failed.",
+        "speech_cpp_unsupported": (
+            "Automatic installation requires Apple Silicon (including Rosetta). On Intel, "
+            "install speech.cpp >=0.9.4 externally and set PTARMIGAN_FLOW_SPEECH_CPP_PATH "
+            "to the executable."
+        ),
+        "speech_cpp_override_invalid": ("The explicit speech.cpp override is invalid or unusable."),
+        "speech_cpp_override_guidance": (
+            "PTARMIGAN_FLOW_SPEECH_CPP_PATH takes priority. Fix or remove it and restart "
+            "the app to use the managed runtime."
+        ),
+        "speech_cpp_failure_guidance": (
+            "Check your connection and free disk space, then retry. For an unusable "
+            "external runtime, check its permissions and version."
+        ),
+        "speech_cpp_start_failed": "Could not start installation. Reopen Settings and retry.",
+        "speech_cpp_install": "Install speech.cpp 0.10.1",
+        "speech_cpp_retry": "Retry speech.cpp installation",
         "accessibility_body": (
             "Allow PtarmiganFlow to control the active text field for voice input output."
         ),
@@ -221,6 +247,41 @@ ONBOARDING_STRINGS: dict[str, dict[str, str]] = {
         "webui_error_title": "Error",
     },
     "ja": {
+        "speech_cpp_title": ("speech.cpp ランタイム · モデルファイルとは別です"),
+        "speech_cpp_checking": "speech.cpp ランタイムを確認中…",
+        "speech_cpp_missing": (
+            "speech.cpp がありません。Haas を使うにはランタイムをインストールしてください。"
+        ),
+        "speech_cpp_old": ("speech.cpp が古すぎます。Haas を使うには新しいランタイムが必要です。"),
+        "speech_cpp_available": "speech.cpp ランタイムが利用可能です",
+        "speech_cpp_downloading": "speech.cpp 0.10.1 をダウンロード中…",
+        "speech_cpp_verifying": "speech.cpp を検証中…",
+        "speech_cpp_installing": "speech.cpp をインストール中…",
+        "speech_cpp_failed": ("speech.cpp のインストールまたは確認に失敗しました。"),
+        "speech_cpp_unsupported": (
+            "自動インストールには Apple Silicon（Rosetta "
+            "を含む）が必要です。Intel では speech.cpp >=0.9.4 "
+            "を別途インストールし、PTARMIGAN_FLOW_SPEECH_CPP_PATH "
+            "に実行ファイルを指定してください。"
+        ),
+        "speech_cpp_override_invalid": (
+            "明示指定された speech.cpp のパスが無効か、実行できません。"
+        ),
+        "speech_cpp_override_guidance": (
+            "PTARMIGAN_FLOW_SPEECH_CPP_PATH "
+            "が優先されます。アプリ管理のランタイムを使うには指定"
+            "を修正または削除し、アプリを再起動してください。"
+        ),
+        "speech_cpp_failure_guidance": (
+            "接続とディスクの空き容量を確認して再試行してください"
+            "。外部ランタイムを実行できない場合は権限とバージョン"
+            "も確認してください。"
+        ),
+        "speech_cpp_start_failed": (
+            "インストールを開始できませんでした。設定を開き直して再試行してください。"
+        ),
+        "speech_cpp_install": "speech.cpp 0.10.1 をインストール",
+        "speech_cpp_retry": "speech.cpp のインストールを再試行",
         "accessibility_body": (
             "音声入力の結果を入力するため、PtarmiganFlow が"
             "アクティブなテキスト欄を操作することを許可します。"
@@ -439,6 +500,32 @@ ONBOARDING_STRINGS: dict[str, dict[str, str]] = {
         "webui_error_title": "エラー",
     },
     "zh": {
+        "speech_cpp_title": "speech.cpp 运行时 · 与模型文件分开",
+        "speech_cpp_checking": "正在检查 speech.cpp 运行时…",
+        "speech_cpp_missing": "缺少 speech.cpp。请安装运行时以使用 Haas。",
+        "speech_cpp_old": ("speech.cpp 版本过旧。Haas 需要更新的运行时。"),
+        "speech_cpp_available": "speech.cpp 运行时可用",
+        "speech_cpp_downloading": "正在下载 speech.cpp 0.10.1…",
+        "speech_cpp_verifying": "正在验证 speech.cpp…",
+        "speech_cpp_installing": "正在安装 speech.cpp…",
+        "speech_cpp_failed": "speech.cpp 安装或检查失败。",
+        "speech_cpp_unsupported": (
+            "自动安装需要 Apple Silicon（包括 Rosetta）。Intel Mac "
+            "请自行安装 speech.cpp >=0.9.4，并将 PTARMIGAN_FLOW_SPEECH_CPP_PATH "
+            "设为可执行文件路径。"
+        ),
+        "speech_cpp_override_invalid": ("显式指定的 speech.cpp 路径无效或无法运行。"),
+        "speech_cpp_override_guidance": (
+            "PTARMIGAN_FLOW_SPEECH_CPP_PATH "
+            "优先。要使用应用管理的运行时，请修正或删除该设置并重"
+            "启应用。"
+        ),
+        "speech_cpp_failure_guidance": (
+            "请检查网络连接和可用磁盘空间后重试。如外部运行时无法运行，请检查其权限和版本。"
+        ),
+        "speech_cpp_start_failed": "无法开始安装。请重新打开设置后重试。",
+        "speech_cpp_install": "安装 speech.cpp 0.10.1",
+        "speech_cpp_retry": "重试安装 speech.cpp",
         "accessibility_body": "允许 PtarmiganFlow 控制当前文本字段以输入语音输入结果。",
         "accessibility_title": "辅助功能访问权限",
         "allow_button": "允许",

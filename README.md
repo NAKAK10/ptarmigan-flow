@@ -80,8 +80,11 @@ this after each rebuild unless you sign the app with a stable signing identity.
 https://github.com/user-attachments/assets/f763be1b-54af-4342-886d-016837be7884
 
 ## Command Reference
-For optional Japanese Haas Q4_K recognition with external speech.cpp >=0.9.4,
-see [Haas setup and limitations](docs/haas.md). Your current model stays selected
+For optional Japanese Haas Q4_K recognition, the Mac app's Settings Haas card offers
+**Install speech.cpp** / **Retry** for pinned speech.cpp 0.10.1 on Apple Silicon
+(including Rosetta). Manual speech.cpp >=0.9.4 installation remains available;
+Intel Macs require a compatible source build. See [Haas setup and limitations](docs/haas.md)
+for runtime precedence and the separate GGUF model download. Your current model stays selected
 until you explicitly choose Haas in Settings or `pflow list model`.
 
 ### Core Commands

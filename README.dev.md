@@ -98,7 +98,13 @@ Implemented in `src/ptarmigan_flow/logging_setup.py` → `configure_logging(leve
 | `HF_TOKEN` / `HUGGING_FACE_HUB_TOKEN` | Raises Hugging Face Hub rate limits for `list model --hub-search` |
 | `NO_COLOR` | Disables ANSI color in log output |
 | `APP_VERSION` | Overrides version string when building with PyInstaller |
-| `PTARMIGAN_FLOW_SPEECH_CPP_PATH` | Absolute external `speech` executable path for the optional [Haas backend](docs/haas.md) |
+| `PTARMIGAN_FLOW_SPEECH_CPP_PATH` | Explicit `speech` executable path for the optional [Haas backend](docs/haas.md); takes precedence over the managed runtime, then PATH/common locations |
+
+The Settings Haas card installs pinned speech.cpp 0.10.1 on Apple Silicon,
+including when the app runs under Rosetta. PyInstaller requires
+`ptarmigan_flow.stt.speech_cpp_installer`; the executable is downloaded separately,
+not bundled. See [Haas setup](docs/haas.md) for the verified download, managed path,
+separate GGUF download and manual CLI/Intel source-build instructions.
 
 ### Daemon timing
 

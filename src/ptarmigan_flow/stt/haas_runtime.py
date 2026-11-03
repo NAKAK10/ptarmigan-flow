@@ -9,7 +9,10 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import time
 from pathlib import Path
+
+from ptarmigan_flow.stt.speech_cpp_installer import _managed_speech_cpp_executable
 
 SPEECH_CPP_PATH_ENV = "PTARMIGAN_FLOW_SPEECH_CPP_PATH"
 MIN_SPEECH_CPP_VERSION = (0, 9, 4)
@@ -26,7 +29,7 @@ _INSTALL_GUIDANCE = (
 def find_speech_executable() -> Path | None:
     """Find speech even in a GUI's restricted PATH; an explicit override must work.
 
-    Search order: PTARMIGAN_FLOW_SPEECH_CPP_PATH, PATH, ~/.local/bin,
+    Search order: PTARMIGAN_FLOW_SPEECH_CPP_PATH, app-managed install, PATH, ~/.local/bin,
     /opt/homebrew/bin, /usr/local/bin. The override is one path, never shell text.
     This only checks files; version verification belongs in background preflight.
     """
@@ -36,6 +39,9 @@ def find_speech_executable() -> Path | None:
         if not override.strip() or not candidate.is_file() or not os.access(candidate, os.X_OK):
             raise RuntimeError(f"Invalid {SPEECH_CPP_PATH_ENV}: {override!r}. {_INSTALL_GUIDANCE}")
         return candidate.absolute()
+    managed = _managed_speech_cpp_executable()
+    if managed is not None:
+        return managed
     on_path = shutil.which("speech")
     candidates = ([Path(on_path)] if on_path else []) + [
         Path.home() / ".local/bin/speech",
@@ -71,11 +77,11 @@ class SpeechCppRuntime:
     stdout/stderr use temporary files to avoid pipe deadlocks and unbounded RAM.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, executable: Path | None = None) -> None:
         self._lock = threading.Lock()
         self._request_lock = threading.Lock()
         self._process: subprocess.Popen[bytes] | None = None
-        self._executable: Path | None = None
+        self._executable = executable
         self._generation = 0
         self._closed = False
 
@@ -123,7 +129,14 @@ class SpeechCppRuntime:
             self.run(["--version"], timeout_seconds=_VERSION_TIMEOUT_SECONDS, generation=generation)
         )
 
-    def run(self, args: list[str], *, timeout_seconds: float, generation: int) -> str:
+    def run(
+        self,
+        args: list[str],
+        *,
+        timeout_seconds: float,
+        generation: int,
+        cancel_event: threading.Event | None = None,
+    ) -> str:
         """Run an argv list, rejecting cancellation, failures, and invalid UTF-8."""
         if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
             raise ValueError("speech.cpp timeout must be finite and positive")
@@ -134,6 +147,8 @@ class SpeechCppRuntime:
         ):
             with self._lock:
                 self._check_generation(generation)
+                if cancel_event is not None and cancel_event.is_set():
+                    raise SpeechCppCancelledError("speech.cpp request cancelled")
                 if self._process is not None:
                     raise RuntimeError(
                         "Previous speech.cpp process has not exited; close and retry"
@@ -159,13 +174,31 @@ class SpeechCppRuntime:
                 self._process = process
             try:
                 try:
-                    process.wait(timeout=timeout_seconds)
+                    if cancel_event is None:
+                        process.wait(timeout=timeout_seconds)
+                    else:
+                        deadline = time.monotonic() + timeout_seconds
+                        while True:
+                            if cancel_event.is_set():
+                                raise SpeechCppCancelledError("speech.cpp request cancelled")
+                            remaining = deadline - time.monotonic()
+                            if remaining <= 0:
+                                raise subprocess.TimeoutExpired(
+                                    [str(self._executable), *args], timeout_seconds
+                                )
+                            try:
+                                process.wait(timeout=min(0.05, remaining))
+                                break
+                            except subprocess.TimeoutExpired:
+                                continue
                 except subprocess.TimeoutExpired as exc:
                     raise RuntimeError(
                         f"speech.cpp timed out after {timeout_seconds:.1f}s"
                     ) from exc
                 with self._lock:
                     self._check_generation(generation)
+                if cancel_event is not None and cancel_event.is_set():
+                    raise SpeechCppCancelledError("speech.cpp request cancelled")
                 if process.returncode != 0:
                     stderr.seek(0, os.SEEK_END)
                     stderr.seek(max(0, stderr.tell() - _MAX_DIAGNOSTIC_BYTES))

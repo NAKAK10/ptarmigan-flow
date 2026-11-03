@@ -94,6 +94,15 @@ def _noop_model_download(_token: str) -> bool:
     return True
 
 
+def _speech_cpp_unavailable() -> dict[str, Any]:
+    # Native supplies a cached snapshot; the bridge never probes executables.
+    return {"status": "checking", "install_allowed": False, "operation_id": 0}
+
+
+def _speech_cpp_install_unavailable() -> dict[str, Any]:
+    return {"started": False, "errors": ["unavailable"]}
+
+
 def _noop_set_hotkey_capture_active(_active: bool) -> None:
     return
 
@@ -121,6 +130,8 @@ class BridgeDependencies:
     start_dictation: Callable[[], object | None] = _noop
     stop_dictation: Callable[[], None] = _noop
     start_model_download: Callable[[str], bool] = _noop_model_download
+    speech_cpp_status: Callable[[], dict[str, Any]] = _speech_cpp_unavailable
+    start_speech_cpp_install: Callable[[], dict[str, Any]] = _speech_cpp_install_unavailable
     daemon_is_running: Callable[[], bool] = lambda: False
     restart_app: Callable[[], bool] = app_relaunch.relaunch_app
     mark_language_selected: Callable[[], None] = onboarding_flow_module.mark_language_selected
@@ -156,6 +167,7 @@ class WebBridgeDispatcher:
             "saveSettings": self._save_settings,
             "listModels": self._list_models,
             "downloadModel": self._download_model,
+            "installSpeechCpp": self._install_speech_cpp,
             "loadDictionary": self._load_dictionary,
             "saveDictionary": self._save_dictionary,
             "toggleLogin": self._toggle_login,
@@ -207,6 +219,7 @@ class WebBridgeDispatcher:
             "model": str(config.stt.model),
             "settings": _settings_payload(config),
             "models": self._model_entries_payload(),
+            "speech_cpp": self.deps.speech_cpp_status(),
             "dictionary": self._load_dictionary({}),
             "login_enabled": self._login_enabled(use_cache=bool(payload.get("cached_login"))),
             "daemon_running": bool(self.deps.daemon_is_running()),
@@ -345,6 +358,11 @@ class WebBridgeDispatcher:
             }
             for entry in self.deps.available_model_entries()
         ]
+
+    def _install_speech_cpp(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if payload:
+            raise ValueError("installSpeechCpp accepts no arguments")
+        return self.deps.start_speech_cpp_install()
 
     def _download_model(self, payload: dict[str, Any]) -> dict[str, Any]:
         token = str(payload.get("model", "")).strip()
