@@ -222,20 +222,17 @@ def _run_appkit_app() -> int:
         _permission_step_config = {
             "microphone": {
                 "settings_url": (
-                    "x-apple.systempreferences:com.apple.preference.security"
-                    "?Privacy_Microphone"
+                    "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
                 ),
             },
             "accessibility": {
                 "settings_url": (
-                    "x-apple.systempreferences:com.apple.preference.security"
-                    "?Privacy_Accessibility"
+                    "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
                 ),
             },
             "input_monitoring": {
                 "settings_url": (
-                    "x-apple.systempreferences:com.apple.preference.security"
-                    "?Privacy_ListenEvent"
+                    "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent"
                 ),
             },
         }
@@ -361,8 +358,8 @@ def _run_appkit_app() -> int:
         @objc.python_method
         def _build_status_item(self) -> None:
             strings = self._strings()
-            self.status_item = (
-                NSStatusBar.systemStatusBar().statusItemWithLength_(NSVariableStatusItemLength)
+            self.status_item = NSStatusBar.systemStatusBar().statusItemWithLength_(
+                NSVariableStatusItemLength
             )
             self.status_bar_icon = _load_status_bar_icon(NSImage, NSData)
             status_button = self.status_item.button()
@@ -370,9 +367,7 @@ def _run_appkit_app() -> int:
                 if self.status_bar_icon is not None:
                     status_button.setImage_(self.status_bar_icon)
                     status_button.setImagePosition_(NSImageLeft)
-                status_button.setTitle_(
-                    self._status_button_title(setup_status.STATUS_BUTTON_TITLE)
-                )
+                status_button.setTitle_(self._status_button_title(setup_status.STATUS_BUTTON_TITLE))
 
             self.status_menu = NSMenu.alloc().init()
             self.dictation_status_menu_item = self._menu_item(
@@ -591,10 +586,7 @@ def _run_appkit_app() -> int:
 
         @objc.python_method
         def _install_hotkey_event_monitor(self) -> None:
-            if (
-                self._hotkey_global_monitor is not None
-                or self._hotkey_local_monitor is not None
-            ):
+            if self._hotkey_global_monitor is not None or self._hotkey_local_monitor is not None:
                 return
             try:
                 key_name = str(self.bridge._load_config().hotkey.key)
@@ -657,10 +649,7 @@ def _run_appkit_app() -> int:
         def _start_daemon_status_timer(self) -> None:
             if self.daemon_status_timer is not None:
                 return
-            if (
-                self._hotkey_global_monitor is None
-                and self._hotkey_local_monitor is None
-            ):
+            if self._hotkey_global_monitor is None and self._hotkey_local_monitor is None:
                 return
             schedule_timer = (
                 NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_
@@ -675,10 +664,7 @@ def _run_appkit_app() -> int:
 
         @objc.python_method
         def _reconcile_daemon_status(self) -> bool:
-            if (
-                self._hotkey_global_monitor is None
-                and self._hotkey_local_monitor is None
-            ):
+            if self._hotkey_global_monitor is None and self._hotkey_local_monitor is None:
                 return False
             if self.daemon_controller.is_running:
                 return False
@@ -827,8 +813,14 @@ def _run_appkit_app() -> int:
                 self._push_daemon_state()
                 return False
             if availability.is_backend_available(backend):
+                guidance = availability.backend_runtime_guidance(backend)
+                if guidance:
+                    self._push_daemon_error(guidance)
+                    return False
                 return True
-            self._push_daemon_state()
+            self._push_daemon_error(
+                self._strings()["model_unavailable_message"].format(model=model_token)
+            )
             return False
 
         @objc.python_method
@@ -1331,8 +1323,7 @@ def _run_appkit_app() -> int:
             bundle = self._current_app_bundle()
             if bundle is None or not app_updater.bundle_location_is_writable(bundle):
                 LOGGER.warning(
-                    "Update preparation not possible (bundle %s); falling back to the "
-                    "release page",
+                    "Update preparation not possible (bundle %s); falling back to the release page",
                     bundle,
                 )
                 self._update_result = dataclasses.replace(
@@ -1517,9 +1508,7 @@ def _run_appkit_app() -> int:
                     relaunch=relaunch,
                 )
             except Exception as exc:
-                LOGGER.warning(
-                    "Update helper launch failed (relaunch %s)", relaunch, exc_info=True
-                )
+                LOGGER.warning("Update helper launch failed (relaunch %s)", relaunch, exc_info=True)
                 app_updater.discard_prepared_update(prepared)
                 self._update_prepared = None
                 return str(exc)

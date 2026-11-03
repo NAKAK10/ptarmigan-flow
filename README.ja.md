@@ -10,6 +10,10 @@ macOS向けの Push-to-talk 文字起こしデーモンです。
 
 [English](./README.md)
 
+日本語向け Haas Q4_K は外部の speech.cpp >=0.9.4 を使う追加バックエンドです。
+[設定手順と制限](docs/haas.md)を確認し、設定画面または `pflow list model` から
+明示的に選択してください。現在のモデルや言語は自動では変更されません。
+
 詳細な運用メモ、トラブルシュート、完全なコマンド/設定リファレンスは [README.llm.md](./README.llm.md) を参照してください。
 
 ## For LLM Agents

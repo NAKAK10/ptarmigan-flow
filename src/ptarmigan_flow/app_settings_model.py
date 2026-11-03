@@ -8,6 +8,7 @@ from typing import Any
 
 from ptarmigan_flow.config import OutputMode, ensure_config_exists, load_config, write_config
 from ptarmigan_flow.stt.availability import available_model_entries
+from ptarmigan_flow.stt.model_families import validate_stt_language
 
 SUPPORTED_LANGUAGES = ("en", "ja", "zh")
 SUPPORTED_HOTKEYS = (
@@ -21,6 +22,19 @@ SUPPORTED_HOTKEYS = (
     "left_ctrl",
 )
 SUPPORTED_OUTPUT_MODES = ("direct_typing", "clipboard_paste")
+
+
+def settings_language_error(model: str, language: str) -> str | None:
+    """Shared by the native settings model and the web bridge validator."""
+    try:
+        validate_stt_language(model, language)
+    except ValueError as exc:
+        return str(exc)
+    if language not in SUPPORTED_LANGUAGES:
+        if model.startswith("haas:") and language == "auto":
+            return None
+        return "Choose a supported transcription language."
+    return None
 
 
 def _value(value: Any) -> str:
@@ -54,7 +68,7 @@ class AppSettingsModel:
         errors: list[str] = []
         if self.model not in available_models:
             errors.append("model")
-        if self.language not in SUPPORTED_LANGUAGES:
+        if settings_language_error(self.model, self.language):
             errors.append("language")
         if self.hotkey not in SUPPORTED_HOTKEYS:
             errors.append("hotkey")
@@ -66,6 +80,8 @@ class AppSettingsModel:
         """Validate and save editable fields back into the full config."""
         errors = self.validate()
         if errors:
+            if self.model.startswith("haas:") and "language" in errors:
+                raise ValueError(settings_language_error(self.model, self.language))
             raise ValueError(", ".join(errors))
 
         ensure_config_exists(config_path)

@@ -97,8 +97,9 @@ from ptarmigan_flow.permissions import (
     request_microphone_permission,
     reset_app_bundle_tcc,
 )
-from ptarmigan_flow.stt import model_download
+from ptarmigan_flow.stt import availability, model_download
 from ptarmigan_flow.stt.factory import create_stt_backend, parse_stt_model
+from ptarmigan_flow.stt.haas_runtime import SpeechCppRuntime, find_speech_executable
 from ptarmigan_flow.stt.model_catalog import (
     search_hub_models,
     verified_model_entries,
@@ -107,6 +108,7 @@ from ptarmigan_flow.stt.model_families import (
     GRANITE_HF_MODEL_ID,
     WHISPER_HF_MODEL_ID,
     resolve_runtime_model_id,
+    validate_stt_language,
 )
 from ptarmigan_flow.text_processing.interfaces import TextPostProcessor
 from ptarmigan_flow.text_processing.llm import LLMPostProcessor
@@ -349,13 +351,17 @@ def _prompt_optional_secret(label: str, default: str | None) -> str | None:
 def _prompt_bool(label: str, default: bool) -> bool:
     suffix = "Y/n" if default else "y/N"
     while True:
-        raw = input(
-            _format_prompt(
-                label,
-                suffix,
-                current_display=str(default).lower(),
+        raw = (
+            input(
+                _format_prompt(
+                    label,
+                    suffix,
+                    current_display=str(default).lower(),
+                )
             )
-        ).strip().lower()
+            .strip()
+            .lower()
+        )
         if raw == "":
             _print_keep(str(default).lower())
             return default
@@ -886,6 +892,8 @@ def _stt_model_downloaded_display(model_token: str) -> str:
         prefix, model_id = parse_stt_model(model_token)
     except ValueError:
         return "unknown"
+    if prefix == "haas":
+        return "yes" if model_download.is_model_downloaded(model_token) else "no"
     resolved_model_id = resolve_runtime_model_id(
         prefix=prefix,
         model_id=model_id,
@@ -931,7 +939,8 @@ def cmd_download_model(args: argparse.Namespace) -> int:
             config_path = _resolve_config_path(getattr(args, "config", None))
             model_token = _stt_model_from_config(load_config(config_path))
 
-        if model_download.is_model_downloaded(model_token):
+        prefix, _model_id = parse_stt_model(model_token)
+        if prefix != "haas" and model_download.is_model_downloaded(model_token):
             _emit_download_json({"type": "done"})
             return 0
 
@@ -1033,6 +1042,11 @@ def _cmd_list_model_hub_search(args: argparse.Namespace, query: str) -> int:
 
     config = load_config(config_path)
     config.stt.model = selected_model
+    try:
+        validate_stt_language(config.stt.model, config.language)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
     write_config(config_path, config)
     print(_green(f"Updated config: {config_path}"))
     print(f"stt.model = {config.stt.model}")
@@ -1119,6 +1133,11 @@ def cmd_list_model(args: argparse.Namespace) -> int:
             break
 
     config.stt.model = selected_model
+    try:
+        validate_stt_language(config.stt.model, config.language)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
     write_config(config_path, config)
     print(_green(f"Updated config: {config_path}"))
     print(f"stt.model = {config.stt.model}")
@@ -1208,7 +1227,7 @@ def cmd_list_ollama(args: argparse.Namespace) -> int:
     provider = str(getattr(llm_cfg, "provider", "")).strip().lower()
     if provider != "ollama":
         print(
-            f"Error: `pflow list ollama` requires text.llm_correction.provider = \"ollama\" "
+            f'Error: `pflow list ollama` requires text.llm_correction.provider = "ollama" '
             f"(current: {provider or '<unset>'}).",
             file=sys.stderr,
         )
@@ -1255,7 +1274,7 @@ def cmd_list_lmstudio(args: argparse.Namespace) -> int:
     provider = str(getattr(llm_cfg, "provider", "")).strip().lower()
     if provider != "lmstudio":
         print(
-            f"Error: `pflow list lmstudio` requires text.llm_correction.provider = \"lmstudio\" "
+            f'Error: `pflow list lmstudio` requires text.llm_correction.provider = "lmstudio" '
             f"(current: {provider or '<unset>'}).",
             file=sys.stderr,
         )
@@ -1327,9 +1346,7 @@ def cmd_list_devices(args: argparse.Namespace) -> int:
 
     if default_choice is None:
         print(
-            _yellow(
-                "Warning: current audio.input_device is not in the detected input device list."
-            )
+            _yellow("Warning: current audio.input_device is not in the detected input device list.")
         )
 
     try:
@@ -1420,8 +1437,7 @@ def _resolve_launchd_llm_enabled_override_for_command(
     if ok:
         print(
             _green(
-                "LLM preflight succeeded during install/restart; "
-                "launchd LLM override set to true."
+                "LLM preflight succeeded during install/restart; launchd LLM override set to true."
             )
         )
         return True
@@ -1509,13 +1525,15 @@ def _prompt_stt_model(current: str) -> str:
         return token
 
 
-def _prompt_language(current: str) -> str:
+def _prompt_language(current: str, *, allow_auto: bool = False) -> str:
     current_language = str(current).strip() or "en"
     builtins = [
         ("en", "English transcription/correction."),
         ("ja", "Japanese transcription/correction."),
         ("zh", "Chinese transcription/correction."),
     ]
+    if allow_auto:
+        builtins.append(("auto", "Haas: Japanese only, automatic language check."))
     choices = [*builtins, ("custom", "Enter another BCP 47 language code.")]
     builtin_values = [value for value, _description in builtins]
     default = current_language if current_language in builtin_values else "custom"
@@ -1529,7 +1547,7 @@ def _prompt_language(current: str) -> str:
         if not language:
             print("language must not be empty")
             continue
-        if language.lower() == "auto":
+        if language.lower() == "auto" and not allow_auto:
             print("language='auto' is no longer supported; use an explicit value like 'ja' or 'en'")
             continue
         return language
@@ -1584,16 +1602,17 @@ def _edit_stt_section(config: object) -> None:
         float(config.stt.idle_shutdown_seconds),
         minimum=0.0,
     )
-    selected_vllm_startup_preset = _prompt_vllm_startup_preset(
-        config.stt.vllm.startup_preset
-    )
+    selected_vllm_startup_preset = _prompt_vllm_startup_preset(config.stt.vllm.startup_preset)
     config.stt.vllm.startup_preset = type(config.stt.vllm.startup_preset)(
         selected_vllm_startup_preset
     )
 
 
 def _edit_language_section(config: object) -> None:
-    config.language = _prompt_language(config.language)
+    if config.stt.model.startswith("haas:"):
+        config.language = _prompt_language(config.language, allow_auto=True)
+    else:
+        config.language = _prompt_language(config.language)
 
 
 def _edit_model_section(config: object) -> None:
@@ -1795,6 +1814,11 @@ def _run_config_editor(*, config_path: Path, section_name: str | None) -> int:
         print("\nCancelled.")
         return 130
 
+    try:
+        validate_stt_language(config.stt.model, config.language)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
     write_config(config_path, config)
     print(f"Updated config: {config_path}")
     return 0
@@ -1873,10 +1897,7 @@ def _has_granite_backend() -> bool:
 
 
 def _backend_guidance() -> str:
-    return (
-        "Moonshine backend package is missing. "
-        "Install dependencies and run `uv sync` again."
-    )
+    return "Moonshine backend package is missing. Install dependencies and run `uv sync` again."
 
 
 def _vllm_backend_guidance(missing: list[str]) -> str:
@@ -1913,7 +1934,7 @@ def _voxtral_backend_guidance() -> str:
         )
     return (
         "Voxtral backend dependencies are missing. "
-        "Install them (example: `uv add --upgrade transformers \"mistral-common[audio]\"`) "
+        'Install them (example: `uv add --upgrade transformers "mistral-common[audio]"`) '
         "or switch stt.model to moonshine:base."
     )
 
@@ -2247,14 +2268,9 @@ def cmd_run(args: argparse.Namespace) -> int:
                 missing.append("websockets")
             if missing:
                 _, model_id = parse_stt_model(_stt_model_from_config(config))
-                if (
-                    model_id == "mistralai/Voxtral-Mini-4B-Realtime-2602"
-                    and _has_voxtral_backend()
-                ):
+                if model_id == "mistralai/Voxtral-Mini-4B-Realtime-2602" and _has_voxtral_backend():
                     LOGGER.warning(_vllm_backend_guidance(missing))
-                    LOGGER.warning(
-                        "Using local Voxtral backend for this run instead of vLLM"
-                    )
+                    LOGGER.warning("Using local Voxtral backend for this run instead of vLLM")
                     config.stt.model = f"voxtral:{model_id}"
                 else:
                     LOGGER.error(_vllm_backend_guidance(missing))
@@ -2326,6 +2342,15 @@ def cmd_run(args: argparse.Namespace) -> int:
         enable_streaming=enable_streaming,
     )
     try:
+        if _stt_model_from_config(config).startswith("haas:"):
+            guidance = availability.backend_runtime_guidance("haas")
+            if guidance:
+                raise RuntimeError(guidance)
+            if not model_download.is_model_downloaded(config.stt.model):
+                model_download.download_model(
+                    config.stt.model,
+                    progress_callback=lambda fraction, message: LOGGER.info("Haas: %s", message),
+                )
         backend = daemon.transcriber.preflight_model()
         LOGGER.info(_green("Model preflight OK (%s)", stderr=True), backend)
         runtime_status = getattr(daemon.transcriber, "runtime_status", None)
@@ -2683,6 +2708,22 @@ def _print_codesign_info(target_path: str) -> None:
         print(f"App bundle codesign info: unavailable ({candidate_bundle})")
 
 
+def _haas_diagnostics(model_token: str) -> list[str]:
+    lines = [f"Haas Q4_K downloaded: {_stt_model_downloaded_display(model_token)}"]
+    runtime = SpeechCppRuntime()
+    try:
+        executable = find_speech_executable()
+        if executable is not None:
+            lines.append(f"speech.cpp executable: {executable}")
+        version = runtime.check_version(generation=runtime.generation)
+        lines.append(f"speech.cpp version: {'.'.join(map(str, version))} (>=0.9.4 required)")
+    except RuntimeError as exc:
+        lines.append(f"speech.cpp: ERROR ({exc})")
+    finally:
+        runtime.close()
+    return lines
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     config_path = _resolve_config_path(args.config)
     config = load_config(config_path)
@@ -2699,6 +2740,9 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     print(f"OS machine: {os_machine}")
     print(f"Python machine: {py_machine}")
     print(f"Config: {config_path}")
+    if config.stt.model.startswith("haas:"):
+        for line in _haas_diagnostics(config.stt.model):
+            print(line)
     if correction_error is not None:
         print(f"Correction dictionary: ERROR ({correction_error})")
     else:
@@ -2901,8 +2945,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             )
         else:
             print(
-                "Grant permissions for the launchd target shown above "
-                "and restart the launch agent."
+                "Grant permissions for the launchd target shown above and restart the launch agent."
             )
     elif probe_error:
         print("Could not verify launchd permission state from launchctl output.")

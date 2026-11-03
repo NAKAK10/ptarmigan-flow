@@ -1,5 +1,9 @@
 # README for LLMs and Agents
 
+Optional Japanese Haas Q4_K setup, runtime discovery, pinned downloads and recording
+limits are documented in [docs/haas.md](docs/haas.md). It uses external speech.cpp
+>=0.9.4 and is selected explicitly; existing model and language settings stay unchanged.
+
 If you are an LLM/agent working with this repository, read this file first.
 It is intentionally detailed so you can answer most operational questions without guessing.
 

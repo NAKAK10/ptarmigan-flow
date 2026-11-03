@@ -15,6 +15,7 @@ from ptarmigan_flow.stt.model_catalog import (
 )
 from ptarmigan_flow.stt.model_families import (
     GRANITE_HF_MODEL_ID,
+    HAAS_HF_MODEL_ID,
     VOXTRAL_HF_MODEL_ID,
     WHISPER_HF_MODEL_ID,
 )
@@ -54,6 +55,7 @@ def test_verified_model_entries_tokens_in_order() -> None:
         f"granite:{GRANITE_HF_MODEL_ID}",
         f"mlx:{WHISPER_HF_MODEL_ID}",
         f"voxtral:{VOXTRAL_HF_MODEL_ID}",
+        f"haas:{HAAS_HF_MODEL_ID}",
     ]
     assert all(entry.verified for entry in entries)
     assert all(entry.source == "preset" for entry in entries)
@@ -89,8 +91,7 @@ def test_search_hub_models_filters_private_and_gated(monkeypatch) -> None:
     monkeypatch.delenv("HF_TOKEN", raising=False)
     monkeypatch.delenv("HUGGING_FACE_HUB_TOKEN", raising=False)
     payload = [
-        {"id": "openai/whisper-large-v3-turbo", "private": False, "gated": False,
-         "downloads": 123},
+        {"id": "openai/whisper-large-v3-turbo", "private": False, "gated": False, "downloads": 123},
         {"id": "secret/private-model", "private": True, "gated": False},
         {"id": "vendor/gated-model", "private": False, "gated": "auto"},
         {"id": "vendor/open-model", "private": False},

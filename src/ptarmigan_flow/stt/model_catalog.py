@@ -8,6 +8,7 @@ from dataclasses import dataclass
 
 from ptarmigan_flow.stt.model_families import (
     GRANITE_HF_MODEL_ID,
+    HAAS_HF_MODEL_ID,
     VOXTRAL_HF_MODEL_ID,
     WHISPER_HF_MODEL_ID,
 )
@@ -73,6 +74,18 @@ def verified_model_entries() -> list[CatalogEntry]:
             verified=True,
             source="preset",
         ),
+        CatalogEntry(
+            token=f"haas:{HAAS_HF_MODEL_ID}",
+            backend="haas",
+            label="Haas Japanese v1.0 (Q4_K)",
+            description=(
+                "Japanese only; choose Japanese in Language. 352 MB Q4_K; "
+                "requires external speech.cpp >=0.9.4. Reloads weights each utterance; "
+                "best for short recordings."
+            ),
+            verified=True,
+            source="preset",
+        ),
     ]
 
 
@@ -104,6 +117,9 @@ def search_hub_models(
     from urllib.error import HTTPError, URLError
     from urllib.parse import urlencode
     from urllib.request import Request, urlopen
+
+    if backend == "haas":
+        raise ValueError("Haas uses its pinned Q4_K preset; arbitrary Hub GGUFs are not supported")
 
     params = urlencode(
         {

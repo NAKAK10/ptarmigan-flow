@@ -48,15 +48,12 @@ ONBOARDING_STRINGS: dict[str, dict[str, str]] = {
         "dictionary_no_rules": "No rules yet.",
         "dictionary_patterns_label": "Patterns (one per line)",
         "dictionary_regex_rules_description": (
-            "Text matching any of the regular-expression patterns is replaced with the "
-            "rule name."
+            "Text matching any of the regular-expression patterns is replaced with the rule name."
         ),
         "dictionary_regex_rules_title": "Regex Rules",
         "dictionary_save_button": "Save",
         "dictionary_save_failed_message": "Could not save dictionary: {error}",
-        "dictionary_saved_message": (
-            "Dictionary saved. Restart voice input to apply changes."
-        ),
+        "dictionary_saved_message": ("Dictionary saved. Restart voice input to apply changes."),
         "dictionary_unsaved_changes_label": "Unsaved changes",
         "done_body": (
             "Setup is complete. Hold your configured hotkey to dictate, or adjust settings."
@@ -86,6 +83,7 @@ ONBOARDING_STRINGS: dict[str, dict[str, str]] = {
         "input_monitoring_body": "Allow PtarmiganFlow to detect the push-to-talk hotkey.",
         "input_monitoring_title": "Input Monitoring",
         "language_chinese": "Chinese",
+        "language_auto": "Automatic (Haas: Japanese only)",
         "language_english": "English",
         "language_japanese": "Japanese",
         "language_save_failed_message": "Could not save language: {error}",
@@ -140,8 +138,7 @@ ONBOARDING_STRINGS: dict[str, dict[str, str]] = {
             "new version from the release page."
         ),
         "update_blocked_no_asset": (
-            "The download for this Mac isn't ready yet. Try again later or check the release "
-            "page."
+            "The download for this Mac isn't ready yet. Try again later or check the release page."
         ),
         "update_check_failed_title": "Couldn't check for updates",
         "update_failed_title": "Update failed",
@@ -151,7 +148,7 @@ ONBOARDING_STRINGS: dict[str, dict[str, str]] = {
         "update_later_button": "Later",
         "llm_ask_title": "Use LLM correction?",
         "llm_ask_body": (
-            "LLM correction is set to \"Ask each time\". Choose whether to correct voice input "
+            'LLM correction is set to "Ask each time". Choose whether to correct voice input '
             "with the LLM ({model}) while the app is running."
         ),
         "llm_ask_use_button": "Use",
@@ -302,11 +299,11 @@ ONBOARDING_STRINGS: dict[str, dict[str, str]] = {
         "hotkey_label_right_shift": "右 ⇧ シフト",
         "hotkey_select_label": "使用するキー",
         "input_monitoring_body": (
-            "プッシュトゥトーク用のホットキーを検出するため、"
-            "PtarmiganFlow に入力監視を許可します。"
+            "プッシュトゥトーク用のホットキーを検出するため、PtarmiganFlow に入力監視を許可します。"
         ),
         "input_monitoring_title": "入力監視",
         "language_chinese": "中国語",
+        "language_auto": "自動（Haas: 日本語のみ）",
         "language_english": "英語",
         "language_japanese": "日本語",
         "language_save_failed_message": "言語設定を保存できませんでした: {error}",
@@ -480,9 +477,7 @@ ONBOARDING_STRINGS: dict[str, dict[str, str]] = {
         "dictionary_new_regex_rule": "新的正则表达式规则",
         "dictionary_no_rules": "暂无规则",
         "dictionary_patterns_label": "模式（每行一个）",
-        "dictionary_regex_rules_description": (
-            "与正则表达式匹配的文本将替换为规则名称的写法。"
-        ),
+        "dictionary_regex_rules_description": ("与正则表达式匹配的文本将替换为规则名称的写法。"),
         "dictionary_regex_rules_title": "正则表达式规则",
         "dictionary_save_button": "保存",
         "dictionary_save_failed_message": "无法保存转换词典: {error}",
@@ -510,6 +505,7 @@ ONBOARDING_STRINGS: dict[str, dict[str, str]] = {
         "input_monitoring_body": "允许 PtarmiganFlow 检测一键通话热键。",
         "input_monitoring_title": "输入监控",
         "language_chinese": "中文",
+        "language_auto": "自动（Haas：仅日语）",
         "language_english": "英语",
         "language_japanese": "日语",
         "language_save_failed_message": "无法保存语言设置: {error}",

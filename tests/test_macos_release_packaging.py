@@ -44,15 +44,15 @@ def test_pyinstaller_spec_builds_ptarmiganflow_app() -> None:
     assert 'APP_ICON = ROOT / "assets/icon/PtarmiganFlow.icns"' in spec
     assert 'WEBUI_SOURCE = ROOT / "src/ptarmigan_flow/webui"' in spec
     assert '(str(WEBUI_SOURCE), "ptarmigan_flow/webui")' in spec
-    assert "str(ROOT / \"src/ptarmigan_flow/macos_app.py\")" in spec
-    assert "name='PtarmiganFlow'" in spec
+    assert 'str(ROOT / "src/ptarmigan_flow/macos_app.py")' in spec
+    assert 'name="PtarmiganFlow"' in spec
     assert "icon=str(APP_ICON)" in spec
-    assert "bundle_identifier='com.ptarmiganflow.app'" in spec
+    assert 'bundle_identifier="com.ptarmiganflow.app"' in spec
     assert '"CFBundleIconFile": "PtarmiganFlow.icns"' in spec
     assert "NSMicrophoneUsageDescription" in spec
     assert "LSMinimumSystemVersion" in spec
     assert '"LSUIElement": True' in spec
-    assert 'PYINSTALLER_TARGET_ARCH' in spec
+    assert "PYINSTALLER_TARGET_ARCH" in spec
     assert "target_arch=TARGET_ARCH" in spec
 
 
@@ -229,7 +229,7 @@ def test_release_workflow_builds_notarizes_and_uploads_draft_release() -> None:
     assert "libonnxruntime.*.dylib" in workflow
     assert "cmake -B build-moonshine -S moonshine-src/core" in workflow
     assert "cmake --build build-moonshine --target moonshine -j 4" in workflow
-    assert "MACOSX_DEPLOYMENT_TARGET: \"13.0\"" in workflow
+    assert 'MACOSX_DEPLOYMENT_TARGET: "13.0"' in workflow
     assert "Validate Apple release secrets" in workflow
     assert "Missing GitHub secret:" in workflow
     assert "Developer ID Application" in workflow
@@ -334,10 +334,10 @@ def test_release_requirements_include_arm64_mlx_backends() -> None:
     # Same version floors as pyproject.toml, but arm64-only so the x86_64 app
     # build does not try to install (or bundle) MLX.
     assert pyproject_specs <= arm64_release_specs
-    assert any(spec.startswith("huggingface-hub") for spec in arm64_release_specs)
+    assert "huggingface-hub>=1.0" in release_lines  # Haas downloads on either architecture.
     for line in release_lines:
         name = re.split(r"[<>=\[;]", line, maxsplit=1)[0].strip().lower()
-        if name in {"mlx-audio", "mlx-whisper", "voxmlx", "mistral-common", "huggingface-hub"}:
+        if name in {"mlx-audio", "mlx-whisper", "voxmlx", "mistral-common"}:
             assert line.endswith(f"; {ARM64_MARKER}"), line
 
 
@@ -351,7 +351,6 @@ def test_pyinstaller_spec_fails_arm64_build_without_mlx_runtime_modules() -> Non
         "mlx_whisper",
         "voxmlx",
         "mistral_common",
-        "huggingface_hub",
         "transformers",
         "numba",
         "scipy",

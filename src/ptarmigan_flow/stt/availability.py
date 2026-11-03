@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import importlib.util
 
+from ptarmigan_flow.stt.haas_runtime import SPEECH_CPP_PATH_ENV, find_speech_executable
 from ptarmigan_flow.stt.model_catalog import CatalogEntry, verified_model_entries
 
 _BackendVariant = tuple[str, tuple[str, ...]]
 
 _BACKEND_VARIANTS: dict[str, tuple[_BackendVariant, ...]] = {
+    # Keep the preset selectable even before the external runtime is installed.
+    "haas": (("ptarmigan_flow.stt.haas", ("numpy", "huggingface_hub")),),
     "moonshine": (("ptarmigan_flow.stt.moonshine", ("moonshine_voice",)),),
     "granite": (
         # mlx-audio's Granite model loads its tokenizer via transformers (no torch).
@@ -22,6 +25,23 @@ _BACKEND_VARIANTS: dict[str, tuple[_BackendVariant, ...]] = {
         ("ptarmigan_flow.stt.voxtral_transformers", ("transformers", "mistral_common")),
     ),
 }
+
+
+def backend_runtime_guidance(backend: str) -> str | None:
+    """Cheap discovery only; version and model checks run in background preflight."""
+    if backend.strip().lower() != "haas":
+        return None
+    try:
+        if find_speech_executable() is not None:
+            return None
+    except (OSError, RuntimeError) as exc:
+        return str(exc)
+    return (
+        "Install external speech.cpp >=0.9.4 from "
+        "https://github.com/nyosegawa/speech.cpp/releases. "
+        f"Set {SPEECH_CPP_PATH_ENV} to the speech executable if needed; "
+        "~/.local/bin, /opt/homebrew/bin and /usr/local/bin are also searched."
+    )
 
 
 def is_backend_available(backend: str) -> bool:
@@ -45,8 +65,4 @@ def is_backend_available(backend: str) -> bool:
 
 def available_model_entries() -> list[CatalogEntry]:
     """Return verified catalog models whose backend exists in this app build."""
-    return [
-        entry
-        for entry in verified_model_entries()
-        if is_backend_available(entry.backend)
-    ]
+    return [entry for entry in verified_model_entries() if is_backend_available(entry.backend)]

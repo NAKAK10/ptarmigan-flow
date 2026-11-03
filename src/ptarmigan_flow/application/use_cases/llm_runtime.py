@@ -71,6 +71,9 @@ def runtime_language_from_config(config: object) -> str:
     if not isinstance(language, str):
         return "en"
     normalized = language.strip()
+    model = str(getattr(getattr(config, "stt", None), "model", ""))
+    if normalized.lower() == "auto" and model.partition(":")[0].strip().lower() == "haas":
+        return "ja"
     if not normalized or normalized.lower() == "auto":
         return "en"
     return normalized

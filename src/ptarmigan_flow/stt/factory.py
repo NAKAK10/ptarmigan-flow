@@ -5,7 +5,12 @@ from __future__ import annotations
 import platform
 
 from ptarmigan_flow.stt.base import SpeechToTextBackend
-from ptarmigan_flow.stt.model_families import WHISPER_HF_MODEL_ID
+from ptarmigan_flow.stt.model_families import (
+    HAAS_HF_MODEL_ID,
+    WHISPER_HF_MODEL_ID,
+    resolve_runtime_model_id,
+    validate_stt_language,
+)
 from ptarmigan_flow.text_processing.interfaces import NoopTextPostProcessor, TextPostProcessor
 
 
@@ -19,13 +24,16 @@ def parse_stt_model(model: str) -> tuple[str, str]:
             f"(example: moonshine:base, mlx:{WHISPER_HF_MODEL_ID}, "
             "granite:ibm-granite/granite-4.0-1b-speech, "
             "voxtral:mistralai/Voxtral-Mini-4B-Realtime-2602, "
-            "vllm:mistralai/Voxtral-Mini-4B-Realtime-2602)"
+            "vllm:mistralai/Voxtral-Mini-4B-Realtime-2602, "
+            f"haas:{HAAS_HF_MODEL_ID})"
         )
     prefix, model_id = token.split(":", 1)
     prefix = prefix.strip().lower()
     model_id = model_id.strip()
     if not prefix or not model_id:
         raise ValueError("stt.model must include both backend prefix and model identifier")
+    if prefix == "haas":
+        resolve_runtime_model_id(prefix=prefix, model_id=model_id, macos_arm64=False)
     return prefix, model_id
 
 
@@ -38,6 +46,22 @@ def create_stt_backend(
     model_token = str(getattr(stt_cfg, "model", "")).strip()
     prefix, model_id = parse_stt_model(model_token)
     processor = post_processor or NoopTextPostProcessor()
+
+    if prefix == "haas":
+        from ptarmigan_flow.stt.haas import HaasBackendSettings, HaasSTTBackend
+
+        language = str(getattr(config, "language", "en"))
+        validate_stt_language(model_token, language)
+        audio_cfg = getattr(config, "audio", None)
+        return HaasSTTBackend(
+            HaasBackendSettings(
+                model_id=model_id,
+                language=language,
+                device=str(getattr(getattr(config, "model", None), "device", "auto")),
+                trailing_silence_seconds=float(getattr(audio_cfg, "trailing_silence_seconds", 1.0)),
+            ),
+            post_processor=processor,
+        )
 
     if prefix == "moonshine":
         from ptarmigan_flow.stt.moonshine import MoonshineSTTBackend

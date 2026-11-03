@@ -866,6 +866,7 @@ wheels = [
 name = "ptarmigan-flow"
 source = { editable = "." }
 dependencies = [
+    { name = "huggingface-hub" },
     { name = "mistral-common", extra = ["audio"] },
     { name = "mlx-audio", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
     { name = "mlx-whisper", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
@@ -882,6 +883,7 @@ dependencies = [
     { name = "pyperclip" },
     { name = "sounddevice" },
     { name = "tomli-w" },
+    { name = "tqdm" },
     { name = "torch" },
     { name = "transformers" },
     { name = "voxmlx", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
@@ -898,6 +900,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "huggingface-hub", specifier = ">=1.0" },
     { name = "mistral-common", extras = ["audio"], specifier = ">=1.5.0" },
     { name = "mlx-audio", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'", specifier = ">=0.4.1" },
     { name = "mlx-whisper", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'", specifier = ">=0.4.2" },
@@ -918,6 +921,7 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8.0" },
     { name = "sounddevice", specifier = ">=0.5.1" },
     { name = "tomli-w", specifier = ">=1.1.0" },
+    { name = "tqdm", specifier = ">=4.67.0" },
     { name = "torch", specifier = ">=2.10.0" },
     { name = "transformers", specifier = ">=4.52.1" },
     { name = "voxmlx", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'", specifier = ">=0.0.2" },

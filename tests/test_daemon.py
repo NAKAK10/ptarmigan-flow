@@ -256,6 +256,24 @@ def _reset_fake_timer() -> None:
     _FakeTimer.instances = []
 
 
+def test_stop_closes_cancellable_backend_before_waiting_for_transcription_lock(monkeypatch):
+    daemon = _build_daemon(monkeypatch)
+    events = []
+    daemon._live_input_lock.acquire()
+
+    def close():
+        events.append("close")
+        if daemon._live_input_lock.locked():
+            daemon._live_input_lock.release()
+
+    daemon.transcriber.cancel_pending_transcription = lambda: None
+    daemon.transcriber.close = close
+    daemon.stop()
+    assert events
+    assert daemon._stop_event.is_set()
+    assert not daemon._live_input_lock.locked()
+
+
 def _build_daemon(
     monkeypatch,
     *,
@@ -275,11 +293,7 @@ def _build_daemon(
         "create_activity_indicator",
         lambda *_args, **_kwargs: _FakeActivityIndicator(),
     )
-    kwargs = (
-        {"use_pynput_listener": use_pynput_listener}
-        if use_pynput_listener is not None
-        else {}
-    )
+    kwargs = {"use_pynput_listener": use_pynput_listener} if use_pynput_listener is not None else {}
     return daemon_module.PtarmiganFlowDaemon(config or AppConfig(), **kwargs)
 
 

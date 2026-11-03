@@ -19,6 +19,28 @@ def _macos_app_source() -> str:
     return _source("src/ptarmigan_flow/macos_app.py")
 
 
+def test_haas_missing_runtime_surfaces_installation_guidance(monkeypatch) -> None:
+    captured = _capture_app_delegate(monkeypatch, _StoppedDaemonController)
+    controller = captured["delegate"]
+    controller.bridge = types.SimpleNamespace(
+        _load_config=lambda: types.SimpleNamespace(
+            stt=types.SimpleNamespace(model="haas:sakasegawa/Haas-ja-v1.0-GGUF")
+        )
+    )
+    errors = []
+    controller._push_daemon_error = errors.append
+    monkeypatch.setattr(macos_app.availability, "is_backend_available", lambda _: True)
+    monkeypatch.setattr(
+        macos_app.availability,
+        "backend_runtime_guidance",
+        lambda _: "Install speech.cpp >=0.9.4; set PTARMIGAN_FLOW_SPEECH_CPP_PATH",
+    )
+    assert not controller._configured_backend_is_available()
+    assert "PTARMIGAN_FLOW_SPEECH_CPP_PATH" in errors[0]
+    monkeypatch.setattr(macos_app.availability, "backend_runtime_guidance", lambda _: None)
+    assert controller._configured_backend_is_available()
+
+
 def _web_ui_source() -> str:
     return _source("src/ptarmigan_flow/web_ui.py")
 
@@ -363,9 +385,9 @@ def test_macos_app_uses_wkwebview_host_instead_of_fixed_coordinate_appkit_ui() -
 
     assert "from ptarmigan_flow.web_ui import WebUIController" in source
     assert "self.web_ui = WebUIController" in source
-    assert "self.web_ui.show(route=\"onboarding\")" in source
-    assert "self.web_ui.show(route=\"settings\")" in source
-    assert "self.web_ui.show(route=\"dictionary\")" in source
+    assert 'self.web_ui.show(route="onboarding")' in source
+    assert 'self.web_ui.show(route="settings")' in source
+    assert 'self.web_ui.show(route="dictionary")' in source
     for removed in (
         "NSButton",
         "NSTextField",
@@ -452,9 +474,7 @@ def test_macos_app_uses_in_process_daemon_controller() -> None:
     source = _macos_app_source()
 
     assert (
-        "from ptarmigan_flow.app_daemon_controller import (\n"
-        "    InProcessDaemonController,\n"
-        ")"
+        "from ptarmigan_flow.app_daemon_controller import (\n    InProcessDaemonController,\n)"
     ) in source
     assert "daemon_run_command" not in source
     assert "    DaemonController,\n" not in source
@@ -606,9 +626,7 @@ def test_macos_app_reconciles_async_daemon_failure_after_monitor_install(
         push_event=lambda event, payload: pushed.append((event, payload))
     )
     controller.bridge = types.SimpleNamespace(
-        _load_config=lambda: types.SimpleNamespace(
-            hotkey=types.SimpleNamespace(key="right_shift")
-        ),
+        _load_config=lambda: types.SimpleNamespace(hotkey=types.SimpleNamespace(key="right_shift")),
         handle_action=lambda _action, _payload: {
             "language": "en",
             "daemon_running": controller.daemon_controller.is_running,
@@ -1084,10 +1102,10 @@ def test_webui_hotkey_capture_widget_replaces_dropdowns() -> None:
     # The old <select>-based hotkey pickers are gone from both onboarding
     # and settings; a shared press-to-set capture widget is used instead.
     assert "function hotkeyOptions()" not in source
-    assert 'data-hotkey-capture' in source
-    assert 'data-hotkey-change' in source
-    assert 'data-hotkey-badge' in source
-    assert 'data-hotkey-message' in source
+    assert "data-hotkey-capture" in source
+    assert "data-hotkey-change" in source
+    assert "data-hotkey-badge" in source
+    assert "data-hotkey-message" in source
     assert 't("hotkey_capture_change_button")' in source
     assert 't("hotkey_capture_prompt")' in source
     assert 't("hotkey_capture_unsupported")' in source
@@ -1103,7 +1121,7 @@ def test_webui_hotkey_capture_widget_replaces_dropdowns() -> None:
         ("ControlRight", "right_ctrl"),
         ("ControlLeft", "left_ctrl"),
     ):
-        assert f"{code}: \"{token}\"" in source
+        assert f'{code}: "{token}"' in source
 
     assert 'bridge("beginHotkeyCapture")' in source
     assert 'bridge("endHotkeyCapture")' in source
@@ -1113,7 +1131,7 @@ def test_webui_hotkey_capture_widget_replaces_dropdowns() -> None:
 def test_webui_nav_hides_onboarding_tab_when_setup_not_required() -> None:
     source = _webui_app_source()
 
-    assert "state.setup_required ? navButton(\"onboarding\", \"route_onboarding\") : \"\"" in source
+    assert 'state.setup_required ? navButton("onboarding", "route_onboarding") : ""' in source
     assert 'if (route === "onboarding" && !state.setup_required)' in source
 
 
@@ -1127,8 +1145,8 @@ def test_macos_app_exposes_menu_actions_to_web_routes_and_bridge_side_effects() 
     assert "def toggleLoginAtStartup_(self, _sender):" in source
     assert "def restartApp_(self, _sender):" in source
     assert "def _restart_app(self) -> bool:" in source
-    assert "self._set_route(\"settings\")" in source
-    assert "self._set_route(\"dictionary\")" in source
+    assert 'self._set_route("settings")' in source
+    assert 'self._set_route("dictionary")' in source
     assert "self._toggle_login()" in source
     assert "NSApplication.sharedApplication().terminate_(self)" in source
 
@@ -1416,9 +1434,9 @@ def test_status_bar_icon_is_packaged() -> None:
 
     icon = resources.files(APP_ICON_RESOURCE_PACKAGE).joinpath(STATUS_BAR_ICON_FILE)
     assert icon.read_bytes().startswith(b"\x89PNG")
-    spec = (
-        Path(__file__).resolve().parents[1] / "packaging/macos/PtarmiganFlow.spec"
-    ).read_text(encoding="utf-8")
+    spec = (Path(__file__).resolve().parents[1] / "packaging/macos/PtarmiganFlow.spec").read_text(
+        encoding="utf-8"
+    )
     assert '(str(RESOURCES_SOURCE / "status-bar-icon.png"), "ptarmigan_flow/resources")' in spec
 
 
@@ -1724,9 +1742,7 @@ def test_manual_check_shows_up_to_date_and_error_dialogs(monkeypatch) -> None:
     controller.applyUpdateCheckResult_(
         {"manual": True, "result": _update_result("0.3.22", available=False)}
     )
-    controller.applyUpdateCheckResult_(
-        {"manual": True, "result": _update_result(error="offline")}
-    )
+    controller.applyUpdateCheckResult_({"manual": True, "result": _update_result(error="offline")})
 
     assert alerts[0][0] == "You're up to date"
     assert alerts[0][1] == "PtarmiganFlow 0.3.22 is the latest version."
@@ -1744,9 +1760,7 @@ def _auto_update_controller(monkeypatch, language: str = "ja"):
     monkeypatch.setattr(sys, "frozen", True, raising=False)
     controller._current_app_version = lambda: "0.3.21"
     controller._current_app_bundle = lambda: _BUNDLE
-    monkeypatch.setattr(
-        macos_app.app_updater, "bundle_location_is_writable", lambda _bundle: True
-    )
+    monkeypatch.setattr(macos_app.app_updater, "bundle_location_is_writable", lambda _bundle: True)
     captured["timers"].clear()
     launched: list[tuple] = []
 
@@ -1775,12 +1789,8 @@ def _recheck_timers(captured) -> list:
     return [timer for timer in captured["timers"] if timer.selector == "updateRecheck:"]
 
 
-def test_installable_update_is_prepared_in_background_without_dialog(
-    monkeypatch, tmp_path
-) -> None:
-    captured, controller, alerts, _choices, opened, launched = _auto_update_controller(
-        monkeypatch
-    )
+def test_installable_update_is_prepared_in_background_without_dialog(monkeypatch, tmp_path) -> None:
+    captured, controller, alerts, _choices, opened, launched = _auto_update_controller(monkeypatch)
     threads = _record_threads(monkeypatch)
     posted: list[dict] = []
     controller.performSelectorOnMainThread_withObject_waitUntilDone_ = (
@@ -1829,9 +1839,7 @@ def test_installable_update_is_prepared_in_background_without_dialog(
 def test_restart_to_update_launches_helper_with_relaunch_and_terminates_once(
     monkeypatch, tmp_path
 ) -> None:
-    captured, controller, alerts, _choices, _opened, launched = _auto_update_controller(
-        monkeypatch
-    )
+    captured, controller, alerts, _choices, _opened, launched = _auto_update_controller(monkeypatch)
     prepared = _prepared(tmp_path)
     _set_prepared(controller, prepared)
 
@@ -1875,9 +1883,7 @@ def test_quit_without_prepared_update_launches_nothing(monkeypatch) -> None:
     assert launched == []
 
 
-def test_restart_app_with_prepared_update_restarts_into_the_update(
-    monkeypatch, tmp_path
-) -> None:
+def test_restart_app_with_prepared_update_restarts_into_the_update(monkeypatch, tmp_path) -> None:
     captured, controller, _alerts, _choices, _opened, launched = _auto_update_controller(
         monkeypatch
     )
@@ -1918,9 +1924,7 @@ def test_restart_helper_launch_failure_discards_download_and_keeps_running(
 
 
 def test_no_asset_schedules_one_recheck_and_never_opens_release_page(monkeypatch) -> None:
-    captured, controller, alerts, _choices, opened, _launched = _auto_update_controller(
-        monkeypatch
-    )
+    captured, controller, alerts, _choices, opened, _launched = _auto_update_controller(monkeypatch)
     threads = _record_threads(monkeypatch)
     no_asset = _update_result(blocker="no_asset")
 
@@ -1952,9 +1956,7 @@ def test_no_asset_schedules_one_recheck_and_never_opens_release_page(monkeypatch
 def test_check_error_keeps_known_version_preparing_and_success_cancels_recheck(
     monkeypatch,
 ) -> None:
-    captured, controller, alerts, _choices, opened, _launched = _auto_update_controller(
-        monkeypatch
-    )
+    captured, controller, alerts, _choices, opened, _launched = _auto_update_controller(monkeypatch)
     threads = _record_threads(monkeypatch)
     controller.applyUpdateCheckResult_(
         {"manual": False, "result": _update_result(blocker="no_asset")}
@@ -1976,9 +1978,7 @@ def test_check_error_keeps_known_version_preparing_and_success_cancels_recheck(
 
 
 def test_download_failure_retries_later_without_counting_toward_cap(monkeypatch) -> None:
-    captured, controller, alerts, _choices, opened, _launched = _auto_update_controller(
-        monkeypatch
-    )
+    captured, controller, alerts, _choices, opened, _launched = _auto_update_controller(monkeypatch)
     _record_threads(monkeypatch)
     controller.applyUpdateCheckResult_({"manual": False, "result": _update_result()})
 
@@ -1995,9 +1995,7 @@ def test_download_failure_retries_later_without_counting_toward_cap(monkeypatch)
 
 
 def test_verification_failures_are_capped_then_menu_offers_release_page(monkeypatch) -> None:
-    captured, controller, alerts, _choices, opened, _launched = _auto_update_controller(
-        monkeypatch
-    )
+    captured, controller, alerts, _choices, opened, _launched = _auto_update_controller(monkeypatch)
     threads = _record_threads(monkeypatch)
     result = _update_result()
     cap = macos_app.app_updater.MAX_VERIFICATION_FAILURES
@@ -2087,9 +2085,7 @@ def test_prepare_falls_back_to_release_page_when_location_not_writable(monkeypat
     _captured, controller, alerts, _choices, opened, _launched = _auto_update_controller(
         monkeypatch
     )
-    monkeypatch.setattr(
-        macos_app.app_updater, "bundle_location_is_writable", lambda _bundle: False
-    )
+    monkeypatch.setattr(macos_app.app_updater, "bundle_location_is_writable", lambda _bundle: False)
     threads = _record_threads(monkeypatch)
 
     controller.applyUpdateCheckResult_({"manual": False, "result": _update_result()})
@@ -2127,9 +2123,7 @@ def test_manual_check_prepares_then_offers_restart(monkeypatch, tmp_path) -> Non
 def test_manual_check_with_prepared_update_offers_restart_without_network(
     monkeypatch, tmp_path
 ) -> None:
-    captured, controller, alerts, choices, _opened, launched = _auto_update_controller(
-        monkeypatch
-    )
+    captured, controller, alerts, choices, _opened, launched = _auto_update_controller(monkeypatch)
     threads = _record_threads(monkeypatch)
     prepared = _prepared(tmp_path)
     _set_prepared(controller, prepared)

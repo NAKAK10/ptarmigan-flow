@@ -168,6 +168,7 @@ class InProcessDaemonController:
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
         self._last_error: Exception | None = None
+        self._stop_requested = threading.Event()
 
     @property
     def is_running(self) -> bool:
@@ -190,6 +191,8 @@ class InProcessDaemonController:
             if self._thread is not None and self._thread.is_alive():
                 return
             self._last_error = None
+            stop_requested = threading.Event()
+            self._stop_requested = stop_requested
 
         def _run() -> None:
             try:
@@ -199,18 +202,33 @@ class InProcessDaemonController:
                     llm_enabled_override=llm_enabled_override,
                 )
             except Exception as exc:
-                LOGGER.exception("Failed to build in-process daemon")
-                with self._lock:
-                    self._last_error = exc
+                if not stop_requested.is_set():
+                    LOGGER.exception("Failed to build in-process daemon")
+                    with self._lock:
+                        self._last_error = exc
                 return
             with self._lock:
-                self._daemon = daemon
+                cancelled = stop_requested.is_set()
+                if not cancelled:
+                    self._daemon = daemon
             try:
-                daemon.run_forever()
+                if cancelled:
+                    daemon.stop()
+                    return
+                config = getattr(daemon, "config", None)
+                model = str(getattr(getattr(config, "stt", None), "model", ""))
+                if model.startswith("haas:"):
+                    # Haas owns a direct process, so preflight is cancellable and
+                    # stays off the GUI thread. Other backends keep their behavior.
+                    daemon.transcriber.preflight_model()
+                if not stop_requested.is_set():
+                    daemon.run_forever()
             except Exception as exc:
-                LOGGER.exception("In-process daemon exited with error")
-                with self._lock:
-                    self._last_error = exc
+                if not stop_requested.is_set():
+                    LOGGER.exception("In-process daemon exited with error")
+                    with self._lock:
+                        self._last_error = exc
+                daemon.stop()
 
         t = threading.Thread(target=_run, daemon=True, name="ptarmigan-daemon")
         with self._lock:
@@ -220,6 +238,7 @@ class InProcessDaemonController:
     def stop(self) -> None:
         """Stop the in-process daemon and wait briefly for its thread to exit."""
         with self._lock:
+            self._stop_requested.set()
             daemon = self._daemon
             thread = self._thread
         if daemon is not None:

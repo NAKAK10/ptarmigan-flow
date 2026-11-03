@@ -5,6 +5,8 @@ import threading
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 import ptarmigan_flow.app_daemon_controller as controller_module
 from ptarmigan_flow.app_daemon_controller import (
     DaemonController,
@@ -405,9 +407,21 @@ def test_in_process_daemon_controller_forwards_llm_override(monkeypatch, tmp_pat
     assert build_calls == [{"use_pynput_listener": False, "llm_enabled_override": True}]
 
 
-def test_cli_run_uses_shared_daemon_builder(monkeypatch, tmp_path) -> None:
+@pytest.mark.parametrize("model", ["moonshine:tiny", "haas:sakasegawa/Haas-ja-v1.0-GGUF"])
+def test_cli_run_uses_shared_daemon_builder(model, monkeypatch, tmp_path) -> None:
     config_path = tmp_path / "config.toml"
     config = AppConfig()
+    config.stt.model = model
+    if model.startswith("haas:"):
+        config.language = "ja"
+    downloads = []
+    monkeypatch.setattr(cli_commands.availability, "backend_runtime_guidance", lambda _: None)
+    monkeypatch.setattr(cli_commands.model_download, "is_model_downloaded", lambda _: False)
+    monkeypatch.setattr(
+        cli_commands.model_download,
+        "download_model",
+        lambda token, **kwargs: downloads.append(token),
+    )
     rules = object()
     post_processor = object()
     daemon = _FakeDaemon()
@@ -471,3 +485,108 @@ def test_cli_run_uses_shared_daemon_builder(monkeypatch, tmp_path) -> None:
     ]
     assert daemon.run_calls == 1
     assert daemon.stop_calls == 1
+    assert downloads == ([model] if model.startswith("haas:") else [])
+
+
+def test_haas_gui_preflight_runs_in_background_before_recording(monkeypatch, tmp_path) -> None:
+    from ptarmigan_flow.stt.haas_artifact import HAAS_MODEL_TOKEN
+
+    daemon = _FakeDaemon()
+    daemon.config = AppConfig(language="ja", stt={"model": HAAS_MODEL_TOKEN})
+    events = []
+    main_thread = threading.get_ident()
+
+    def preflight():
+        assert threading.get_ident() != main_thread
+        assert daemon.run_calls == 0
+        events.append("preflight")
+
+    daemon.transcriber.preflight_model = preflight
+    monkeypatch.setattr(controller_module, "build_daemon_from_config", lambda *a, **k: daemon)
+    controller = InProcessDaemonController(tmp_path / "config.toml")
+    controller.start()
+    try:
+        assert daemon.started.wait(timeout=1)
+        assert events == ["preflight"]
+    finally:
+        controller.stop()
+
+
+def test_haas_gui_preflight_failure_is_visible_and_cleans_daemon(monkeypatch, tmp_path) -> None:
+    from ptarmigan_flow.stt.haas_artifact import HAAS_MODEL_TOKEN
+
+    daemon = _FakeDaemon()
+    daemon.config = AppConfig(language="ja", stt={"model": HAAS_MODEL_TOKEN})
+
+    def preflight():
+        raise RuntimeError("speech.cpp version too old; install >=0.9.4")
+
+    daemon.transcriber.preflight_model = preflight
+    monkeypatch.setattr(controller_module, "build_daemon_from_config", lambda *a, **k: daemon)
+    controller = InProcessDaemonController(tmp_path / "config.toml")
+    controller.start()
+    assert daemon.stopped.wait(timeout=1)
+    controller._thread.join(timeout=1)
+    assert "version too old" in str(controller.last_error)
+    assert not controller.is_running
+    assert daemon.run_calls == 0
+    controller.stop()
+
+
+def test_haas_gui_stop_during_preflight_never_starts_recording(monkeypatch, tmp_path) -> None:
+    from ptarmigan_flow.stt.haas_artifact import HAAS_MODEL_TOKEN
+
+    daemon = _FakeDaemon()
+    daemon.config = AppConfig(language="ja", stt={"model": HAAS_MODEL_TOKEN})
+    probing = threading.Event()
+
+    def preflight():
+        probing.set()
+        assert daemon.stopped.wait(timeout=1)
+        raise RuntimeError("cancelled")
+
+    daemon.transcriber.preflight_model = preflight
+    monkeypatch.setattr(controller_module, "build_daemon_from_config", lambda *a, **k: daemon)
+    controller = InProcessDaemonController(tmp_path / "config.toml")
+    controller.start()
+    assert probing.wait(timeout=1)
+    controller.stop()
+    assert daemon.run_calls == 0
+    assert controller.last_error is None
+
+
+def test_other_backend_gui_start_does_not_gain_preflight(monkeypatch, tmp_path) -> None:
+    daemon = _FakeDaemon()
+    daemon.config = AppConfig()
+
+    def unexpected():
+        raise AssertionError("Existing backend startup must stay unchanged")
+
+    daemon.transcriber.preflight_model = unexpected
+    monkeypatch.setattr(controller_module, "build_daemon_from_config", lambda *a, **k: daemon)
+    controller = InProcessDaemonController(tmp_path / "config.toml")
+    controller.start()
+    try:
+        assert daemon.started.wait(timeout=1)
+        assert controller.last_error is None
+    finally:
+        controller.stop()
+
+
+def test_gui_stop_while_building_prevents_late_preflight_and_recording(monkeypatch, tmp_path):
+    daemon = _FakeDaemon()
+    building = threading.Event()
+    controller = InProcessDaemonController(tmp_path / "config.toml")
+
+    def build(*args, **kwargs):
+        building.set()
+        assert controller._stop_requested.wait(timeout=1)
+        return daemon
+
+    monkeypatch.setattr(controller_module, "build_daemon_from_config", build)
+    controller.start()
+    assert building.wait(timeout=1)
+    controller.stop()
+    assert daemon.stopped.is_set()
+    assert daemon.run_calls == 0
+    assert controller.last_error is None
