@@ -38,6 +38,8 @@ def test_haas_missing_runtime_surfaces_installation_guidance(monkeypatch) -> Non
     assert not controller._configured_backend_is_available()
     assert "PTARMIGAN_FLOW_SPEECH_CPP_PATH" in errors[0]
     monkeypatch.setattr(macos_app.availability, "backend_runtime_guidance", lambda _: None)
+    controller._speech_cpp_status = {"status": "available", "operation_id": 1}
+    controller._speech_cpp_checked_at = macos_app.time.monotonic()
     assert controller._configured_backend_is_available()
 
 
@@ -239,6 +241,16 @@ def _capture_app_delegate(monkeypatch, daemon_controller_cls):
         lambda _level: "/tmp/ptarmigan-flow-app.log",
     )
     monkeypatch.setattr(macos_app, "InProcessDaemonController", daemon_controller_cls)
+    # Native wiring tests must never discover/execute a real speech binary.
+    monkeypatch.setattr(
+        macos_app,
+        "_speech_cpp_runtime_status",
+        lambda _cancel: {
+            "status": "missing",
+            "install_supported": True,
+            "install_allowed": True,
+        },
+    )
 
     assert macos_app._run_appkit_app() == 0
     return captured
@@ -461,8 +473,8 @@ def test_macos_app_wires_web_bridge_to_existing_logic() -> None:
     assert "resolve_dictionary_path=self._dictionary_path" in source
     assert "request_permission=self._request_permission" in source
     assert "open_system_settings=self._open_system_settings" in source
-    assert "start_dictation=self._start_daemon_if_ready" in source
-    assert "stop_dictation=self._stop_daemon" in source
+    assert "start_dictation=self._request_dictation_start" in source
+    assert "stop_dictation=self._request_dictation_stop" in source
     assert "login_is_enabled=login_item.is_enabled" in source
     assert "login_register=login_item.register" in source
     assert "login_unregister=login_item.unregister" in source
@@ -1132,7 +1144,7 @@ def test_webui_nav_hides_onboarding_tab_when_setup_not_required() -> None:
     source = _webui_app_source()
 
     assert 'state.setup_required ? navButton("onboarding", "route_onboarding") : ""' in source
-    assert 'if (route === "onboarding" && !state.setup_required)' in source
+    assert 'if (route === "onboarding" && !state.setup_required && !haasNeedsRuntime)' in source
 
 
 def test_macos_app_exposes_menu_actions_to_web_routes_and_bridge_side_effects() -> None:
@@ -1199,6 +1211,7 @@ def test_macos_app_shutdown_runs_plain_cleanup_steps() -> None:
     assert terminate_lines == [
         "self._stop_permission_timer()",
         "self._terminate_model_download_process()",
+        "self._cancel_speech_cpp_work()",
         "self._remove_hotkey_event_monitor()",
         "self.daemon_controller.stop()",
         "self._install_prepared_update_on_quit()",
@@ -2347,3 +2360,244 @@ def test_macos_app_wires_llm_mode_saved_to_ask_memory() -> None:
     source = _macos_app_source()
 
     assert "llm_mode_saved=self._llm_ask_memory.observe_mode," in source
+
+
+def _speech_cpp_controller(monkeypatch):
+    controller = _capture_app_delegate(monkeypatch, _StoppedDaemonController)["delegate"]
+    events, workers, posted = [], [], []
+
+    class Worker:
+        def __init__(self, *, target, args, daemon):
+            assert daemon
+            self.target, self.args = target, args
+
+        def start(self):
+            workers.append(self)
+
+    monkeypatch.setattr(macos_app.threading, "Thread", Worker)
+    monkeypatch.delenv("PTARMIGAN_FLOW_SPEECH_CPP_PATH", raising=False)
+    controller._push_event = lambda event, payload: events.append((event, payload))
+    controller.performSelectorOnMainThread_withObject_waitUntilDone_ = (
+        lambda selector, payload, wait: posted.append((selector, payload, wait))
+    )
+    controller._speech_cpp_status = {
+        "status": "missing",
+        "install_allowed": True,
+        "operation_id": 0,
+    }
+    controller._speech_cpp_checked_at = macos_app.time.monotonic()
+    return controller, workers, events, posted
+
+
+def test_speech_cpp_install_is_background_bounded_and_progress_is_separate(monkeypatch):
+    controller, workers, events, posted = _speech_cpp_controller(monkeypatch)
+    installs = []
+
+    def install(progress, cancel):
+        installs.append(cancel)
+        progress({"status": "downloading", "downloaded_bytes": 3, "total_bytes": 10})
+        progress({"status": "verifying"})
+        progress({"status": "installing"})
+        progress({"status": "complete"})
+        return Path("/managed/speech")
+
+    monkeypatch.setattr(macos_app, "_install_managed_speech_cpp", install)
+    response = controller._start_speech_cpp_install()
+    assert response["started"] and not installs and len(workers) == 1
+    assert controller._start_speech_cpp_install()["errors"] == ["busy"]
+    assert controller._cached_speech_cpp_status()["status"] == "installing"
+    assert len(workers) == 1
+    workers[0].target(*workers[0].args)
+    assert installs == [controller._speech_cpp_cancel_event]
+    assert len(posted) == 4  # three stages plus the post-install probe, never callback complete
+    for selector, payload, wait in posted:
+        assert selector == "applySpeechCppStatus:" and wait is False
+        controller.applySpeechCppStatus_(payload)
+    assert [payload["phase"] for _, payload in events[:-1]] == [
+        "downloading",
+        "verifying",
+        "installing",
+    ]
+    assert events[0][1]["downloaded_bytes"] == 3
+    assert all(event == "speechCppStatus" for event, _ in events)
+    # Installation alone cannot claim success when selected runtime discovery still fails.
+    assert controller._speech_cpp_status["status"] == "failed"
+    assert "not found" in controller._speech_cpp_status["message"]
+    assert not controller._speech_cpp_busy
+
+
+def test_speech_cpp_failure_retry_and_stale_results(monkeypatch):
+    controller, workers, events, posted = _speech_cpp_controller(monkeypatch)
+
+    def failure(*_args):
+        raise RuntimeError("Disk full")
+
+    monkeypatch.setattr(macos_app, "_install_managed_speech_cpp", failure)
+    controller._start_speech_cpp_install()
+    workers[0].target(*workers[0].args)
+    controller.applySpeechCppStatus_(posted[-1][1])
+    failed = dict(controller._speech_cpp_status)
+    assert failed["status"] == "failed" and failed["message"] == "Disk full"
+    assert failed["install_allowed"]
+    controller._start_speech_cpp_install()
+    assert len(workers) == 2
+    controller.applySpeechCppStatus_(posted[-1][1])
+    assert controller._speech_cpp_status["status"] == "installing"
+    assert len(events) == 1
+    operation_id = controller._speech_cpp_operation_id
+    controller.applySpeechCppStatus_(
+        {
+            "operation_id": operation_id,
+            "finished": True,
+            "status": {"status": "available", "install_allowed": False},
+        }
+    )
+    controller.applySpeechCppStatus_(
+        {
+            "operation_id": operation_id,
+            "status": {"status": "installing"},
+        }
+    )
+    assert controller._speech_cpp_status["status"] == "available"
+
+
+def test_speech_cpp_status_checks_are_cached_background_and_invalidate_old_snapshots(monkeypatch):
+    controller, workers, events, posted = _speech_cpp_controller(monkeypatch)
+    assert controller._cached_speech_cpp_status()["status"] == "missing"
+    assert not workers
+    controller._speech_cpp_checked_at = 0
+    assert controller._cached_speech_cpp_status()["status"] == "checking"
+    controller._cached_speech_cpp_status()
+    assert len(workers) == 1
+    workers[0].target(*workers[0].args)
+    controller.applySpeechCppStatus_(posted[-1][1])
+    assert not controller._speech_cpp_busy
+    assert controller._cached_speech_cpp_status()["status"] == "missing"
+    assert len(workers) == 1
+    assert len(events) == 1
+
+
+def test_speech_cpp_termination_cancels_worker_and_ignores_late_events(monkeypatch):
+    controller, workers, events, posted = _speech_cpp_controller(monkeypatch)
+    controller._start_speech_cpp_install()
+    operation_id = controller._speech_cpp_operation_id
+    controller._cancel_speech_cpp_work()
+    assert controller._speech_cpp_cancel_event.is_set()
+    controller.applySpeechCppStatus_(
+        {
+            "operation_id": operation_id,
+            "finished": True,
+            "recover": True,
+            "status": {"status": "available"},
+        }
+    )
+    assert not events
+    controller._cached_speech_cpp_status()
+    assert len(workers) == 1
+
+
+def test_speech_cpp_install_disallowed_for_unsupported_or_explicit_override(monkeypatch):
+    controller, workers, _, _ = _speech_cpp_controller(monkeypatch)
+    for status in ("unsupported", "override_invalid", "available"):
+        controller._speech_cpp_status = {"status": status, "install_allowed": False}
+        assert not controller._start_speech_cpp_install()["started"]
+    assert not workers
+    # Environment changes after a UI snapshot are checked again before starting.
+    controller._speech_cpp_status = {"status": "missing", "install_allowed": True}
+    monkeypatch.setenv("PTARMIGAN_FLOW_SPEECH_CPP_PATH", "/invalid")
+    response = controller._start_speech_cpp_install()
+    assert response["errors"] == ["override"]
+    assert workers[0].args[1] is False  # background status refresh, no installation
+
+
+def test_speech_cpp_completion_only_recovers_current_saved_haas_config(monkeypatch):
+    controller, _, _, _ = _speech_cpp_controller(monkeypatch)
+    starts = []
+    saved_model = "moonshine:tiny"
+    controller._configured_model_token = lambda: saved_model
+    controller._start_daemon_if_ready = lambda: starts.append(saved_model)
+    for model, status, expected in (
+        ("moonshine:tiny", "available", 0),
+        ("haas:sakasegawa/Haas-ja-v1.0-GGUF", "override_invalid", 0),
+        ("haas:sakasegawa/Haas-ja-v1.0-GGUF", "available", 1),
+    ):
+        saved_model = model
+        controller._speech_cpp_busy = True
+        controller._speech_cpp_operation_id += 1
+        controller.applySpeechCppStatus_(
+            {
+                "operation_id": controller._speech_cpp_operation_id,
+                "finished": True,
+                "recover": True,
+                "status": {"status": status},
+            }
+        )
+        assert len(starts) == expected
+
+
+def test_speech_cpp_recovery_uses_normal_permission_and_model_checks(monkeypatch):
+    controller, _, _, _ = _speech_cpp_controller(monkeypatch)
+    errors, downloads = [], []
+    controller._push_daemon_error = errors.append
+    controller._push_daemon_state = lambda: None
+    controller._configured_model_token = lambda: "haas:sakasegawa/Haas-ja-v1.0-GGUF"
+    controller._configured_backend_is_available = lambda: True
+    controller._start_model_download = lambda *args: downloads.append(args)
+    controller._last_permission_report = macos_app.PermissionReport(False, True, True)
+    controller._start_daemon_if_ready()
+    assert errors and not downloads
+    controller._last_permission_report = macos_app.PermissionReport(True, True, True)
+    monkeypatch.setattr(macos_app.model_download, "is_model_downloaded", lambda _: False)
+    controller._start_daemon_if_ready()
+    assert len(downloads) == 1
+    assert not controller.daemon_controller.is_running
+
+
+def test_speech_cpp_success_reprobes_selected_runtime_and_recovers_through_normal_start(
+    monkeypatch,
+):
+    controller, workers, events, posted = _speech_cpp_controller(monkeypatch)
+    effects = []
+    monkeypatch.setattr(
+        macos_app,
+        "_install_managed_speech_cpp",
+        lambda progress, cancel: effects.append("install"),
+    )
+
+    def probe(cancel):
+        effects.append("probe")
+        assert cancel is controller._speech_cpp_cancel_event
+        return {
+            "status": "available",
+            "version": "0.10.1",
+            "source": "managed",
+            "install_allowed": False,
+        }
+
+    monkeypatch.setattr(macos_app, "_speech_cpp_runtime_status", probe)
+    controller._configured_model_token = lambda: "haas:sakasegawa/Haas-ja-v1.0-GGUF"
+    controller._start_daemon_if_ready = lambda: effects.append("normal start")
+    controller._start_speech_cpp_install()
+    workers[0].target(*workers[0].args)
+    assert effects == ["install", "probe"]
+    controller.applySpeechCppStatus_(posted[-1][1])
+    assert effects == ["install", "probe", "normal start"]
+    assert events[-1][1]["status"] == "available"
+
+
+def test_speech_cpp_cancelled_install_does_not_probe_or_deliver_success(monkeypatch):
+    controller, workers, events, posted = _speech_cpp_controller(monkeypatch)
+
+    def install(progress, cancel):
+        controller._cancel_speech_cpp_work()
+        assert cancel.is_set()
+        progress({"status": "complete"})
+
+    def forbidden_probe(_cancel):
+        raise AssertionError("Cancelled install must not run another probe")
+
+    monkeypatch.setattr(macos_app, "_install_managed_speech_cpp", install)
+    monkeypatch.setattr(macos_app, "_speech_cpp_runtime_status", forbidden_probe)
+    controller._start_speech_cpp_install()
+    workers[0].target(*workers[0].args)
+    assert not events and not posted

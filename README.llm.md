@@ -1,8 +1,17 @@
 # README for LLMs and Agents
 
 Optional Japanese Haas Q4_K setup, runtime discovery, pinned downloads and recording
-limits are documented in [docs/haas.md](docs/haas.md). It uses external speech.cpp
->=0.9.4 and is selected explicitly; existing model and language settings stay unchanged.
+limits are documented in [docs/haas.md](docs/haas.md). Settings → Haas offers
+**Install speech.cpp** / **Retry** for the official pinned 0.10.1 macOS arm64 Metal
+ZIP, verified with a hardcoded SHA256, on Apple Silicon (including Rosetta).
+There is no `pflow` runtime installation command; manual speech.cpp >=0.9.4 setup
+remains available, and Intel Macs need a compatible source build. Runtime priority
+is explicit `PTARMIGAN_FLOW_SPEECH_CPP_PATH`, then the managed runtime, then external
+PATH/common locations. Installing speech.cpp through the app activates the managed
+runtime unless the explicit environment override is set, without changing external
+files or configuration; failures preserve the old managed copy.
+The GGUF model download is separate. Haas is selected explicitly; existing model
+and language settings stay unchanged.
 
 If you are an LLM/agent working with this repository, read this file first.
 It is intentionally detailed so you can answer most operational questions without guessing.

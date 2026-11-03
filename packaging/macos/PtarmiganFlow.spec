@@ -102,6 +102,7 @@ REQUIRED_APP_MODULES = (
     "ptarmigan_flow.stt.haas",
     "ptarmigan_flow.stt.haas_artifact",
     "ptarmigan_flow.stt.haas_runtime",
+    "ptarmigan_flow.stt.speech_cpp_installer",
 )
 
 # Third-party modules the app imports at runtime. The release venv installs

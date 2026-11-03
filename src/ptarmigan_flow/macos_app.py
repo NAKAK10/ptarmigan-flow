@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import copy
 import dataclasses
 import importlib.resources
 import json
 import logging
 import multiprocessing
+import os
 import subprocess
 import sys
 import threading
@@ -47,7 +49,7 @@ from ptarmigan_flow.permissions import (
     request_input_monitoring_permission,
     request_microphone_permission,
 )
-from ptarmigan_flow.stt import availability, model_download
+from ptarmigan_flow.stt import availability, haas_runtime, model_download
 from ptarmigan_flow.stt.factory import parse_stt_model
 from ptarmigan_flow.transcription_corrections import resolve_dictionary_path
 from ptarmigan_flow.web_bridge import BridgeDependencies, WebBridgeDispatcher
@@ -69,6 +71,65 @@ _HOTKEY_KEYCODE_TO_MODIFIER_FLAG = {
     62: 1 << 18,
     59: 1 << 18,
 }
+
+
+def _speech_cpp_runtime_status(cancel_event: threading.Event) -> dict[str, Any]:
+    """Background-only bounded runtime probe, separate from the GGUF cache."""
+    from ptarmigan_flow.stt.speech_cpp_installer import (
+        managed_speech_cpp_path,
+        speech_cpp_install_supported,
+    )
+
+    supported = speech_cpp_install_supported()
+    override = os.environ.get(haas_runtime.SPEECH_CPP_PATH_ENV) is not None
+    result: dict[str, Any] = {
+        "status": "missing" if supported else "unsupported",
+        "install_supported": supported,
+        "install_allowed": supported and not override,
+        "source": "override" if override else None,
+        "target_version": "0.10.1",
+    }
+    try:
+        path = haas_runtime.find_speech_executable()
+    except (OSError, RuntimeError) as exc:
+        return dict(result, status="override_invalid" if override else "failed", message=str(exc))
+    if path is None:
+        return result
+    result.update(
+        path=str(path),
+        source="override"
+        if override
+        else ("managed" if path == managed_speech_cpp_path() else "external"),
+    )
+    runtime = haas_runtime.SpeechCppRuntime(executable=path)
+    try:
+        if cancel_event.is_set():
+            return result
+        version = haas_runtime.parse_speech_version(
+            runtime.run(
+                ["--version"],
+                timeout_seconds=5.0,
+                generation=runtime.generation,
+                cancel_event=cancel_event,
+            )
+        )
+        return dict(
+            result, status="available", version=".".join(map(str, version)), install_allowed=False
+        )
+    except (OSError, RuntimeError) as exc:
+        status = "old" if "too old" in str(exc) else "failed"
+        if override:
+            status = "override_invalid"
+        return dict(result, status=status, message=str(exc))
+    finally:
+        runtime.close()
+
+
+def _install_managed_speech_cpp(progress_callback, cancel_event) -> Path:
+    # Lazy import allows the UI/bridge to load independently of installer work.
+    from ptarmigan_flow.stt.speech_cpp_installer import install_speech_cpp
+
+    return install_speech_cpp(progress_callback=progress_callback, cancel_event=cancel_event)
 
 
 def _set_application_icon(app: object, ns_image_cls: object, ns_data_cls: object) -> None:
@@ -258,6 +319,22 @@ def _run_appkit_app() -> int:
             self._model_download_process: subprocess.Popen[str] | None = None
             self._model_download_success_message_key = "voice_input_started_message"
             self._model_download_thread: threading.Thread | None = None
+            self._speech_cpp_status: dict[str, Any] = {
+                "status": "checking",
+                "install_allowed": False,
+                "operation_id": 0,
+            }
+            self._speech_cpp_operation_id = 0
+            self._speech_cpp_busy = False
+            self._speech_cpp_checked_at = 0.0
+            self._speech_cpp_cancel_event = threading.Event()
+            self._speech_cpp_terminated = False
+            self._speech_cpp_start_when_ready = False
+            self._speech_cpp_thread: threading.Thread | None = None
+            # Preserve automatic startup until the user explicitly chooses Stop.
+            # Internal daemon cleanup/restarts must leave this intent unchanged.
+            self._dictation_requested = True
+            self._dictation_request_generation = 0
             self._daemon_error_message: str | None = None
             self._update_check_in_progress = False
             self._update_prepare_in_progress = False
@@ -288,11 +365,13 @@ def _run_appkit_app() -> int:
                     request_permission=self._request_permission,
                     open_system_settings=self._open_system_settings,
                     open_config_file=open_config,
-                    start_dictation=self._start_daemon_if_ready,
-                    stop_dictation=self._stop_daemon,
+                    start_dictation=self._request_dictation_start,
+                    stop_dictation=self._request_dictation_stop,
                     start_model_download=lambda token: self._start_model_download(
                         token, "voice_input_started_message"
                     ),
+                    speech_cpp_status=self._cached_speech_cpp_status,
+                    start_speech_cpp_install=self._start_speech_cpp_install,
                     daemon_is_running=lambda: self.daemon_controller.is_running,
                     login_is_enabled=login_item.is_enabled,
                     login_register=login_item.register,
@@ -323,12 +402,14 @@ def _run_appkit_app() -> int:
         def applicationWillTerminate_(self, _notification):  # noqa: N802
             self._stop_permission_timer()
             self._terminate_model_download_process()
+            self._cancel_speech_cpp_work()
             self._remove_hotkey_event_monitor()
             self.daemon_controller.stop()
             self._install_prepared_update_on_quit()
 
         def applicationDidBecomeActive_(self, _notification):  # noqa: N802
             self._start_permission_check()
+            self._cached_speech_cpp_status()
 
         def applicationShouldHandleReopen_hasVisibleWindows_(  # noqa: N802
             self,
@@ -817,11 +898,198 @@ def _run_appkit_app() -> int:
                 if guidance:
                     self._push_daemon_error(guidance)
                     return False
+                if backend == "haas":
+                    status = self._cached_speech_cpp_status()
+                    if status["status"] != "available":
+                        self._speech_cpp_start_when_ready = status["status"] == "checking"
+                        if status.get("message"):
+                            self._push_daemon_error(str(status["message"]))
+                        return False
                 return True
             self._push_daemon_error(
                 self._strings()["model_unavailable_message"].format(model=model_token)
             )
             return False
+
+        @objc.python_method
+        def _cached_speech_cpp_status(self) -> dict[str, Any]:
+            if (
+                not self._speech_cpp_terminated
+                and not self._speech_cpp_busy
+                and time.monotonic() - self._speech_cpp_checked_at >= 60
+            ):
+                self._begin_speech_cpp_work(install=False)
+            return dict(self._speech_cpp_status)
+
+        @objc.python_method
+        def _start_speech_cpp_install(self) -> dict[str, Any]:
+            if self._speech_cpp_busy:
+                return {
+                    "started": False,
+                    "errors": ["busy"],
+                    "speech_cpp": dict(self._speech_cpp_status),
+                }
+            # Recheck overrides even when the UI holds an older allowed snapshot.
+            if (
+                not self._speech_cpp_terminated
+                and os.environ.get(haas_runtime.SPEECH_CPP_PATH_ENV) is not None
+            ):
+                self._begin_speech_cpp_work(install=False)
+                return {
+                    "started": False,
+                    "errors": ["override"],
+                    "speech_cpp": dict(self._speech_cpp_status),
+                }
+            if self._speech_cpp_terminated or not self._speech_cpp_status.get("install_allowed"):
+                return {
+                    "started": False,
+                    "errors": ["unavailable"],
+                    "speech_cpp": dict(self._speech_cpp_status),
+                }
+            self._begin_speech_cpp_work(install=True)
+            return {"started": True, "speech_cpp": dict(self._speech_cpp_status)}
+
+        @objc.python_method
+        def _begin_speech_cpp_work(self, *, install: bool) -> None:
+            self._speech_cpp_operation_id += 1
+            operation_id = self._speech_cpp_operation_id
+            self._speech_cpp_busy = True
+            if install:
+                self._speech_cpp_status = dict(
+                    self._speech_cpp_status,
+                    status="installing",
+                    phase="downloading",
+                    downloaded_bytes=0,
+                    total_bytes=None,
+                    install_allowed=False,
+                    operation_id=operation_id,
+                    message=None,
+                )
+            else:
+                self._speech_cpp_status = dict(
+                    self._speech_cpp_status,
+                    status="checking",
+                    install_allowed=False,
+                    operation_id=operation_id,
+                )
+            try:
+                self._speech_cpp_thread = threading.Thread(
+                    target=self._run_speech_cpp_work,
+                    args=(operation_id, install),
+                    daemon=True,
+                )
+                self._speech_cpp_thread.start()
+            except Exception as exc:
+                self.applySpeechCppStatus_(
+                    {
+                        "operation_id": operation_id,
+                        "finished": True,
+                        "status": dict(
+                            self._speech_cpp_status,
+                            status="failed",
+                            message=str(exc),
+                            install_allowed=install,
+                        ),
+                    }
+                )
+
+        @objc.python_method
+        def _run_speech_cpp_work(self, operation_id: int, install: bool) -> None:
+            cancel = self._speech_cpp_cancel_event
+
+            def progress(payload):
+                if cancel.is_set() or payload.get("status") == "complete":
+                    return
+                self._send_speech_cpp_status(
+                    {
+                        "operation_id": operation_id,
+                        "status": {
+                            "status": "installing",
+                            "phase": payload.get("status"),
+                            "downloaded_bytes": payload.get("downloaded_bytes", 0),
+                            "total_bytes": payload.get("total_bytes"),
+                            "install_allowed": False,
+                        },
+                    }
+                )
+
+            try:
+                if install:
+                    _install_managed_speech_cpp(progress, cancel)
+                if cancel.is_set():
+                    return
+                status = _speech_cpp_runtime_status(cancel)
+                if install and status["status"] == "missing":
+                    status = dict(
+                        status,
+                        status="failed",
+                        message=(
+                            "Installation finished but speech.cpp was not found. "
+                            "Retry installation."
+                        ),
+                    )
+            except Exception as exc:
+                override = os.environ.get(haas_runtime.SPEECH_CPP_PATH_ENV) is not None
+                status = {
+                    "status": "failed",
+                    "message": str(exc),
+                    "install_allowed": install and not override,
+                    "source": "override" if override else None,
+                    "target_version": "0.10.1",
+                }
+            if not cancel.is_set():
+                self._send_speech_cpp_status(
+                    {
+                        "operation_id": operation_id,
+                        "status": status,
+                        "finished": True,
+                        "recover": install,
+                    }
+                )
+
+        @objc.python_method
+        def _send_speech_cpp_status(self, payload: dict[str, Any]) -> None:
+            try:
+                self.performSelectorOnMainThread_withObject_waitUntilDone_(
+                    "applySpeechCppStatus:",
+                    payload,
+                    False,
+                )
+            except Exception:
+                LOGGER.debug("Could not deliver speech.cpp status", exc_info=True)
+
+        def applySpeechCppStatus_(self, payload):  # noqa: N802
+            if (
+                self._speech_cpp_terminated
+                or not self._speech_cpp_busy
+                or payload.get("operation_id") != self._speech_cpp_operation_id
+            ):
+                return
+            self._speech_cpp_status = dict(
+                payload["status"],
+                operation_id=self._speech_cpp_operation_id,
+            )
+            finished = bool(payload.get("finished"))
+            if finished:
+                self._speech_cpp_busy = False
+                self._speech_cpp_checked_at = time.monotonic()
+            self._push_event("speechCppStatus", dict(self._speech_cpp_status))
+            if finished:
+                recover = payload.get("recover") or self._speech_cpp_start_when_ready
+                self._speech_cpp_start_when_ready = False
+                if (
+                    self._dictation_requested
+                    and recover
+                    and self._speech_cpp_status.get("status") == "available"
+                    and (self._configured_model_token() or "").startswith("haas:")
+                ):
+                    self._start_daemon_if_ready()
+
+        @objc.python_method
+        def _cancel_speech_cpp_work(self) -> None:
+            self._speech_cpp_terminated = True
+            self._speech_cpp_operation_id += 1
+            self._speech_cpp_cancel_event.set()
 
         @objc.python_method
         def _start_model_download(self, model_token: str, success_message_key: str) -> bool:
@@ -963,6 +1231,8 @@ def _run_appkit_app() -> int:
             *,
             success_message_key: str = "voice_input_started_message",
         ) -> str | None:
+            if not self._dictation_requested or self._speech_cpp_terminated:
+                return None
             if report is None:
                 report = self._last_permission_report or self._combined_permission_report()
             self._setup_permission_report = report
@@ -984,10 +1254,28 @@ def _run_appkit_app() -> int:
                 return None
             if not self.daemon_controller.is_running:
                 if self._llm_prompt_in_progress:
-                    # Re-entered from the run loop while the LLM modal is open
-                    # (e.g. a permission result); the outer call starts the daemon.
+                    # The outer call revalidates startup after the modal run loop exits.
                     return None
+                request_generation = self._dictation_request_generation
+                runtime_generation = self._speech_cpp_operation_id
+                try:
+                    config_before_prompt = copy.deepcopy(self.bridge._load_config())
+                except Exception:
+                    config_before_prompt = None
                 llm_enabled_override = self._llm_enabled_override_for_start()
+                if not self._dictation_requested or self._speech_cpp_terminated:
+                    return None
+                if request_generation != self._dictation_request_generation:
+                    # An explicit Start during the prompt needs fresh preflight checks.
+                    return self._start_daemon_if_ready(success_message_key=success_message_key)
+                if runtime_generation != self._speech_cpp_operation_id:
+                    return None
+                try:
+                    config_after_prompt = self.bridge._load_config()
+                except Exception:
+                    config_after_prompt = None
+                if config_before_prompt != config_after_prompt:
+                    return None
                 try:
                     self.daemon_controller.start(llm_enabled_override=llm_enabled_override)
                 except Exception as exc:
@@ -1033,6 +1321,19 @@ def _run_appkit_app() -> int:
             enabled = choice == 0
             LOGGER.info("LLM correction mode=ask answered in app: enabled=%s", enabled)
             return enabled
+
+        @objc.python_method
+        def _request_dictation_start(self) -> str | None:
+            self._dictation_request_generation += 1
+            self._dictation_requested = True
+            return self._start_daemon_if_ready()
+
+        @objc.python_method
+        def _request_dictation_stop(self) -> None:
+            self._dictation_request_generation += 1
+            self._dictation_requested = False
+            self._speech_cpp_start_when_ready = False
+            self._stop_daemon()
 
         @objc.python_method
         def _stop_daemon(self) -> None:
