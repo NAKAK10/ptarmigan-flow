@@ -3,9 +3,9 @@ class PtarmiganFlow < Formula
   homepage "https://github.com/NAKAK10/ptarmigan-flow"
   # stable-release: updated by GitHub Actions on release publish.
   # stable-release-start
-  url "https://github.com/NAKAK10/ptarmigan-flow/archive/refs/tags/v0.3.27.tar.gz"
-  sha256 "76c986656b34a9821a5f8519268bceccbba88c620150ae9d0603aa349aee2829"
-  version "0.3.27"
+  url "https://github.com/NAKAK10/ptarmigan-flow/archive/refs/tags/v0.3.28.tar.gz"
+  sha256 "889d9d0bd70f3a604b479118b836fb4289b6d1f73f55e7e421188ccd9c782f05"
+  version "0.3.28"
   # stable-release-end
   head "https://github.com/NAKAK10/ptarmigan-flow.git", branch: "main"
   preserve_rpath
