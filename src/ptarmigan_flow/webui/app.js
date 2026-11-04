@@ -10,6 +10,9 @@ let activeDownloadToken = null;
 // Only edited fields override snapshots, so native state updates still reach
 // untouched settings. Keep these outside `state`, like the dictionary draft.
 const settingsDraft = {};
+// Preserve whitespace/blank lines independently of the normalized glossary.
+let glossaryDraftText = null;
+let glossaryDraftRevision = 0;
 // Runtime installation has its own lifecycle; GGUF download flags stay independent.
 let speechCppStatus = null;
 let speechCppRequestPending = false;
@@ -27,6 +30,12 @@ let dictRowSeq = 1;
 // Save feedback survives re-renders; pending includes the getState refresh.
 let settingsSaving = false;
 let settingsMessage = null;
+let glossarySaving = false;
+let glossaryMessage = null;
+// Serialize scoped settings writes.
+// Refreshes/feedback remain independent, so both screens can keep editing.
+const settingsWrites = [];
+let settingsWriteBusy = false;
 let dictionarySaving = false;
 // { kind: "success" | "error", text } | null; cleared on the next edit.
 let dictionaryMessage = null;
@@ -72,10 +81,17 @@ window.app = {
       acceptSpeechCppStatus(message.payload?.speech_cpp, true);
       // Native download completion also pushes daemonState. While settings is
       // open, update the cards/status without replacing any live form inputs.
-      if (message.event === "daemonState" && state && route === "settings") {
+      if (message.event === "daemonState" && state && ["settings", "glossary"].includes(route)) {
         state = message.payload;
-        updateSettingsInputsInPlace();
-        updateModelCardsInPlace();
+        if (route === "settings") {
+          updateSettingsInputsInPlace();
+          updateModelCardsInPlace();
+        } else {
+          const input = document.getElementById("llm_glossary");
+          const text = glossaryText(state.settings);
+          if (input && input.value !== text) input.value = text;
+        }
+        updateSaveFeedback(route);
         const status = app.querySelector(".brand-status");
         if (status) {
           status.classList.toggle("running", Boolean(state.daemon_running));
@@ -159,6 +175,7 @@ function shell(content) {
         ${state.setup_required ? navButton("onboarding", "route_onboarding") : ""}
         ${navButton("settings", "route_settings")}
         ${navButton("dictionary", "route_dictionary")}
+        ${navButton("glossary", "route_glossary")}
       </nav>
     </div>
     ${content}
@@ -197,6 +214,11 @@ function render() {
   if (route === "dictionary") {
     shell(renderDictionary());
     bindDictionary();
+    return;
+  }
+  if (route === "glossary") {
+    shell(renderGlossary());
+    bindGlossary();
     return;
   }
   shell(renderOnboarding());
@@ -278,6 +300,7 @@ function beginHotkeyCaptureUi(containerEl, badge, messageEl, changeButton) {
     containerEl.dataset.hotkeyValue = token;
     if (containerEl.id === "hotkey") {
       settingsDraft.hotkey = token;
+      updateSaveFeedback("settings");
     }
     badge.textContent = hotkeyLabel(token);
     finish();
@@ -449,17 +472,28 @@ function bindOnboarding() {
   bindSharedActions();
 }
 
+function settingsValueEqual(left, right) {
+  return Array.isArray(left) && Array.isArray(right)
+    ? left.length === right.length && left.every((value, index) => value === right[index])
+    : left === right;
+}
+
+function parseGlossary(text) {
+  return [...new Set(text.split(/\r\n?|\n/).map(term => term.trim()).filter(Boolean))];
+}
+
+function glossaryText(settings) {
+  return glossaryDraftText ?? (settings.llm_correction?.glossary || []).join("\n");
+}
+
 function settingsValues() {
   const settings = { ...state.settings, llm_correction: { ...state.settings?.llm_correction } };
   for (const [key, value] of Object.entries(settingsDraft)) {
     const target = key.startsWith("llm_") ? settings.llm_correction : settings;
     const field = key.startsWith("llm_") ? key.slice(4) : key;
-    if (target[field] === value) {
-      // Saved/acknowledged edits no longer mask later external changes.
-      delete settingsDraft[key];
-    } else {
-      target[field] = value;
-    }
+    // Only an explicit save acknowledges edits. Matching native snapshots
+    // may be followed by stale pushes or another screen's save response.
+    target[field] = value;
   }
   return settings;
 }
@@ -486,6 +520,7 @@ function renderSettings() {
   const models = state.models || [];
   return `
     <section class="grid">
+      ${saveScreenHeader("settings", "settings_window_title")}
       <div class="panel full">
         <div class="panel-header">
           <h2>${escapeHtml(t("settings_models_section_title"))}</h2>
@@ -495,9 +530,6 @@ function renderSettings() {
         </div>
       </div>
       <div class="panel">
-        <div class="panel-header">
-          <h2>${escapeHtml(t("settings_window_title"))}</h2>
-        </div>
         ${selectRow(
           "language",
           "settings_language_label",
@@ -541,10 +573,6 @@ function renderSettings() {
         ${inputRow("llm_provider", "settings_llm_provider_label", llm.provider)}
         ${inputRow("llm_model", "settings_llm_model_label", llm.model)}
         ${inputRow("llm_base_url", "settings_llm_base_url_label", llm.base_url)}
-      </div>
-      <div class="panel full action-bar">
-        ${saveMessageBox("settings-error", settingsMessage, settingsSaving)}
-        <button class="button primary" data-action="save-settings" aria-busy="${settingsSaving}" ${settingsSaving ? "disabled" : ""}>${escapeHtml(saveButtonLabel(settingsSaving, settingsMessage, "settings_save_button"))}</button>
       </div>
     </section>
   `;
@@ -849,6 +877,7 @@ function bindModelCard(button) {
   }
   button.addEventListener("click", () => {
     settingsDraft.model = button.dataset.selectModel;
+    updateSaveFeedback("settings");
     updateModelCardsInPlace();
   });
   button.addEventListener("keydown", (event) => {
@@ -861,6 +890,7 @@ function bindModelCard(button) {
     if (event.key === "Enter" || event.key === " " || event.key === "Spacebar") {
       event.preventDefault();
       settingsDraft.model = button.dataset.selectModel;
+      updateSaveFeedback("settings");
       updateModelCardsInPlace();
     }
   });
@@ -953,7 +983,10 @@ function settingsPayload(modelOverride = null) {
 function bindSettings() {
   bindSpeechCppButtons();
   app.querySelectorAll("select[id], input[id]").forEach((input) => {
-    const remember = () => { settingsDraft[input.id] = input.value; };
+    const remember = () => {
+      settingsDraft[input.id] = input.value;
+      updateSaveFeedback("settings");
+    };
     input.addEventListener("input", remember);
     input.addEventListener("change", remember);
   });
@@ -979,11 +1012,69 @@ function saveMessageBox(id, message, saving) {
   return `<div id="${id}" class="save-status${kind ? ` alert ${kind}` : ""}" role="status" aria-live="polite" aria-atomic="true">${escapeHtml(text)}</div>`;
 }
 
+function saveState(scope) {
+  if (scope === "settings") return { saving: settingsSaving, message: settingsMessage };
+  if (scope === "glossary") return { saving: glossarySaving, message: glossaryMessage };
+  return { saving: dictionarySaving, message: dictionaryMessage };
+}
+
+function settingsHaveChanges() {
+  const current = settingsValues();
+  const saved = state.settings;
+  return ["model", "language", "hotkey", "output_mode"].some(key => current[key] !== saved[key]) ||
+    ["mode", "provider", "model", "base_url"].some(key =>
+      String(current.llm_correction?.[key] ?? "").trim() !==
+      String(saved.llm_correction?.[key] ?? "").trim());
+}
+
+function dictionaryContent(draft = null) {
+  return JSON.stringify(["exact", "regex"].map(section => {
+    const content = draft ? draft[section].map(row =>
+      [row.key.trim(), parseDictionaryValues(section, row.valuesText)])
+      .filter(([key, values]) => key || values.length) :
+      Object.entries(state.dictionary?.[section] || {});
+    // Persisted regex whitespace affects matching; exact rules ignore padding.
+    // Regex rule order can change matching precedence. Exact rules are a lookup.
+    return section === "regex" ? content :
+      content.map(([key, values]) =>
+        [key.trim(), values.map(value => value.trim()).filter(Boolean)])
+        .sort((left, right) => left[0] < right[0] ? -1 : left[0] > right[0] ? 1 : 0);
+  }));
+}
+
+function saveHasChanges(scope) {
+  if (scope === "settings") return settingsHaveChanges();
+  if (scope === "glossary") {
+    return !settingsValueEqual(parseGlossary(glossaryText(state.settings)),
+      parseGlossary((state.settings?.llm_correction?.glossary || []).join("\n")));
+  }
+  if (!dictDraft) return false;
+  dictDraft.dirty = dictionaryContent(dictDraft) !== dictionaryContent();
+  return dictDraft.dirty;
+}
+
+function saveButtonClass(changed, saving) {
+  return `button primary save-button${changed && !saving ? " has-changes" : ""}`;
+}
+
+function saveScreenHeader(scope, titleKey) {
+  const { saving, message } = saveState(scope);
+  const changed = saveHasChanges(scope);
+  return `<header class="panel full screen-save-header" data-save-header="${scope}">
+    <h2>${escapeHtml(t(titleKey))}</h2>
+    <div class="screen-save-actions">
+      <span id="${scope}-unsaved" class="unsaved-indicator${changed && !saving ? "" : " hidden"}">${escapeHtml(t("dictionary_unsaved_changes_label"))}</span>
+      <button class="${saveButtonClass(changed, saving)}" data-action="save-${scope}" aria-describedby="${changed && !saving ? `${scope}-unsaved` : ""}" aria-busy="${saving}" ${saving ? "disabled" : ""}>${escapeHtml(saveButtonLabel(saving, message, `${scope}_save_button`))}</button>
+    </div>
+    ${saveMessageBox(`${scope}-error`, message, saving)}
+  </header>`;
+}
+
 // Patch feedback immediately without rebuilding the settings form. Rendering
 // after a push or navigation uses the same pending flags and keeps Save locked.
 function updateSaveFeedback(scope) {
-  const saving = scope === "settings" ? settingsSaving : dictionarySaving;
-  const message = scope === "settings" ? settingsMessage : dictionaryMessage;
+  const { saving, message } = saveState(scope);
+  const changed = saveHasChanges(scope);
   const target = document.getElementById(`${scope}-error`);
   if (target) {
     const kind = saving ? "pending" : message?.kind;
@@ -992,17 +1083,14 @@ function updateSaveFeedback(scope) {
   }
   const button = app.querySelector(`[data-action='save-${scope}']`);
   if (button) {
+    button.className = saveButtonClass(changed, saving);
     button.disabled = saving;
     button.setAttribute("aria-busy", String(saving));
+    button.setAttribute("aria-describedby", changed && !saving ? `${scope}-unsaved` : "");
     button.textContent = saveButtonLabel(saving, message, `${scope}_save_button`);
   }
-  if (scope === "dictionary") {
-    // A successful refresh replaces the saved draft, so don't allow newer
-    // edits to be made and then silently discarded while the save is pending.
-    app.querySelectorAll("[data-dictionary-row] input, [data-dictionary-row] textarea, [data-delete-row], [data-add-dictionary]").forEach((control) => {
-      control.disabled = saving;
-    });
-  }
+  const indicator = document.getElementById(`${scope}-unsaved`);
+  if (indicator) indicator.className = `unsaved-indicator${changed && !saving ? "" : " hidden"}`;
 }
 
 function saveFailureText(scope, error, refreshing = false) {
@@ -1021,6 +1109,7 @@ function settingsValidationText(errors) {
     "llm_correction.provider": "settings_llm_provider_label",
     "llm_correction.model": "settings_llm_model_label",
     "llm_correction.base_url": "settings_llm_base_url_label",
+    "llm_correction.glossary": "settings_llm_glossary_label",
   };
   const fields = [...new Set((errors || []).map((field) => {
     const label = t(labels[field] || "settings_window_title");
@@ -1041,22 +1130,27 @@ async function saveSettings(modelOverride = null) {
   updateSaveFeedback("settings");
   let refreshing = false;
   try {
-    const result = await bridge("saveSettings", payload);
+    const result = await writeSettings(payload);
     if (result.saved === false) {
       settingsMessage = { kind: "error", text: [settingsValidationText(result.errors), result.message].filter(Boolean).join(" ") };
       return;
     }
+    refreshing = true;
+    const refreshed = await bridge("getState");
+    // Keep drafts through the refresh too: pushes and failed refreshes must
+    // not expose old persisted values or discard text needed for a retry.
     for (const [key, value] of Object.entries(submittedDraft)) {
-      const target = key.startsWith("llm_") ? result.settings.llm_correction : result.settings;
+      const saved = result.settings || refreshed.settings;
+      const target = key.startsWith("llm_") ? saved?.llm_correction : saved;
       const field = key.startsWith("llm_") ? key.slice(4) : key;
       // The saved value may be normalized. Acknowledge only the sent edit,
       // not a newer draft entered while the save request was in flight.
-      if (target[field] !== undefined && settingsDraft[key] === value) {
+      if (target?.[field] !== undefined && settingsValueEqual(settingsDraft[key], value)) {
         delete settingsDraft[key];
       }
     }
-    refreshing = true;
-    state = await bridge("getState");
+    mergeSavedSettings(result.settings || refreshed.settings, "settings");
+    state.strings = refreshed.strings || state.strings;
     settingsMessage = { kind: "success", text: t("settings_saved_message") };
     render();
   } catch (error) {
@@ -1067,28 +1161,130 @@ async function saveSettings(modelOverride = null) {
   }
 }
 
+function writeSettings(payload) {
+  return new Promise((resolve, reject) => {
+    settingsWrites.push({ payload, resolve, reject });
+    void drainSettingsWrites();
+  });
+}
+
+async function drainSettingsWrites() {
+  if (settingsWriteBusy || !settingsWrites.length) return;
+  settingsWriteBusy = true;
+  const request = settingsWrites.shift();
+  try {
+    request.resolve(await bridge("saveSettings", request.payload));
+  } catch (error) {
+    request.reject(error);
+  } finally {
+    settingsWriteBusy = false;
+    void drainSettingsWrites();
+  }
+}
+
+// Save replies contain complete settings and can arrive out of order. Merge
+// only the owning screen's fields so neither save rolls the other one back.
+function mergeSavedSettings(saved, scope) {
+  const settings = { ...state.settings, llm_correction: { ...state.settings?.llm_correction } };
+  if (scope === "glossary") {
+    settings.llm_correction.glossary = [...saved.llm_correction.glossary];
+  } else {
+    for (const key of ["model", "language", "hotkey", "output_mode"]) {
+      settings[key] = saved[key];
+    }
+    for (const key of ["mode", "provider", "model", "base_url"]) {
+      settings.llm_correction[key] = saved.llm_correction[key];
+    }
+  }
+  state.settings = settings;
+}
+
+function glossaryPayload() {
+  return { llm_correction: {
+    glossary: parseGlossary(document.getElementById("llm_glossary")?.value ?? glossaryText(state.settings)),
+  } };
+}
+
+function renderGlossary() {
+  return `
+    <section class="grid">
+      ${saveScreenHeader("glossary", "route_glossary")}
+      <div class="panel full">
+        <div class="form-row">
+          <label for="llm_glossary">${escapeHtml(t("settings_llm_glossary_label"))}</label>
+          <p id="llm_glossary_help" class="form-help">${escapeHtml(t("settings_llm_glossary_help"))}</p>
+          <textarea id="llm_glossary" class="glossary-editor" rows="16" aria-describedby="llm_glossary_help">
+${escapeHtml(glossaryText(state.settings))}</textarea>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function bindGlossary() {
+  const input = document.getElementById("llm_glossary");
+  const remember = () => {
+    if (glossaryDraftText !== input.value) {
+      glossaryDraftText = input.value;
+      glossaryDraftRevision++;
+    }
+    updateSaveFeedback("glossary");
+  };
+  input.addEventListener("input", remember);
+  input.addEventListener("change", remember);
+  app.querySelector("[data-action='save-glossary']")?.addEventListener("click", saveGlossary);
+}
+
+async function saveGlossary() {
+  if (glossarySaving) return;
+  const payload = glossaryPayload();
+  const submittedRevision = glossaryDraftRevision;
+  glossarySaving = true;
+  glossaryMessage = null;
+  updateSaveFeedback("glossary");
+  let refreshing = false;
+  try {
+    const result = await writeSettings(payload);
+    if (result.saved === false) {
+      glossaryMessage = { kind: "error", text: [settingsValidationText(result.errors), result.message].filter(Boolean).join(" ") };
+      return;
+    }
+    refreshing = true;
+    const refreshed = await bridge("getState");
+    const saved = result.settings || refreshed.settings;
+    mergeSavedSettings(saved, "glossary");
+    // Server normalization can differ from JavaScript trim. Adopt the saved
+    // value unless an actual edit occurred after this submission, including
+    // an edit away from and back to the original text.
+    if (glossaryDraftRevision === submittedRevision) {
+      glossaryDraftText = null;
+    }
+    glossaryMessage = { kind: "success", text: t("glossary_saved_message") };
+    render();
+  } catch (error) {
+    glossaryMessage = { kind: "error", text: saveFailureText("glossary", error, refreshing) };
+  } finally {
+    glossarySaving = false;
+    updateSaveFeedback("glossary");
+  }
+}
+
 function renderDictionary() {
-  // A clean (no unsaved edits) draft is safe to rebuild from the latest
-  // state so external config changes become visible; a dirty draft is left
-  // alone to protect in-progress edits.
-  if (!dictDraft || dictDraft.dirty === false) {
+  // Untouched drafts follow native snapshots. Keep edited raw rows even when
+  // their normalized content matches saved data, so tab switches lose no work.
+  if (!dictDraft || (!dictDraft.edited && !dictDraft.dirty && !dictionarySaving)) {
     dictDraft = buildDictDraft(state.dictionary);
   }
   return `
     <section class="grid">
+      ${saveScreenHeader("dictionary", "dictionary_editor_title")}
       <div class="panel full">
-        <div class="panel-header">
-          <h2>${escapeHtml(t("dictionary_editor_title"))}</h2>
-        </div>
         ${dictionarySection("exact", dictDraft.exact, "dictionary_exact_rules_title", "dictionary_exact_rules_description", "dictionary_add_exact_button")}
         ${dictionarySection("regex", dictDraft.regex, "dictionary_regex_rules_title", "dictionary_regex_rules_description", "dictionary_add_regex_button")}
         <div class="actions">
           <button class="button" data-add-dictionary="exact">${escapeHtml(t("dictionary_add_exact_button"))}</button>
           <button class="button" data-add-dictionary="regex">${escapeHtml(t("dictionary_add_regex_button"))}</button>
-          <button class="button primary" data-action="save-dictionary" aria-busy="${dictionarySaving}" ${dictionarySaving ? "disabled" : ""}>${escapeHtml(saveButtonLabel(dictionarySaving, dictionaryMessage, "dictionary_save_button"))}</button>
-          <span class="unsaved-indicator${dictDraft.dirty ? "" : " hidden"}" data-dictionary-unsaved>${escapeHtml(t("dictionary_unsaved_changes_label"))}</span>
         </div>
-        ${saveMessageBox("dictionary-error", dictionaryMessage, dictionarySaving)}
       </div>
     </section>
   `;
@@ -1104,6 +1300,8 @@ function buildDictDraft(dictionary) {
       makeDictRow("regex", key, values),
     ),
     dirty: false,
+    edited: false,
+    revision: 0,
   };
 }
 
@@ -1204,10 +1402,12 @@ function updateDictRow(section, id, patch) {
     return;
   }
   const keyChanged = Object.prototype.hasOwnProperty.call(patch, "key");
+  const changed = Object.entries(patch).some(([key, value]) => row[key] !== value);
   Object.assign(row, patch);
   const hadError = Boolean(row.error);
   row.error = null;
-  dictDraft.dirty = true;
+  dictDraft.edited = true;
+  if (changed) dictDraft.revision++;
   clearDictionaryMessage();
   if (hadError) {
     clearDictRowErrorInDom(id);
@@ -1218,7 +1418,7 @@ function updateDictRow(section, id, patch) {
     // per-section duplicate set and drop any sibling's now-stale error.
     reconcileDuplicateKeyErrors(section);
   }
-  app.querySelector("[data-dictionary-unsaved]")?.classList.toggle("hidden", !dictDraft.dirty);
+  updateSaveFeedback("dictionary");
 }
 
 function clearDictRowErrorInDom(id) {
@@ -1279,7 +1479,9 @@ function addDictRow(section) {
     valuesText: defaultValue,
     error: null,
   });
-  dictDraft.dirty = true;
+  dictDraft.edited = true;
+  dictDraft.revision++;
+  saveHasChanges("dictionary");
   clearDictionaryMessage();
   render();
 }
@@ -1294,7 +1496,9 @@ function deleteDictRow(section, id) {
     return;
   }
   list.splice(index, 1);
-  dictDraft.dirty = true;
+  dictDraft.edited = true;
+  dictDraft.revision++;
+  saveHasChanges("dictionary");
   clearDictionaryMessage();
   render();
 }
@@ -1401,6 +1605,7 @@ async function saveDictionary() {
     return;
   }
   const { payload, hasDuplicates } = buildDictionaryPayload();
+  const submittedRevision = dictDraft.revision;
   if (hasDuplicates) {
     const first = [...dictDraft.exact, ...dictDraft.regex].find((row) => row.error);
     dictionaryMessage = { kind: "error", text: `${first.error.message} ${t("save_retry_hint")}` };
@@ -1414,16 +1619,23 @@ async function saveDictionary() {
   try {
     const result = await bridge("saveDictionary", payload);
     if (result.saved === false) {
-      applyDictionarySaveErrors(result.errors || []);
-      render();
+      if (dictDraft.revision === submittedRevision) {
+        applyDictionarySaveErrors(result.errors || []);
+        if (route === "dictionary") render();
+      } else {
+        dictionaryMessage = { kind: "error", text: saveFailureText("dictionary", { message: result.errors?.[0]?.message }) };
+      }
       return;
     }
     refreshing = true;
     const refreshedState = await bridge("getState");
-    state = refreshedState;
-    dictDraft = null;
+    state.dictionary = refreshedState.dictionary;
+    const hasNewerEdits = dictDraft.revision !== submittedRevision;
+    if (!hasNewerEdits) dictDraft = null;
     dictionaryMessage = { kind: "success", text: t("dictionary_saved_message") };
-    render();
+    // Feedback is patched in finally. Keep newer editor nodes mounted so
+    // active focus, selection and caret survive the save/refresh response.
+    if (!hasNewerEdits && route === "dictionary") render();
   } catch (error) {
     // Keep the draft on save/refresh failure, including a save which succeeded
     // on disk but could not yet be reflected in the view.

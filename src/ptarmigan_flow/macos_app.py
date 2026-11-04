@@ -49,6 +49,7 @@ from ptarmigan_flow.permissions import (
     request_input_monitoring_permission,
     request_microphone_permission,
 )
+from ptarmigan_flow.process_memory import sample_process_memory
 from ptarmigan_flow.stt import availability, haas_runtime, model_download
 from ptarmigan_flow.stt.factory import parse_stt_model
 from ptarmigan_flow.transcription_corrections import resolve_dictionary_path
@@ -59,6 +60,7 @@ LOGGER = logging.getLogger(__name__)
 APP_NAME = "PtarmiganFlow"
 # Delay before the one-shot update check after launch, so startup work settles first.
 _STARTUP_UPDATE_CHECK_DELAY_SECONDS = 5.0
+_MEMORY_SAMPLE_INTERVAL_SECONDS = 5.0
 _NS_ALERT_FIRST_BUTTON_RETURN = 1000
 _UPDATE_LOG_PATH = Path.home() / "Library" / "Logs" / "ptarmigan-flow" / "update.log"
 _HOTKEY_KEYCODE_TO_MODIFIER_FLAG = {
@@ -309,6 +311,11 @@ def _run_appkit_app() -> int:
             self._hotkey_capture_active = False
             self._hotkey_capture_started_at: float | None = None
             self.daemon_status_timer = None
+            self._memory_bytes: int | None = None
+            self._memory_sampled = False
+            self._memory_sample_in_progress = False
+            self._memory_last_sample_at: float | None = None
+            self._memory_terminated = False
             self.permission_timer = None
             self._permission_check_generation = 0
             self._permission_check_in_progress = False
@@ -348,6 +355,7 @@ def _run_appkit_app() -> int:
             # Downloaded and verified update, applied on "restart to update" or on quit (#41).
             self._update_prepared: app_updater.PreparedUpdate | None = None
             self._update_helper_launched = False
+            self._restart_scheduled = False
             self._update_attempts = app_updater.PrepareAttempts()
             self._update_startup_timer = None
             self._update_recheck_timer = None
@@ -387,6 +395,8 @@ def _run_appkit_app() -> int:
 
         def applicationDidFinishLaunching_(self, _notification):  # noqa: N802
             self._build_status_item()
+            self._start_daemon_status_timer()
+            self._start_memory_sample()
             self.onboarding_flow.start(
                 report=check_all_permissions(),
                 language_already_selected=onboarding_flow_module.language_was_selected(),
@@ -400,6 +410,8 @@ def _run_appkit_app() -> int:
             self._schedule_startup_update_check()
 
         def applicationWillTerminate_(self, _notification):  # noqa: N802
+            self._memory_terminated = True
+            self._stop_daemon_status_timer()
             self._stop_permission_timer()
             self._terminate_model_download_process()
             self._cancel_speech_cpp_work()
@@ -457,6 +469,10 @@ def _run_appkit_app() -> int:
             )
             self.dictation_status_menu_item.setEnabled_(False)
             self.status_menu.addItem_(self.dictation_status_menu_item)
+            self.memory_menu_item = self._menu_item(strings["memory_measuring_menu"], None)
+            self.memory_menu_item.setEnabled_(False)
+            self.memory_menu_item.setToolTip_(strings["memory_tooltip"])
+            self.status_menu.addItem_(self.memory_menu_item)
             self.open_setup_menu_item = self._menu_item(strings["open_setup_menu"], "showSetup:")
             self.open_setup_menu_item.setHidden_(True)
             self.status_menu.addItem_(self.open_setup_menu_item)
@@ -485,6 +501,8 @@ def _run_appkit_app() -> int:
                 "checkForUpdates:",
             )
             self.status_menu.addItem_(self.check_updates_menu_item)
+            self.restart_menu_item = self._menu_item(strings["restart_menu"], "restartApp:")
+            self.status_menu.addItem_(self.restart_menu_item)
             self.quit_menu_item = self._menu_item(strings["quit_menu"], "quit:")
             self.status_menu.addItem_(self.quit_menu_item)
             self.status_menu.setDelegate_(self)
@@ -510,6 +528,7 @@ def _run_appkit_app() -> int:
                 strings=strings,
             )
             self.dictation_status_menu_item.setTitle_(menu_state.status_title)
+            self._update_memory_menu()
             self.open_setup_menu_item.setTitle_(strings["open_setup_menu"])
             self.open_setup_menu_item.setHidden_(not menu_state.show_open_setup)
             status_button = self.status_item.button()
@@ -519,7 +538,66 @@ def _run_appkit_app() -> int:
             self.dictionary_menu_item.setTitle_(strings["edit_dictionary_menu"])
             self.login_menu_item.setTitle_(strings["login_at_startup_menu"])
             self._update_updater_menu_items(strings)
+            self.restart_menu_item.setTitle_(strings["restart_menu"])
             self.quit_menu_item.setTitle_(strings["quit_menu"])
+
+        @objc.python_method
+        def _update_memory_menu(self) -> None:
+            if self._memory_terminated or not hasattr(self, "memory_menu_item"):
+                return
+            strings = self._strings()
+            if not self._memory_sampled:
+                title = strings["memory_measuring_menu"]
+            elif self._memory_bytes is None:
+                title = strings["memory_unavailable_menu"]
+            else:
+                mib = self._memory_bytes / (1024**2)
+                value, unit = (mib / 1024, "GiB") if mib >= 1024 else (mib, "MiB")
+                title = strings["memory_value_menu"].format(value=f"{value:.1f}", unit=unit)
+            self.memory_menu_item.setTitle_(title)
+            self.memory_menu_item.setToolTip_(strings["memory_tooltip"])
+
+        @objc.python_method
+        def _start_memory_sample(self) -> None:
+            if self._memory_terminated or self._memory_sample_in_progress:
+                return
+            now = time.monotonic()
+            last = self._memory_last_sample_at
+            if last is not None and now - last < _MEMORY_SAMPLE_INTERVAL_SECONDS:
+                return
+            self._memory_last_sample_at = now
+            self._memory_sample_in_progress = True
+            try:
+                threading.Thread(
+                    target=self._sample_memory_in_background, args=(), daemon=True
+                ).start()
+            except RuntimeError:
+                self.applyMemorySample_({"bytes": None})
+
+        @objc.python_method
+        def _sample_memory_in_background(self) -> None:
+            if self._memory_terminated:
+                return
+            try:
+                memory_bytes = sample_process_memory()
+            except Exception:
+                memory_bytes = None
+            if self._memory_terminated:
+                return
+            try:
+                self.performSelectorOnMainThread_withObject_waitUntilDone_(
+                    "applyMemorySample:", {"bytes": memory_bytes}, False
+                )
+            except Exception:
+                self._memory_sample_in_progress = False
+
+        def applyMemorySample_(self, payload):  # noqa: N802
+            if self._memory_terminated:
+                return
+            self._memory_sample_in_progress = False
+            self._memory_sampled = True
+            self._memory_bytes = payload["bytes"]
+            self._update_memory_menu()
 
         @objc.python_method
         def _update_updater_menu_items(self, strings: dict[str, str]) -> None:
@@ -724,13 +802,10 @@ def _run_appkit_app() -> int:
                         logging.getLogger(__name__).exception("Failed to remove hotkey monitor")
             self._hotkey_global_monitor = None
             self._hotkey_local_monitor = None
-            self._stop_daemon_status_timer()
 
         @objc.python_method
         def _start_daemon_status_timer(self) -> None:
-            if self.daemon_status_timer is not None:
-                return
-            if self._hotkey_global_monitor is None and self._hotkey_local_monitor is None:
+            if self._memory_terminated or self.daemon_status_timer is not None:
                 return
             schedule_timer = (
                 NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_
@@ -1834,6 +1909,8 @@ def _run_appkit_app() -> int:
 
         @objc.python_method
         def _install_prepared_update_on_quit(self) -> None:
+            if self._restart_scheduled:
+                return
             if not self._has_pending_prepared_update():
                 return
             version = self._update_prepared.version
@@ -1900,18 +1977,30 @@ def _run_appkit_app() -> int:
 
         @objc.python_method
         def _restart_app(self) -> bool:
-            # A plain relaunch would race the quit-time install; restart into the update.
-            if self._restart_to_update():
+            if self._restart_scheduled:
                 return True
+            if self._update_helper_launched:
+                return False
             if app_relaunch.relaunch_app():
+                # A normal restart must not apply a prepared update during cleanup.
+                self._restart_scheduled = True
                 NSApplication.sharedApplication().terminate_(self)
                 return True
+            strings = self._strings()
+            self._run_alert(
+                strings["webui_error_title"],
+                strings["restart_failed_message"] + "\n\n" + strings["restart_failed_guidance"],
+                [strings["update_ok_button"]],
+            )
             return False
 
         def pollPermissions_(self, _timer):  # noqa: N802
             self._start_permission_check()
 
         def pollDaemonStatus_(self, _timer):  # noqa: N802
+            if self._memory_terminated:
+                return
+            self._start_memory_sample()
             if self._reconcile_daemon_status():
                 self._push_daemon_state()
                 return

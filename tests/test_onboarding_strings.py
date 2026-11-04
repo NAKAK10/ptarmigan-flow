@@ -104,6 +104,11 @@ REQUIRED_KEYS = {
     "open_system_settings_button",
     "output_clipboard_paste",
     "output_direct_typing",
+    "memory_measuring_menu",
+    "memory_unavailable_menu",
+    "memory_value_menu",
+    "memory_tooltip",
+    "restart_menu",
     "quit_menu",
     "check_updates_menu",
     "update_available_menu",
@@ -131,8 +136,13 @@ REQUIRED_KEYS = {
     "update_ok_button",
     "restart_app_button",
     "restart_failed_message",
+    "restart_failed_guidance",
     "restart_required_note",
     "route_dictionary",
+    "route_glossary",
+    "glossary_save_button",
+    "glossary_saved_message",
+    "glossary_save_failed_message",
     "route_onboarding",
     "route_settings",
     "save_error_unknown",
@@ -146,6 +156,8 @@ REQUIRED_KEYS = {
     "settings_language_help",
     "settings_language_label",
     "settings_llm_base_url_label",
+    "settings_llm_glossary_label",
+    "settings_llm_glossary_help",
     "settings_llm_mode_always",
     "settings_llm_mode_ask",
     "settings_llm_mode_label",
@@ -228,6 +240,31 @@ def test_settings_open_config_button_translations_are_exact() -> None:
     assert onboarding_strings.strings_for("zh")["settings_open_config_button"] == ("打开配置文件")
 
 
+def test_glossary_labels_and_help_explain_preferred_spellings_with_llm_correction() -> None:
+    expected = {
+        "en": (
+            "Frequently used terms",
+            "Enter one term per line, using your preferred spelling. "
+            "These terms guide LLM correction when it is enabled; "
+            "they are not a replacement dictionary.",
+        ),
+        "ja": (
+            "よく使う言葉",
+            "使いたい表記で1行に1つ入力してください。LLM補正を使うときに表記の参考にします。"
+            "文字を置き換える変換辞書ではありません。",
+        ),
+        "zh": (
+            "常用词语",
+            "每行输入一个词语，使用您希望的写法。启用LLM修正时会参考这些写法。"
+            "这不是用于替换文字的转换词典。",
+        ),
+    }
+    for language, (label, help_text) in expected.items():
+        strings = onboarding_strings.strings_for(language)
+        assert strings["settings_llm_glossary_label"] == label
+        assert strings["settings_llm_glossary_help"] == help_text
+
+
 def test_required_japanese_translations_are_exact() -> None:
     strings = onboarding_strings.strings_for("ja")
 
@@ -298,7 +335,11 @@ def test_required_japanese_translations_are_exact() -> None:
     )
     assert strings["route_onboarding"] == "セットアップ"
     assert strings["route_settings"] == "設定"
-    assert strings["route_dictionary"] == "変換辞書"
+    assert strings["route_dictionary"] == "辞書"
+    assert strings["route_glossary"] == "よく使う言葉"
+    assert strings["glossary_saved_message"] == (
+        "よく使う言葉を保存しました。反映には音声入力を再起動してください。"
+    )
     assert strings["status_waiting"] == "待機中"
     assert strings["status_granted"] == "許可済み"
     assert strings["settings_models_section_title"] == "モデル"
@@ -336,6 +377,8 @@ def test_chinese_translations_are_simplified_and_complete() -> None:
     assert strings["route_onboarding"] == "设置"
     assert strings["route_settings"] == "设置"
     assert strings["route_dictionary"] == "转换词典"
+    assert strings["route_glossary"] == "常用词语"
+    assert strings["glossary_saved_message"] == "常用词语已保存。请重启语音输入以应用更改。"
     assert strings["status_waiting"] == "等待中"
     assert strings["status_granted"] == "已允许"
     assert strings["hotkey_confirm_title"] == "确认要使用的热键"

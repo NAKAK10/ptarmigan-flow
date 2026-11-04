@@ -294,11 +294,24 @@ class WebBridgeDispatcher:
         return {"daemon_running": bool(self.deps.daemon_is_running())}
 
     def _save_settings(self, payload: dict[str, Any]) -> dict[str, Any]:
+        llm_payload = _payload_dict(payload.get("llm_correction"))
+        # Only this exact shape is a glossary-only update. Mixed/partial
+        # requests must still pass the existing full-settings validation.
+        if set(payload) == {"llm_correction"} and set(llm_payload) == {"glossary"}:
+            errors = _validate_glossary(llm_payload["glossary"])
+            if errors:
+                return {"saved": False, "errors": errors}
+            config = self._load_config()
+            config.text.llm_correction.glossary = list(
+                dict.fromkeys(term.strip() for term in llm_payload["glossary"])
+            )
+            self._write_config(config)
+            return {"saved": True, "settings": _settings_payload(config)}
+
         model = str(payload.get("model", "")).strip()
         language = str(payload.get("language", "")).strip().lower()
         hotkey = str(payload.get("hotkey", "")).strip()
         output_mode = str(payload.get("output_mode", "")).strip()
-        llm_payload = _payload_dict(payload.get("llm_correction"))
 
         settings = AppSettingsModel(
             model=model,
@@ -323,6 +336,10 @@ class WebBridgeDispatcher:
         config.text.llm_correction.provider = str(llm_payload["provider"]).strip()
         config.text.llm_correction.model = str(llm_payload["model"]).strip()
         config.text.llm_correction.base_url = str(llm_payload["base_url"]).strip()
+        if "glossary" in llm_payload:
+            config.text.llm_correction.glossary = list(
+                dict.fromkeys(term.strip() for term in llm_payload["glossary"])
+            )
         self._write_config(config)
         self.deps.llm_mode_saved(str(config.text.llm_correction.mode.value))
         return {"saved": True, "settings": _settings_payload(config)}
@@ -446,6 +463,7 @@ def _settings_payload(config) -> dict[str, Any]:
             "provider": str(llm.provider),
             "model": str(llm.model),
             "base_url": str(llm.base_url),
+            "glossary": list(llm.glossary),
         },
     }
 
@@ -469,7 +487,17 @@ def _validate_llm_payload(payload: dict[str, Any]) -> list[str]:
     for field_name in ("provider", "model", "base_url"):
         if not str(payload.get(field_name, "")).strip():
             errors.append(f"llm_correction.{field_name}")
+    if "glossary" in payload:
+        errors.extend(_validate_glossary(payload["glossary"]))
     return errors
+
+
+def _validate_glossary(value: object) -> list[str]:
+    if not isinstance(value, list) or any(
+        not isinstance(term, str) or not term.strip() for term in value
+    ):
+        return ["llm_correction.glossary"]
+    return []
 
 
 def _string_list_table(value: object) -> dict[str, list[str]]:
