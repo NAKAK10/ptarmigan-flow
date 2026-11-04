@@ -131,6 +131,16 @@ ONBOARDING_STRINGS: dict[str, dict[str, str]] = {
         "open_system_settings_button": "Open System Settings",
         "output_clipboard_paste": "Clipboard Paste",
         "output_direct_typing": "Direct Typing",
+        "memory_measuring_menu": "Memory usage: Measuring…",
+        "memory_unavailable_menu": "Memory usage: Unavailable",
+        "memory_value_menu": "Memory usage: {value} {unit}",
+        "memory_tooltip": (
+            "Current RSS sum for this app and its child processes, including STT. "
+            "Shared pages may be counted more than once. "
+            "This is not total GPU memory or system memory pressure. "
+            "1 MiB = 1,048,576 bytes; 1 GiB = 1,024 MiB."
+        ),
+        "restart_menu": "Restart",
         "quit_menu": "Quit",
         "check_updates_menu": "Check for Updates…",
         "update_available_menu": "Update to v{version}…",
@@ -182,11 +192,20 @@ ONBOARDING_STRINGS: dict[str, dict[str, str]] = {
         "update_ok_button": "OK",
         "restart_app_button": "Restart App",
         "restart_failed_message": "Could not restart app.",
+        "restart_failed_guidance": (
+            "Please try Restart again. If it still fails, quit and reopen the app manually."
+        ),
         "restart_required_note": (
             "If you just granted this in System Settings, you may need to restart the app to "
             "apply it."
         ),
         "route_dictionary": "Dictionary",
+        "route_glossary": "Frequently used words",
+        "glossary_save_button": "Save",
+        "glossary_saved_message": (
+            "Frequently used words saved. Restart voice input to apply changes."
+        ),
+        "glossary_save_failed_message": "Could not save frequently used words: {error}",
         "route_onboarding": "Setup",
         "route_settings": "Settings",
         "settings_button": "Settings",
@@ -195,6 +214,12 @@ ONBOARDING_STRINGS: dict[str, dict[str, str]] = {
         "settings_language_help": "Sets the language used to transcribe your speech.",
         "settings_language_label": "Language",
         "settings_llm_base_url_label": "Base URL",
+        "settings_llm_glossary_label": "Frequently used terms",
+        "settings_llm_glossary_help": (
+            "Enter one term per line, using your preferred spelling. "
+            "These terms guide LLM correction when it is enabled; "
+            "they are not a replacement dictionary."
+        ),
         "settings_llm_mode_always": "Always",
         "settings_llm_mode_ask": "Ask each time",
         "settings_llm_mode_label": "Mode",
@@ -388,6 +413,16 @@ ONBOARDING_STRINGS: dict[str, dict[str, str]] = {
         "open_system_settings_button": "システム設定を開く",
         "output_clipboard_paste": "クリップボード貼り付け",
         "output_direct_typing": "直接入力",
+        "memory_measuring_menu": "メモリ使用量: 計測中…",
+        "memory_unavailable_menu": "メモリ使用量: 取得できません",
+        "memory_value_menu": "メモリ使用量: {value} {unit}",
+        "memory_tooltip": (
+            "このアプリと音声認識を含む子プロセスの現在のRSSの合計です。"
+            "共有ページは重複して計上される場合があります。"
+            "GPUメモリ全体やシステム全体のメモリプレッシャーを示すものではありません。"
+            "1 MiB = 1,048,576 バイト、1 GiB = 1,024 MiB。"
+        ),
+        "restart_menu": "再起動",
         "quit_menu": "終了",
         "check_updates_menu": "アップデートを確認…",
         "update_available_menu": "v{version} に更新…",
@@ -440,10 +475,20 @@ ONBOARDING_STRINGS: dict[str, dict[str, str]] = {
         "update_ok_button": "OK",
         "restart_app_button": "アプリを再起動",
         "restart_failed_message": "アプリを再起動できませんでした。",
+        "restart_failed_guidance": (
+            "もう一度「再起動」をお試しください。"
+            "解決しない場合は、アプリを終了して手動で開き直してください。"
+        ),
         "restart_required_note": (
             "システム設定で許可した直後は、反映のためアプリの再起動が必要な場合があります。"
         ),
-        "route_dictionary": "変換辞書",
+        "route_dictionary": "辞書",
+        "route_glossary": "よく使う言葉",
+        "glossary_save_button": "保存",
+        "glossary_saved_message": (
+            "よく使う言葉を保存しました。反映には音声入力を再起動してください。"
+        ),
+        "glossary_save_failed_message": "よく使う言葉を保存できませんでした: {error}",
         "route_onboarding": "セットアップ",
         "route_settings": "設定",
         "settings_button": "設定",
@@ -452,6 +497,11 @@ ONBOARDING_STRINGS: dict[str, dict[str, str]] = {
         "settings_language_help": "音声認識に使う言語を設定します。",
         "settings_language_label": "言語",
         "settings_llm_base_url_label": "Base URL",
+        "settings_llm_glossary_label": "よく使う言葉",
+        "settings_llm_glossary_help": (
+            "使いたい表記で1行に1つ入力してください。LLM補正を使うときに表記の参考にします。"
+            "文字を置き換える変換辞書ではありません。"
+        ),
         "settings_llm_mode_always": "常に使う",
         "settings_llm_mode_ask": "毎回確認",
         "settings_llm_mode_label": "モード",
@@ -613,6 +663,16 @@ ONBOARDING_STRINGS: dict[str, dict[str, str]] = {
         "open_system_settings_button": "打开系统设置",
         "output_clipboard_paste": "剪贴板粘贴",
         "output_direct_typing": "直接输入",
+        "memory_measuring_menu": "内存使用量: 测量中…",
+        "memory_unavailable_menu": "内存使用量: 无法获取",
+        "memory_value_menu": "内存使用量: {value} {unit}",
+        "memory_tooltip": (
+            "此应用及其子进程（包括语音识别）的当前RSS总和。"
+            "共享页面可能被重复计算。"
+            "这不代表GPU内存总量或整个系统的内存压力。"
+            "1 MiB = 1,048,576 字节；1 GiB = 1,024 MiB。"
+        ),
+        "restart_menu": "重新启动",
         "quit_menu": "退出",
         "check_updates_menu": "检查更新…",
         "update_available_menu": "更新到 v{version}…",
@@ -655,10 +715,15 @@ ONBOARDING_STRINGS: dict[str, dict[str, str]] = {
         "update_ok_button": "好",
         "restart_app_button": "重新启动应用",
         "restart_failed_message": "无法重新启动应用。",
+        "restart_failed_guidance": "请再次尝试重新启动。如果仍然失败，请退出并手动重新打开应用。",
         "restart_required_note": (
             "如果刚刚在系统设置中授予了此权限，可能需要重新启动应用才能生效。"
         ),
         "route_dictionary": "转换词典",
+        "route_glossary": "常用词语",
+        "glossary_save_button": "保存",
+        "glossary_saved_message": "常用词语已保存。请重启语音输入以应用更改。",
+        "glossary_save_failed_message": "无法保存常用词语: {error}",
         "route_onboarding": "设置",
         "route_settings": "设置",
         "settings_button": "设置",
@@ -667,6 +732,11 @@ ONBOARDING_STRINGS: dict[str, dict[str, str]] = {
         "settings_language_help": "设置用于语音转写的语言。",
         "settings_language_label": "语言",
         "settings_llm_base_url_label": "Base URL",
+        "settings_llm_glossary_label": "常用词语",
+        "settings_llm_glossary_help": (
+            "每行输入一个词语，使用您希望的写法。启用LLM修正时会参考这些写法。"
+            "这不是用于替换文字的转换词典。"
+        ),
         "settings_llm_mode_always": "始终使用",
         "settings_llm_mode_ask": "每次询问",
         "settings_llm_mode_label": "模式",

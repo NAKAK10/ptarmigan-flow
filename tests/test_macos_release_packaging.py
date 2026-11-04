@@ -359,3 +359,10 @@ def test_pyinstaller_spec_fails_arm64_build_without_mlx_runtime_modules() -> Non
     assert "def _required_runtime_modules(arch: str)" in spec
     assert "return REQUIRED_RUNTIME_MODULES + REQUIRED_ARM64_RUNTIME_MODULES" in spec
     assert "for name in _required_runtime_modules(TARGET_ARCH) if find_spec(name) is None" in spec
+
+
+def test_pyinstaller_spec_requires_process_memory_helper() -> None:
+    spec = (ROOT / "packaging/macos/PtarmiganFlow.spec").read_text(encoding="utf-8")
+    required_block = spec.split("REQUIRED_APP_MODULES = (", 1)[1].split(")", 1)[0]
+
+    assert '"ptarmigan_flow.process_memory"' in required_block

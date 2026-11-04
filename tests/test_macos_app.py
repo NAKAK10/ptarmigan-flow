@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import sys
+import threading
 import types
 from pathlib import Path
+
+import pytest
 
 import ptarmigan_flow.cli as cli_module
 from ptarmigan_flow import macos_app
@@ -65,6 +68,22 @@ class _FakeNSMenuItem:
     def setSubmenu_(self, submenu):  # noqa: N802
         self.submenu = submenu
 
+    def setTarget_(self, target):  # noqa: N802
+        self.target = target
+
+    def setToolTip_(self, tooltip):  # noqa: N802
+        self.tooltip = tooltip
+
+    def setEnabled_(self, enabled):  # noqa: N802
+        self.enabled = enabled
+
+    def setHidden_(self, hidden):  # noqa: N802
+        self.hidden = hidden
+
+    @classmethod
+    def separatorItem(cls):  # noqa: N802
+        return cls("", None, "")
+
     @classmethod
     def alloc(cls):
         return cls._Alloc()
@@ -81,6 +100,9 @@ class _FakeNSMenu:
 
     def addItem_(self, item):  # noqa: N802
         self.items.append(item)
+
+    def setDelegate_(self, delegate):  # noqa: N802
+        self.delegate = delegate
 
     @classmethod
     def alloc(cls):
@@ -102,9 +124,16 @@ def _capture_app_delegate(monkeypatch, daemon_controller_cls):
         "local_monitors": [],
         "removed_monitors": [],
         "timers": [],
+        "main_thread_calls": [],
     }
 
+    # Native UI tests must never sample the actual app/process tree.
+    monkeypatch.setattr(macos_app, "sample_process_memory", lambda: None)
+
     class FakeNSObject:
+        def performSelectorOnMainThread_withObject_waitUntilDone_(self, selector, payload, wait):
+            captured["main_thread_calls"].append((selector, payload, wait))
+
         @classmethod
         def alloc(cls):
             return cls.__new__(cls)
@@ -135,6 +164,17 @@ def _capture_app_delegate(monkeypatch, daemon_controller_cls):
             pass
 
     fake_app = FakeApp()
+
+    class FakeNSStatusBar:
+        @classmethod
+        def systemStatusBar(cls):  # noqa: N802
+            return cls()
+
+        def statusItemWithLength_(self, _length):  # noqa: N802
+            return types.SimpleNamespace(
+                button=lambda: None,
+                setMenu_=lambda menu: captured.update(status_menu=menu),
+            )
 
     class FakeNSApplication:
         @staticmethod
@@ -220,7 +260,7 @@ def _capture_app_delegate(monkeypatch, daemon_controller_cls):
         NSImageLeft=2,
         NSMenu=_FakeNSMenu,
         NSMenuItem=_FakeNSMenuItem,
-        NSStatusBar=object,
+        NSStatusBar=FakeNSStatusBar,
         NSVariableStatusItemLength=0,
         NSWorkspace=object,
     )
@@ -446,13 +486,13 @@ def test_macos_app_creates_native_status_bar_menu_without_manual_voice_input_con
     assert "self.status_item" in source
     assert "self.status_menu" in source
     assert 'strings["dictation_stopped_menu"]' in source
-    assert "start_menu_item" not in build_status_item
+    assert "self.start_menu_item" not in build_status_item
     assert "stop_menu_item" not in build_status_item
     assert "startDictation:" not in build_status_item
     assert "stopDictation:" not in build_status_item
     assert 'strings["start_dictation_button"]' not in build_status_item
     assert 'strings["stop_dictation_button"]' not in build_status_item
-    assert "start_menu_item" not in update_status_menu
+    assert "self.start_menu_item" not in update_status_menu
     assert "stop_menu_item" not in update_status_menu
     assert 'strings["settings_menu"]' in source
     assert 'strings["edit_dictionary_menu"]' in source
@@ -666,7 +706,8 @@ def test_macos_app_reconciles_async_daemon_failure_after_monitor_install(
 
     assert controller._hotkey_global_monitor is None
     assert controller._hotkey_local_monitor is None
-    assert captured["timers"][0].invalidated is True
+    # The app status timer also serves memory sampling while dictation is stopped.
+    assert captured["timers"][0].invalidated is False
     assert captured["removed_monitors"] == [
         captured["global_monitors"][0],
         captured["local_monitors"][0],
@@ -1163,36 +1204,16 @@ def test_macos_app_exposes_menu_actions_to_web_routes_and_bridge_side_effects() 
     assert "NSApplication.sharedApplication().terminate_(self)" in source
 
 
-def test_macos_app_restart_and_quit_use_plain_termination_paths() -> None:
-    source = _macos_app_source()
-    restart_body = source.split("def _restart_app(self) -> bool:", maxsplit=1)[1].split(
-        "def pollPermissions_",
-        maxsplit=1,
-    )[0]
-    quit_body = source.split("def quit_(self, _sender):", maxsplit=1)[1].split(
-        "app = NSApplication.sharedApplication()",
-        maxsplit=1,
-    )[0]
-    restart_lines = [
-        line.strip()
-        for line in restart_body.splitlines()
-        if line.strip() and not line.strip().startswith("#")
-    ]
-    quit_lines = [
-        line.strip()
-        for line in quit_body.splitlines()
-        if line.strip() and not line.strip().startswith("#")
-    ]
+def test_restart_action_dispatches_to_normal_restart(monkeypatch) -> None:
+    captured = _capture_app_delegate(monkeypatch, _StoppedDaemonController)
+    controller = captured["delegate"]
+    calls = []
+    controller._restart_app = lambda: calls.append("restart")
 
-    assert restart_lines == [
-        "if self._restart_to_update():",
-        "return True",
-        "if app_relaunch.relaunch_app():",
-        "NSApplication.sharedApplication().terminate_(self)",
-        "return True",
-        "return False",
-    ]
-    assert quit_lines == ["NSApplication.sharedApplication().terminate_(self)"]
+    controller.restartApp_(None)
+
+    assert calls == ["restart"]
+    assert "terminated" not in captured
 
 
 def test_macos_app_shutdown_runs_plain_cleanup_steps() -> None:
@@ -1209,6 +1230,8 @@ def test_macos_app_shutdown_runs_plain_cleanup_steps() -> None:
     ]
 
     assert terminate_lines == [
+        "self._memory_terminated = True",
+        "self._stop_daemon_status_timer()",
         "self._stop_permission_timer()",
         "self._terminate_model_download_process()",
         "self._cancel_speech_cpp_work()",
@@ -1280,6 +1303,9 @@ class _FakeStatusMenuItem:
         self.state = None
         self.action = "unset"
 
+    def setToolTip_(self, tooltip) -> None:  # noqa: N802
+        self.tooltip = tooltip
+
     def setTitle_(self, title) -> None:  # noqa: N802
         self.title = title
 
@@ -1300,12 +1326,14 @@ def _install_fake_status_menu(controller, language: str = "ja") -> types.SimpleN
     controller.status_bar_icon = object()
     for name in (
         "dictation_status_menu_item",
+        "memory_menu_item",
         "open_setup_menu_item",
         "settings_menu_item",
         "dictionary_menu_item",
         "login_menu_item",
         "update_available_menu_item",
         "check_updates_menu_item",
+        "restart_menu_item",
         "quit_menu_item",
     ):
         setattr(controller, name, _FakeStatusMenuItem())
@@ -1629,18 +1657,247 @@ def _record_threads(monkeypatch) -> list[_RecordingThread]:
     return _RecordingThread.created
 
 
-def test_status_menu_places_update_items_above_quit() -> None:
-    source = _macos_app_source()
-    build_status_item = source.split("def _build_status_item", maxsplit=1)[1].split(
-        "@objc.python_method",
-        maxsplit=1,
-    )[0]
+@pytest.mark.parametrize("language", ["en", "ja", "zh"])
+def test_memory_menu_renders_current_rss_units_failures_and_language(monkeypatch, language) -> None:
+    controller = _capture_app_delegate(monkeypatch, _StoppedDaemonController)["delegate"]
+    _install_fake_status_menu(controller, language)
+    strings = macos_app.onboarding_strings.strings_for(language)
 
-    update_index = build_status_item.index('"installUpdate:"')
-    check_index = build_status_item.index('"checkForUpdates:"')
-    quit_index = build_status_item.index('strings["quit_menu"], "quit:"')
-    assert update_index < check_index < quit_index
-    assert "self.update_available_menu_item.setHidden_(True)" in build_status_item
+    controller._update_memory_menu()
+    assert controller.memory_menu_item.title == strings["memory_measuring_menu"]
+    assert controller.memory_menu_item.tooltip == strings["memory_tooltip"]
+    assert "RSS" in strings["memory_tooltip"]
+    assert "GPU" in strings["memory_tooltip"]
+    assert "1,048,576" in strings["memory_tooltip"]
+
+    for memory_bytes, value, unit in [
+        (0, "0.0", "MiB"),
+        (int(512.5 * 1024**2), "512.5", "MiB"),
+        (2 * 1024**3, "2.0", "GiB"),
+        (128 * 1024**2, "128.0", "MiB"),  # Current RSS can fall; never show peak RSS.
+    ]:
+        controller.applyMemorySample_({"bytes": memory_bytes})
+        assert controller.memory_menu_item.title == strings["memory_value_menu"].format(
+            value=value, unit=unit
+        )
+
+    controller.applyMemorySample_({"bytes": None})
+    assert controller.memory_menu_item.title == strings["memory_unavailable_menu"]
+
+
+def test_memory_sampler_runs_off_main_thread_and_only_dispatch_updates_ui(monkeypatch) -> None:
+    captured = _capture_app_delegate(monkeypatch, _StoppedDaemonController)
+    controller = captured["delegate"]
+    _install_fake_status_menu(controller, "en")
+    controller._update_memory_menu()
+    initial = controller.memory_menu_item.title
+    posted = threading.Event()
+    observed = []
+
+    def sample():
+        observed.append(threading.current_thread() is threading.main_thread())
+        return 256 * 1024**2
+
+    def dispatch(selector, payload, wait):
+        captured["main_thread_calls"].append((selector, payload, wait))
+        posted.set()
+
+    monkeypatch.setattr(macos_app, "sample_process_memory", sample)
+    controller.performSelectorOnMainThread_withObject_waitUntilDone_ = dispatch
+
+    controller._start_memory_sample()
+
+    assert posted.wait(2)
+    assert observed == [False]
+    assert controller.memory_menu_item.title == initial
+    assert controller._memory_sample_in_progress is True
+    assert captured["main_thread_calls"] == [
+        ("applyMemorySample:", {"bytes": 256 * 1024**2}, False)
+    ]
+    controller.applyMemorySample_(captured["main_thread_calls"][0][1])
+    assert controller.memory_menu_item.title == "Memory usage: 256.0 MiB"
+    assert controller._memory_sample_in_progress is False
+
+
+def test_memory_sampling_reuses_status_timer_with_cadence_and_single_flight(monkeypatch) -> None:
+    captured = _capture_app_delegate(monkeypatch, _StoppedDaemonController)
+    controller = captured["delegate"]
+    _install_fake_status_menu(controller, "en")
+    workers = _record_threads(monkeypatch)
+    now = [100.0]
+    monkeypatch.setattr(macos_app.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(macos_app, "sample_process_memory", lambda: 1024**2)
+    controller._start_daemon_status_timer()
+    controller._start_daemon_status_timer()
+    assert len(captured["timers"]) == 1
+    timer = captured["timers"][0]
+    assert timer.selector == "pollDaemonStatus:"
+    assert timer.repeats is True
+
+    controller.pollDaemonStatus_(timer)
+    for _ in range(10):
+        controller.pollDaemonStatus_(timer)
+    now[0] = 110.0
+    controller.pollDaemonStatus_(timer)
+    assert len(workers) == 1
+    assert workers[0].daemon is True
+    workers[0].target(*workers[0].args)
+    controller.pollDaemonStatus_(timer)
+    assert len(workers) == 1  # Keep the guard until the main thread consumes the result.
+
+    controller.applyMemorySample_(captured["main_thread_calls"].pop()[1])
+    controller.pollDaemonStatus_(timer)
+    assert len(workers) == 2
+    workers[1].target(*workers[1].args)
+    controller.applyMemorySample_(captured["main_thread_calls"].pop()[1])
+    now[0] = 114.99
+    controller.pollDaemonStatus_(timer)
+    assert len(workers) == 2
+    now[0] = 115.0
+    controller.pollDaemonStatus_(timer)
+    assert len(workers) == 3
+
+    # Removing dictation monitors must leave the memory/status refresh running.
+    controller._remove_hotkey_event_monitor()
+    assert timer.invalidated is False
+
+
+def test_opening_status_menu_only_renders_cached_memory(monkeypatch) -> None:
+    controller = _capture_app_delegate(monkeypatch, _StoppedDaemonController)["delegate"]
+    _install_fake_status_menu(controller, "en")
+    monkeypatch.setattr(macos_app.login_item, "is_enabled", lambda: False)
+    workers = _record_threads(monkeypatch)
+    monkeypatch.setattr(macos_app, "sample_process_memory", lambda: _fail("main-thread sampling"))
+    controller.applyMemorySample_({"bytes": 32 * 1024**2})
+
+    controller.menuNeedsUpdate_(None)
+    controller.bridge.current_language = lambda: "ja"
+    controller.menuNeedsUpdate_(None)
+
+    assert workers == []
+    assert controller.memory_menu_item.title == "メモリ使用量: 32.0 MiB"
+    assert controller.memory_menu_item.tooltip == controller._strings()["memory_tooltip"]
+
+
+def test_memory_sampler_exception_shows_unavailable_and_retries_on_cadence(monkeypatch) -> None:
+    captured = _capture_app_delegate(monkeypatch, _StoppedDaemonController)
+    controller = captured["delegate"]
+    _install_fake_status_menu(controller, "en")
+    controller.applyMemorySample_({"bytes": 1024**3})
+    workers = _record_threads(monkeypatch)
+    now = [100.0]
+    monkeypatch.setattr(macos_app.time, "monotonic", lambda: now[0])
+
+    def fail():
+        raise OSError("sample unavailable")
+
+    monkeypatch.setattr(macos_app, "sample_process_memory", fail)
+    controller._start_memory_sample()
+    workers[0].target(*workers[0].args)
+    controller.applyMemorySample_(captured["main_thread_calls"].pop()[1])
+    assert controller.memory_menu_item.title == "Memory usage: Unavailable"
+    controller._start_memory_sample()
+    assert len(workers) == 1
+    now[0] += 5
+    controller._start_memory_sample()
+    assert len(workers) == 2
+
+
+def test_memory_worker_start_failure_is_unavailable_and_bounded(monkeypatch) -> None:
+    controller = _capture_app_delegate(monkeypatch, _StoppedDaemonController)["delegate"]
+    _install_fake_status_menu(controller, "en")
+    controller.applyMemorySample_({"bytes": 1024**3})
+    workers = _record_threads(monkeypatch)
+
+    def fail_start(self):
+        raise RuntimeError("cannot start worker")
+
+    monkeypatch.setattr(_RecordingThread, "start", fail_start)
+    for _ in range(10):
+        controller._start_memory_sample()
+
+    assert len(workers) == 1
+    assert controller._memory_sample_in_progress is False
+    assert controller.memory_menu_item.title == "Memory usage: Unavailable"
+
+
+@pytest.mark.parametrize("result_already_queued", [False, True])
+def test_memory_shutdown_stops_timer_and_ignores_late_results(monkeypatch, result_already_queued):
+    captured = _capture_app_delegate(monkeypatch, _StoppedDaemonController)
+    controller = captured["delegate"]
+    _install_fake_status_menu(controller, "en")
+    controller.applyMemorySample_({"bytes": 64 * 1024**2})
+    workers = _record_threads(monkeypatch)
+    sampled = []
+    monkeypatch.setattr(macos_app, "sample_process_memory", lambda: sampled.append(1) or None)
+    controller._start_daemon_status_timer()
+    timer = controller.daemon_status_timer
+    controller._start_memory_sample()
+    if result_already_queued:
+        workers[0].target(*workers[0].args)
+    initial = controller.memory_menu_item.title
+
+    controller.applicationWillTerminate_(None)
+    workers[0].target(*workers[0].args)
+    controller.applyMemorySample_({"bytes": None})
+    controller.pollDaemonStatus_(timer)
+    controller._start_daemon_status_timer()
+
+    assert controller.memory_menu_item.title == initial
+    assert controller._memory_bytes == 64 * 1024**2
+    assert timer.invalidated is True
+    assert controller.daemon_status_timer is None
+    assert len(workers) == 1
+    assert len(captured["timers"]) == 1
+    assert sampled == ([1] if result_already_queued else [])
+    assert len(captured["main_thread_calls"]) == int(result_already_queued)
+
+
+@pytest.mark.parametrize(
+    "language, label", [("en", "Restart"), ("ja", "再起動"), ("zh", "重新启动")]
+)
+def test_status_menu_places_restart_directly_above_quit(monkeypatch, language, label) -> None:
+    captured = _capture_app_delegate(monkeypatch, _StoppedDaemonController)
+    controller = captured["delegate"]
+    controller.bridge = types.SimpleNamespace(current_language=lambda: language)
+    controller._update_status_menu = lambda: None
+    controller._update_login_menu_state = lambda: None
+
+    controller._build_status_item()
+
+    items = captured["status_menu"].items
+    assert [item.action for item in items] == [
+        None,
+        None,
+        "showSetup:",
+        None,
+        "showSettings:",
+        "showDictionaryEditor:",
+        "toggleLoginAtStartup:",
+        None,
+        "installUpdate:",
+        "checkForUpdates:",
+        "restartApp:",
+        "quit:",
+    ]
+    assert items[1] is controller.memory_menu_item
+    assert items[1].enabled is False
+    strings = macos_app.onboarding_strings.strings_for(language)
+    assert items[1].title == strings["memory_measuring_menu"]
+    assert items[1].tooltip == strings["memory_tooltip"]
+    assert items[-2].title == label
+    assert items[-2].target is controller
+    assert items[-2].key == ""
+    assert controller.update_available_menu_item.hidden is True
+
+
+def test_restart_menu_label_refreshes_when_language_changes(monkeypatch) -> None:
+    captured = _capture_app_delegate(monkeypatch, _StoppedDaemonController)
+    controller = captured["delegate"]
+    for language, label in [("en", "Restart"), ("ja", "再起動"), ("zh", "重新启动")]:
+        _install_fake_status_menu(controller, language)
+        controller._update_status_menu()
+        assert controller.restart_menu_item.title == label
 
 
 def test_update_menu_item_hidden_until_update_found(monkeypatch) -> None:
@@ -1896,20 +2153,77 @@ def test_quit_without_prepared_update_launches_nothing(monkeypatch) -> None:
     assert launched == []
 
 
-def test_restart_app_with_prepared_update_restarts_into_the_update(monkeypatch, tmp_path) -> None:
-    captured, controller, _alerts, _choices, _opened, launched = _auto_update_controller(
-        monkeypatch
-    )
-    _set_prepared(controller, _prepared(tmp_path))
+def test_normal_restart_skips_prepared_update_and_cleans_up_once(monkeypatch, tmp_path) -> None:
+    captured, controller, alerts, _choices, _opened, launched = _auto_update_controller(monkeypatch)
+    prepared = _prepared(tmp_path)
+    _set_prepared(controller, prepared)
+    calls = []
     monkeypatch.setattr(
-        macos_app.app_relaunch, "relaunch_app", lambda: _fail("must not relaunch the old app")
+        macos_app.app_relaunch, "relaunch_app", lambda: calls.append("relaunch") or True
     )
+    cleanup = []
+    controller._stop_permission_timer = lambda: cleanup.append("timer")
+    controller._terminate_model_download_process = lambda: cleanup.append("download")
+    controller._remove_hotkey_event_monitor = lambda: cleanup.append("hotkey")
+    controller.daemon_controller.stop = lambda: cleanup.append("daemon")
 
-    assert controller._restart_app() is True
+    controller.restartApp_(None)
+    controller.restartApp_(None)
     controller.applicationWillTerminate_(None)
 
-    assert [entry[3] for entry in launched] == [True]
+    assert calls == ["relaunch"]
     assert captured["terminated"] == [controller]
+    assert launched == []
+    assert controller._update_prepared is prepared
+    assert prepared.work_dir.exists()
+    assert cleanup == ["timer", "download", "hotkey", "daemon"]
+    assert controller._speech_cpp_cancel_event.is_set()
+    assert controller._speech_cpp_terminated is True
+    assert alerts == []
+
+
+def test_restart_preparation_failure_keeps_app_running_and_can_retry(monkeypatch, tmp_path) -> None:
+    captured, controller, alerts, _choices, _opened, launched = _auto_update_controller(
+        monkeypatch, "en"
+    )
+    prepared = _prepared(tmp_path)
+    _set_prepared(controller, prepared)
+    controller.daemon_controller.start()
+    monkeypatch.setattr(macos_app.app_relaunch, "relaunch_app", lambda: False)
+
+    assert controller._restart_app() is False
+
+    assert "terminated" not in captured
+    assert controller.daemon_controller.is_running is True
+    assert not controller._speech_cpp_cancel_event.is_set()
+    assert controller._restart_scheduled is False
+    assert controller._update_prepared is prepared
+    assert prepared.work_dir.exists()
+    assert launched == []
+    assert alerts == [
+        (
+            "Error",
+            "Could not restart app.\n\nPlease try Restart again. "
+            "If it still fails, quit and reopen the app manually.",
+            ["OK"],
+        )
+    ]
+
+    monkeypatch.setattr(macos_app.app_relaunch, "relaunch_app", lambda: True)
+    assert controller._restart_app() is True
+    assert captured["terminated"] == [controller]
+
+
+def test_normal_restart_does_not_spawn_during_update_exit(monkeypatch) -> None:
+    captured, controller, alerts, _choices, _opened, _launched = _auto_update_controller(
+        monkeypatch
+    )
+    controller._update_helper_launched = True
+    monkeypatch.setattr(macos_app.app_relaunch, "relaunch_app", lambda: _fail("duplicate relaunch"))
+
+    assert controller._restart_app() is False
+    assert "terminated" not in captured
+    assert alerts == []
 
 
 def test_restart_helper_launch_failure_discards_download_and_keeps_running(
