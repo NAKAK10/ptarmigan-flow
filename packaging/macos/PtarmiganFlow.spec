@@ -97,6 +97,7 @@ MOONSHINE_EXCLUDED_HIDDENIMPORTS = {
 # or are core to the app; the build must fail if submodule collection misses them.
 REQUIRED_APP_MODULES = (
     "ptarmigan_flow.resources",
+    "ptarmigan_flow.process_memory",
     "ptarmigan_flow.web_bridge",
     "ptarmigan_flow.daemon",
     "ptarmigan_flow.stt.haas",

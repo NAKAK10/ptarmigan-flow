@@ -50,7 +50,9 @@ textarea {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  * {
+  *,
+  *::before,
+  *::after {
     animation: none !important;
     transition: none !important;
   }
@@ -454,6 +456,13 @@ textarea {
   resize: vertical;
 }
 
+.glossary-editor {
+  height: clamp(16rem, 50vh, 36rem);
+  max-height: 65vh;
+  overflow-y: auto;
+  line-height: 1.6;
+}
+
 select {
   appearance: none;
   -webkit-appearance: none;
@@ -814,26 +823,73 @@ textarea:focus {
   cursor: wait;
 }
 
-.action-bar {
-  display: flex;
+.screen-save-header {
+  position: sticky;
+  top: var(--space-3);
+  z-index: 5;
+  align-self: start;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: flex-end;
-  gap: var(--space-4);
+  column-gap: var(--space-3);
   padding: var(--space-4) var(--space-5);
-  box-shadow: none;
 }
 
-.action-bar .save-status {
-  flex: 1;
+.screen-save-header h2 {
+  margin: 0;
+}
+
+.screen-save-header .save-status {
+  grid-column: 1 / -1;
   min-width: 0;
   margin: 0;
-  margin-right: auto;
 }
 
-.action-bar .button.primary {
+.screen-save-header .save-status:not(:empty) {
+  margin-top: var(--space-3);
+}
+
+.screen-save-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-3);
+}
+
+.screen-save-actions .unsaved-indicator {
+  max-width: 10em;
+}
+
+.save-button {
   flex-shrink: 0;
   min-height: 44px;
   padding: 0 var(--space-5);
+}
+
+.save-button.has-changes {
+  box-shadow: 0 0 0 3px var(--accent-soft);
+  animation: save-changed-glow 2.8s ease-in-out 2;
+}
+
+.save-button.has-changes::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  margin-right: var(--space-2);
+  border-radius: 50%;
+  background: currentColor;
+}
+
+@keyframes save-changed-glow {
+  0%,
+  100% {
+    box-shadow: 0 0 0 3px var(--accent-soft);
+  }
+
+  50% {
+    box-shadow: 0 0 0 5px rgba(110, 139, 255, 0.28);
+  }
 }
 
 button:focus-visible,
@@ -844,6 +900,11 @@ select:focus-visible,
 textarea:focus-visible,
 .model-card:focus-visible {
   outline: none;
+  box-shadow: var(--accent-ring);
+}
+
+.save-button.has-changes:focus-visible {
+  animation: none;
   box-shadow: var(--accent-ring);
 }
 
@@ -884,17 +945,7 @@ textarea:focus-visible,
     justify-content: flex-start;
   }
 
-  .action-bar {
-    flex-direction: column;
-    align-items: stretch;
-    justify-content: stretch;
-  }
-
-  .action-bar .save-status {
-    margin-right: 0;
-  }
-
-  .action-bar .button.primary {
-    width: 100%;
+  .screen-save-header {
+    padding: var(--space-4);
   }
 }

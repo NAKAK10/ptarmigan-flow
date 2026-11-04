@@ -104,8 +104,10 @@ def _dispatcher(
 
     deps = BridgeDependencies(
         config_path=lambda: config_path,
-        check_permissions=lambda: permissions
-        or PermissionReport(microphone=True, accessibility=False, input_monitoring=False),
+        check_permissions=lambda: (
+            permissions
+            or PermissionReport(microphone=True, accessibility=False, input_monitoring=False)
+        ),
         available_model_entries=lambda: model_entries,
         is_model_downloaded=lambda token: token in downloaded_tokens,
         resolve_dictionary_path=lambda: dictionary_path,
@@ -150,6 +152,7 @@ def test_get_state_returns_web_ui_snapshot_with_localized_strings_and_download_s
         "provider": "ollama",
         "model": "qwen-test",
         "base_url": "http://localhost:11434",
+        "glossary": [],
     }
     assert state["models"] == [
         {
@@ -473,7 +476,237 @@ def test_save_settings_preserves_llm_glossary_and_think(tmp_path: Path) -> None:
     assert result["saved"] is True
     assert loaded.text.llm_correction.model == "gpt-oss:20b"
     assert loaded.text.llm_correction.glossary == ["issue", "PR"]
+    assert result["settings"]["llm_correction"]["glossary"] == ["issue", "PR"]
     assert loaded.text.llm_correction.think == "low"
+
+
+def test_save_settings_glossary_only_preserves_latest_vllm_config(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.toml"
+    _write_config(config_path)
+    config = load_config(config_path)
+    config.stt.model = "vllm:mistralai/Voxtral-Mini-4B-Realtime-2602"
+    config.text.llm_correction.glossary = ["old term"]
+    write_config(config_path, config)
+
+    def unexpected_validation_or_runtime_effect(*_args: object) -> None:
+        pytest.fail("Glossary-only saves must not validate or apply unrelated settings")
+
+    dispatcher = WebBridgeDispatcher(
+        deps=BridgeDependencies(
+            config_path=lambda: config_path,
+            available_model_entries=unexpected_validation_or_runtime_effect,
+            llm_mode_saved=unexpected_validation_or_runtime_effect,
+            start_dictation=unexpected_validation_or_runtime_effect,
+            stop_dictation=unexpected_validation_or_runtime_effect,
+            restart_app=unexpected_validation_or_runtime_effect,
+        )
+    )
+    assert dispatcher.current_language() == "ja"
+
+    # Another writer changes config after the bridge last read it. These modeled
+    # values need not satisfy the unrelated settings form's validation rules.
+    config.hotkey.key = "custom-binding"
+    config.language = "en"
+    config.text.llm_correction.provider = "latest-provider"
+    config.text.llm_correction.model = ""
+    config.text.llm_correction.base_url = ""
+    config.text.llm_correction.think = "low"
+    config.text.llm_correction.timeout_seconds = 17.0
+    config.stt.idle_shutdown_seconds = 91.0
+    config.runtime.log_level = "DEBUG"
+    config.text.dictionary_path = str(tmp_path / "other-dictionary.toml")
+    write_config(config_path, config)
+    expected = load_config(config_path).model_dump()
+    expected["text"]["llm_correction"]["glossary"] = ["GitHub", "プルリクエスト"]
+
+    result = dispatcher.handle_action(
+        "saveSettings", {"llm_correction": {"glossary": [" GitHub ", "プルリクエスト"]}}
+    )
+
+    assert result["saved"] is True
+    assert result["settings"]["model"] == "vllm:mistralai/Voxtral-Mini-4B-Realtime-2602"
+    assert result["settings"]["hotkey"] == "custom-binding"
+    assert result["settings"]["llm_correction"]["provider"] == "latest-provider"
+    assert result["settings"]["llm_correction"]["glossary"] == ["GitHub", "プルリクエスト"]
+    assert load_config(config_path).model_dump() == expected
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"model": "moonshine:tiny"},
+        {"language": "en"},
+        {"hotkey": None},
+        {"output_mode": False},
+        {"unexpected": True},
+    ],
+)
+def test_save_settings_glossary_only_rejects_mixed_top_level_fields(
+    tmp_path: Path, extra: dict[str, object]
+) -> None:
+    dispatcher = _dispatcher(tmp_path)
+    config_path = tmp_path / "config.toml"
+    before = config_path.read_bytes()
+
+    result = dispatcher.handle_action(
+        "saveSettings", {"llm_correction": {"glossary": ["new term"]}, **extra}
+    )
+
+    assert result["saved"] is False
+    assert "llm_correction.mode" in result["errors"]
+    assert config_path.read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [{"mode": "always"}, {"provider": None}, {"model": 42}, {"base_url": ""}, {"think": "low"}],
+)
+def test_save_settings_glossary_only_rejects_mixed_llm_fields(
+    tmp_path: Path, extra: dict[str, object]
+) -> None:
+    dispatcher = _dispatcher(tmp_path)
+    config_path = tmp_path / "config.toml"
+    before = config_path.read_bytes()
+
+    result = dispatcher.handle_action(
+        "saveSettings", {"llm_correction": {"glossary": ["new term"], **extra}}
+    )
+
+    assert result["saved"] is False
+    assert result["errors"][:4] == ["model", "language", "hotkey", "output_mode"]
+    assert config_path.read_bytes() == before
+
+
+def test_save_settings_roundtrips_existing_glossary(tmp_path: Path) -> None:
+    dispatcher = _dispatcher(tmp_path)
+    config_path = tmp_path / "config.toml"
+    config = load_config(config_path)
+    terms = ["Ptarmigan Flow", "PR", "よく使う言葉"]
+    config.text.llm_correction.glossary = terms
+    write_config(config_path, config)
+
+    settings = dispatcher.handle_action("getState", {})["settings"]
+    assert settings["llm_correction"]["glossary"] == terms
+
+    result = dispatcher.handle_action("saveSettings", settings)
+
+    assert result == {"saved": True, "settings": settings}
+    assert load_config(config_path).text.llm_correction.glossary == terms
+    assert dispatcher.handle_action("getState", {})["settings"] == settings
+
+
+@pytest.mark.parametrize("include_glossary", [False, True])
+def test_save_settings_glossary_preserves_latest_unrelated_config(
+    tmp_path: Path, include_glossary: bool
+) -> None:
+    dispatcher = _dispatcher(tmp_path)
+    config_path = tmp_path / "config.toml"
+    settings = dispatcher.handle_action("getState", {})["settings"]
+    if include_glossary:
+        settings["llm_correction"]["glossary"] = ["new term"]
+    else:
+        del settings["llm_correction"]["glossary"]
+
+    # Another writer changes config after the UI obtained its settings snapshot.
+    config = load_config(config_path)
+    config.text.llm_correction.glossary = ["latest", "PR"]
+    config.text.llm_correction.think = "low"
+    config.text.llm_correction.timeout_seconds = 17.0
+    config.stt.idle_shutdown_seconds = 91.0
+    config.runtime.log_level = "DEBUG"
+    config.text.dictionary_path = str(tmp_path / "other-dictionary.toml")
+    write_config(config_path, config)
+    expected = load_config(config_path).model_dump()
+    terms = ["new term"] if include_glossary else ["latest", "PR"]
+    expected["text"]["llm_correction"]["glossary"] = terms
+
+    result = dispatcher.handle_action("saveSettings", settings)
+
+    assert result["saved"] is True
+    assert result["settings"]["llm_correction"]["glossary"] == terms
+    assert load_config(config_path).model_dump() == expected
+
+
+@pytest.mark.parametrize(
+    ("terms", "expected"),
+    [
+        ([], []),
+        (["  new term  ", "\tPR\n", "よく使う言葉　"], ["new term", "PR", "よく使う言葉"]),
+        ([" PR ", "issue", "PR", "pr", "issue ", "Pr"], ["PR", "issue", "pr", "Pr"]),
+    ],
+)
+@pytest.mark.parametrize("glossary_only", [False, True])
+def test_save_settings_replaces_and_normalizes_glossary(
+    tmp_path: Path, terms: list[str], expected: list[str], glossary_only: bool
+) -> None:
+    dispatcher = _dispatcher(tmp_path)
+    config_path = tmp_path / "config.toml"
+    config = load_config(config_path)
+    config.text.llm_correction.glossary = ["old term"]
+    write_config(config_path, config)
+    settings = dispatcher.handle_action("getState", {})["settings"]
+    settings["llm_correction"]["glossary"] = terms
+    if glossary_only:
+        settings = {"llm_correction": {"glossary": terms}}
+
+    result = dispatcher.handle_action("saveSettings", settings)
+
+    assert result["saved"] is True
+    assert result["settings"]["llm_correction"]["glossary"] == expected
+    assert load_config(config_path).text.llm_correction.glossary == expected
+    assert dispatcher.handle_action("getState", {})["settings"] == result["settings"]
+
+
+@pytest.mark.parametrize(
+    "glossary",
+    [
+        "PR",
+        "",
+        None,
+        42,
+        True,
+        {"term": "PR"},
+        ("PR",),
+        ["valid", 42],
+        ["valid", None],
+        ["valid", False],
+        ["valid", ["PR"]],
+        ["valid", {"term": "PR"}],
+        ["valid", ""],
+        ["valid", " \t\n"],
+        ["valid", "　"],
+    ],
+)
+@pytest.mark.parametrize("glossary_only", [False, True])
+def test_save_settings_rejects_invalid_glossary_without_partial_changes(
+    tmp_path: Path, glossary: object, glossary_only: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dispatcher = _dispatcher(tmp_path)
+    config_path = tmp_path / "config.toml"
+    config = load_config(config_path)
+    config.text.llm_correction.glossary = ["existing"]
+    write_config(config_path, config)
+    settings = dispatcher.handle_action("getState", {})["settings"]
+    settings["language"] = "en"
+    settings["hotkey"] = "right_shift"
+    settings["llm_correction"]["model"] = "new-model"
+    settings["llm_correction"]["glossary"] = glossary
+    if glossary_only:
+        settings = {"llm_correction": {"glossary": glossary}}
+    before = config_path.read_bytes()
+    saved_modes: list[str] = []
+    dispatcher.deps.llm_mode_saved = saved_modes.append
+
+    def unexpected_write(*_args: object) -> None:
+        pytest.fail("Invalid settings must not write config")
+
+    monkeypatch.setattr("ptarmigan_flow.web_bridge.write_config", unexpected_write)
+
+    result = dispatcher.handle_action("saveSettings", settings)
+
+    assert result == {"saved": False, "errors": ["llm_correction.glossary"]}
+    assert config_path.read_bytes() == before
+    assert saved_modes == []
 
 
 def test_save_settings_returns_validation_errors_without_writing(tmp_path: Path) -> None:
@@ -608,9 +841,7 @@ def test_side_effect_actions_delegate_to_injected_functions(tmp_path: Path) -> N
     assert dispatcher.handle_action("startDictation", {}) == {"daemon_running": True}
     assert dispatcher.handle_action("stopDictation", {}) == {"daemon_running": False}
     assert dispatcher.handle_action("toggleLogin", {"enabled": True}) == {"login_enabled": True}
-    assert dispatcher.handle_action("toggleLogin", {"enabled": False}) == {
-        "login_enabled": False
-    }
+    assert dispatcher.handle_action("toggleLogin", {"enabled": False}) == {"login_enabled": False}
     assert dispatcher.handle_action("restartApp", {}) == {"restarted": True}
     assert calls == [
         ("permission", "microphone"),
